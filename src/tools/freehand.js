@@ -87,7 +87,7 @@
         it.fill = U.deepCopy(app.fill && app.fill.type !== 'none' ? app.fill : Col.solid('#000000'));
         it.stroke = Model.defaultStroke();
       } else {
-        var anchors = final ? G.fitCurve(dp, opts.pencil ? 2.5 : 1.6) : dp.map(function (p) { return { x: p.x, y: p.y }; });
+        var anchors = final ? G.fitCurve(dp, opts.pencil ? (app.pencilFidelity == null ? 2.5 : app.pencilFidelity) : 1.6) : dp.map(function (p) { return { x: p.x, y: p.y }; });
         it = Model.newPath([{ closed: e && e.alt ? true : false, pts: anchors }]);
         it.name = name;
         T.applyCurrentStyle(app, it, true);

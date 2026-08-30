@@ -15,7 +15,9 @@
     buildControlBar();
     buildProperties();
     buildTransform();
+    buildType();
     buildColor();
+    buildGradient();
     buildSwatches();
     buildStroke();
     buildAlign();
@@ -226,6 +228,305 @@
     });
   }
 
+  /* ================= 문자 ================= */
+  var FONTS = [
+    ['Noto Sans KR, sans-serif', 'Noto Sans KR'],
+    ['Malgun Gothic, sans-serif', '맑은 고딕'],
+    ['Nanum Gothic, sans-serif', '나눔고딕'],
+    ['Nanum Myeongjo, serif', '나눔명조'],
+    ['Arial, Helvetica, sans-serif', 'Arial'],
+    ['Helvetica, Arial, sans-serif', 'Helvetica'],
+    ['Georgia, serif', 'Georgia'],
+    ['Times New Roman, serif', 'Times New Roman'],
+    ['Courier New, monospace', 'Courier New'],
+    ['Impact, sans-serif', 'Impact'],
+    ['Verdana, sans-serif', 'Verdana'],
+    ['serif', 'serif'],
+    ['sans-serif', 'sans-serif'],
+    ['monospace', 'monospace']
+  ];
+
+  function selectedTexts(a) {
+    var out = [];
+    (a.sel || []).forEach(function (it) {
+      (function rec(o) {
+        if (o.type === 'group') { o.children.forEach(rec); return; }
+        if (o.type === 'text') out.push(o);
+      })(it);
+    });
+    return out;
+  }
+  UI.selectedTexts = selectedTexts;
+
+  function applyText(label, fn) {
+    var list = selectedTexts(app);
+    if (list.length) {
+      app.history.begin(label, app.doc);
+      list.forEach(function (t) { fn(t.text, t); });
+      app.history.commit();
+      if (app.editingText) T.syncTextBox(app);
+    }
+    app.typeOpts = app.typeOpts || {};
+    fn(app.typeOpts, null);
+    app.invalidate();
+    UI.syncType(app);
+  }
+
+  function buildType() {
+    var p = document.getElementById('p-type');
+    p.innerHTML =
+      '<div class="row"><select class="fld" id="ty-font">' +
+      FONTS.map(function (f) { return '<option value="' + f[0] + '">' + f[1] + '</option>'; }).join('') +
+      '</select></div>' +
+      '<div class="row">' +
+      '<select class="fld" id="ty-weight" style="flex:1.2">' +
+      [['300', 'Light'], ['400', 'Regular'], ['500', 'Medium'], ['700', 'Bold'], ['900', 'Black']]
+        .map(function (w) { return '<option value="' + w[0] + '">' + w[1] + '</option>'; }).join('') +
+      '</select>' +
+      '<button class="mini-btn" id="ty-italic" title="기울임" style="font-style:italic;font-family:serif">I</button>' +
+      '</div>' +
+      '<div class="grid2">' +
+      '<div class="row"><label style="min-width:26px" title="글꼴 크기">크기</label><input class="fld" id="ty-size" value="24"></div>' +
+      '<div class="row"><label style="min-width:26px" title="행간(배수)">행간</label><input class="fld" id="ty-leading" value="1.2"></div>' +
+      '<div class="row"><label style="min-width:26px" title="자간(px)">자간</label><input class="fld" id="ty-tracking" value="0"></div>' +
+      '</div>' +
+      '<div class="row" style="gap:4px;margin-top:6px">' +
+      '<label style="min-width:26px">정렬</label>' +
+      '<button class="mini-btn" data-talign="left" title="왼쪽 정렬" style="flex:1">◧</button>' +
+      '<button class="mini-btn" data-talign="center" title="가운데 정렬" style="flex:1">◫</button>' +
+      '<button class="mini-btn" data-talign="right" title="오른쪽 정렬" style="flex:1">◨</button>' +
+      '</div>' +
+      '<div class="grid2" style="margin-top:4px">' +
+      '<button class="btn" data-cmd="fontBigger" title="글꼴 크기 확대 (' + AI.keymap.display('Ctrl+Shift+.') + ')">크게</button>' +
+      '<button class="btn" data-cmd="fontSmaller" title="글꼴 크기 축소 (' + AI.keymap.display('Ctrl+Shift+,') + ')">작게</button>' +
+      '</div>' +
+      '<div class="hint">텍스트를 선택하거나 문자 도구로 새로 만들 때 적용됩니다.</div>';
+
+    U.on(U.q('#ty-font', p), 'change', function () { var v = this.value; applyText('글꼴', function (t) { t.family = v; }); });
+    U.on(U.q('#ty-weight', p), 'change', function () { var v = +this.value; applyText('글꼴 두께', function (t) { t.weight = v; }); });
+    U.on(U.q('#ty-italic', p), 'click', function () {
+      var on = !this.classList.contains('on');
+      applyText('기울임', function (t) { t.italic = on; });
+    });
+    num(U.q('#ty-size', p), function () { return 24; }, function (v) { applyText('글꼴 크기', function (t) { t.size = U.clamp(v, 1, 1200); }); }, '글꼴 크기');
+    num(U.q('#ty-leading', p), function () { return 1.2; }, function (v) { applyText('행간', function (t) { t.leading = U.clamp(v, 0.2, 10); }); }, '행간');
+    num(U.q('#ty-tracking', p), function () { return 0; }, function (v) { applyText('자간', function (t) { t.tracking = v; }); }, '자간');
+    U.qa('[data-talign]', p).forEach(function (b) {
+      U.on(b, 'click', function () { applyText('정렬', function (t) { t.align = b.dataset.talign; }); });
+    });
+    U.qa('[data-cmd]', p).forEach(function (b) { U.on(b, 'click', function () { C.run(b.dataset.cmd); }); });
+  }
+
+  UI.syncType = function (a) {
+    var p = document.getElementById('p-type');
+    if (!p) return;
+    var list = selectedTexts(a);
+    var t = list.length ? list[0].text : (a.typeOpts || { family: 'Noto Sans KR, sans-serif', size: 24, weight: 400, leading: 1.2, tracking: 0, align: 'left', italic: false });
+    syncing = true;
+    var f = U.q('#ty-font', p);
+    if (f && document.activeElement !== f) {
+      if (!Array.prototype.some.call(f.options, function (o) { return o.value === t.family; })) {
+        var op = document.createElement('option');
+        op.value = t.family; op.textContent = t.family;
+        f.appendChild(op);
+      }
+      f.value = t.family;
+    }
+    var w = U.q('#ty-weight', p);
+    if (w) w.value = String(t.weight || 400);
+    var it = U.q('#ty-italic', p);
+    if (it) it.classList.toggle('on', !!t.italic);
+    [['#ty-size', t.size], ['#ty-leading', t.leading], ['#ty-tracking', t.tracking]].forEach(function (o) {
+      var el = U.q(o[0], p);
+      if (el && document.activeElement !== el) el.value = U.fmt(o[1] == null ? 0 : o[1]);
+    });
+    U.qa('[data-talign]', p).forEach(function (b) { b.classList.toggle('on', b.dataset.talign === (t.align || 'left')); });
+    document.querySelector('.panel[data-panel="type"]').style.opacity = list.length ? '1' : '.65';
+    syncing = false;
+  };
+
+  /* ================= 그레이디언트 ================= */
+  var gradStop = 0;
+
+  function currentGradient(a, create) {
+    var target = null;
+    if (a.sel.length) {
+      var it = a.sel[0];
+      while (it && it.type === 'group' && it.children.length) it = it.children[it.children.length - 1];
+      if (it) target = a.fillFocus ? it.fill : it.stroke;
+    }
+    if (!target || (target.type !== 'linear' && target.type !== 'radial')) {
+      target = a.fillFocus ? a.fill : a.stroke;
+    }
+    if ((!target || (target.type !== 'linear' && target.type !== 'radial')) && create) return null;
+    return (target && (target.type === 'linear' || target.type === 'radial')) ? target : null;
+  }
+
+  function applyGradient(label, mutate) {
+    var g = currentGradient(app);
+    if (!g) {
+      g = Col.gradient('linear', '#ffffff', '#000000');
+      if (app.fillFocus) app.fill = g; else app.stroke = g;
+    }
+    mutate(g);
+    if (app.sel.length) {
+      app.history.begin(label, app.doc);
+      E.applyPaint(app, g, app.fillFocus ? 'fill' : 'stroke');
+      app.history.commit();
+    }
+    if (app.fillFocus) app.fill = U.deepCopy(g); else app.stroke = U.deepCopy(g);
+    app.invalidate();
+    UI.syncGradient(app);
+    UI.syncStyle(app);
+  }
+
+  function buildGradient() {
+    var p = document.getElementById('p-gradient');
+    p.innerHTML =
+      '<div class="row">' +
+      '<select class="fld" id="gr-type" style="flex:1"><option value="linear">선형</option><option value="radial">방사형</option></select>' +
+      '<label title="각도">∠</label><input class="fld" id="gr-angle" style="width:48px" value="0">' +
+      '<button class="mini-btn" id="gr-rev" title="정지점 반전">⇄</button>' +
+      '</div>' +
+      '<div class="gradbar" id="gr-bar"><div class="gradfill" id="gr-fill"></div><div class="stops" id="gr-stops"></div></div>' +
+      '<div class="row" style="margin-top:8px">' +
+      '<button class="swatch-btn" id="gr-color" title="선택한 정지점 색상"><i></i></button>' +
+      '<label>위치</label><input class="fld" id="gr-pos" style="width:52px" value="0"><span style="color:#9a9a9a">%</span>' +
+      '<label>불투명</label><input class="fld" id="gr-alpha" style="width:46px" value="100">' +
+      '<button class="mini-btn" id="gr-del" title="정지점 삭제">🗑</button>' +
+      '</div>' +
+      '<div class="hint">막대를 클릭하면 정지점 추가, 드래그하면 이동합니다. G 도구로 캔버스에서 방향을 그릴 수 있습니다.</div>';
+
+    U.on(U.q('#gr-type', p), 'change', function () { var v = this.value; applyGradient('그레이디언트 유형', function (g) { g.type = v; }); });
+    num(U.q('#gr-angle', p), function () { return 0; }, function (v) { applyGradient('그레이디언트 각도', function (g) { g.angle = v; }); }, '각도');
+    U.on(U.q('#gr-rev', p), 'click', function () {
+      applyGradient('정지점 반전', function (g) {
+        g.stops = g.stops.map(function (s) { return { t: 1 - s.t, color: s.color, alpha: s.alpha }; })
+          .sort(function (a, b) { return a.t - b.t; });
+      });
+    });
+    U.on(U.q('#gr-del', p), 'click', function () {
+      applyGradient('정지점 삭제', function (g) {
+        if (g.stops.length <= 2) { U.toast('정지점은 최소 2개 필요합니다'); return; }
+        g.stops.splice(gradStop, 1);
+        gradStop = Math.max(0, gradStop - 1);
+      });
+    });
+    U.on(U.q('#gr-color', p), 'click', function () {
+      app.gradStopEdit = true;
+      UI.openColorPicker(app, this);
+    });
+    num(U.q('#gr-pos', p), function () { return 0; }, function (v) {
+      applyGradient('정지점 위치', function (g) {
+        var st = g.stops[gradStop];
+        if (st) st.t = U.clamp(v / 100, 0, 1);
+        g.stops.sort(function (a, b) { return a.t - b.t; });
+        gradStop = g.stops.indexOf(st);
+      });
+    }, '정지점 위치');
+    num(U.q('#gr-alpha', p), function () { return 100; }, function (v) {
+      applyGradient('정지점 불투명도', function (g) {
+        var st = g.stops[gradStop];
+        if (st) st.alpha = U.clamp(v / 100, 0, 1);
+      });
+    }, '정지점 불투명도');
+
+    var bar = U.q('#gr-bar', p);
+    U.on(bar, 'mousedown', function (ev) {
+      var g = currentGradient(app);
+      if (!g) { applyGradient('그레이디언트', function () { }); g = currentGradient(app); if (!g) return; }
+      var r = bar.getBoundingClientRect();
+      var t = U.clamp((ev.clientX - r.left) / r.width, 0, 1);
+      var hitIdx = -1;
+      g.stops.forEach(function (s, i) { if (Math.abs(s.t - t) * r.width < 7) hitIdx = i; });
+      if (hitIdx < 0) {
+        applyGradient('정지점 추가', function (gg) {
+          gg.stops.push({ t: t, color: sampleGradient(gg, t), alpha: 1 });
+          gg.stops.sort(function (a, b) { return a.t - b.t; });
+          gradStop = gg.stops.findIndex(function (s) { return s.t === t; });
+        });
+      } else {
+        gradStop = hitIdx;
+        UI.syncGradient(app);
+      }
+      var idx = gradStop;
+      var move = function (e) {
+        var nt = U.clamp((e.clientX - r.left) / r.width, 0, 1);
+        applyGradient('정지점 이동', function (gg) {
+          var st = gg.stops[idx];
+          if (!st) return;
+          st.t = nt;
+          gg.stops.sort(function (a, b) { return a.t - b.t; });
+          idx = gradStop = gg.stops.indexOf(st);
+        });
+      };
+      var up = function () { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+      ev.preventDefault();
+    });
+  }
+
+  function sampleGradient(g, t) {
+    var ss = g.stops.slice().sort(function (a, b) { return a.t - b.t; });
+    if (t <= ss[0].t) return ss[0].color;
+    if (t >= ss[ss.length - 1].t) return ss[ss.length - 1].color;
+    for (var i = 0; i < ss.length - 1; i++) {
+      if (t >= ss[i].t && t <= ss[i + 1].t) {
+        var k = (t - ss[i].t) / Math.max(ss[i + 1].t - ss[i].t, 1e-6);
+        return Col.mix(ss[i].color, ss[i + 1].color, k);
+      }
+    }
+    return ss[0].color;
+  }
+
+  /* 색상 피커에서 정지점 색을 바꿀 때 호출 */
+  UI.setGradientStopColor = function (a, hex) {
+    var g = currentGradient(a);
+    if (!g) return false;
+    var st = g.stops[gradStop];
+    if (!st) return false;
+    st.color = hex;
+    if (a.sel.length) E.applyPaint(a, g, a.fillFocus ? 'fill' : 'stroke');
+    if (a.fillFocus) a.fill = U.deepCopy(g); else a.stroke = U.deepCopy(g);
+    a.invalidate();
+    UI.syncGradient(a);
+    return true;
+  };
+
+  UI.syncGradient = function (a) {
+    var p = document.getElementById('p-gradient');
+    if (!p) return;
+    var g = currentGradient(a);
+    var panel = document.querySelector('.panel[data-panel="gradient"]');
+    panel.style.opacity = g ? '1' : '.65';
+    syncing = true;
+    var stopsEl = U.q('#gr-stops', p), fillEl = U.q('#gr-fill', p);
+    if (!g) {
+      fillEl.style.background = 'repeating-linear-gradient(45deg,#333 0 6px,#3a3a3a 6px 12px)';
+      stopsEl.innerHTML = '';
+      syncing = false;
+      return;
+    }
+    gradStop = U.clamp(gradStop, 0, g.stops.length - 1);
+    fillEl.style.background = 'linear-gradient(to right,' + g.stops.slice().sort(function (x, y) { return x.t - y.t; })
+      .map(function (s) { return Col.toCss(s.color, s.alpha) + ' ' + U.round(s.t * 100, 2) + '%'; }).join(',') + ')';
+    stopsEl.innerHTML = '';
+    g.stops.forEach(function (s, i) {
+      var d = U.el('div', 'gstop' + (i === gradStop ? ' sel' : ''));
+      d.style.left = (s.t * 100) + '%';
+      d.style.setProperty('--c', s.color);
+      stopsEl.appendChild(d);
+    });
+    var ty = U.q('#gr-type', p); if (ty) ty.value = g.type;
+    var an = U.q('#gr-angle', p); if (an && document.activeElement !== an) an.value = U.fmt(g.angle || 0);
+    var st = g.stops[gradStop] || g.stops[0];
+    var pos = U.q('#gr-pos', p); if (pos && document.activeElement !== pos) pos.value = U.fmt((st.t || 0) * 100);
+    var al = U.q('#gr-alpha', p); if (al && document.activeElement !== al) al.value = U.fmt((st.alpha == null ? 1 : st.alpha) * 100);
+    var cb = U.q('#gr-color i', p); if (cb) cb.style.background = st.color;
+    syncing = false;
+  };
+
   /* ================= 견본 ================= */
   function buildSwatches() {
     var p = document.getElementById('p-swatches');
@@ -362,9 +663,138 @@
     return s + '</svg>';
   }
 
+  /* ================= 컨트롤 바 도구 옵션 (상황별) ================= */
+  function optNum(label, id, value, title, onSet, width) {
+    return '<span class="ctl-label" title="' + (title || label) + '">' + label + '</span>' +
+      '<input class="ctl-input num" id="' + id + '" value="' + value + '" style="width:' + (width || 52) + 'px">';
+  }
+
+  UI.buildToolOptions = function (a) {
+    var host = document.getElementById('ctl-tool-options');
+    if (!host) return;
+    var tool = a.tool;
+    a.shapeOpts = a.shapeOpts || {};
+    var so = a.shapeOpts;
+    var html = '', wire = [];
+
+    function shapeOpt(kind, key, def) {
+      so[kind] = so[kind] || {};
+      return so[kind][key] == null ? def : so[kind][key];
+    }
+
+    if (tool === 'rect' || tool === 'roundrect') {
+      var r = shapeOpt(tool, 'r', tool === 'roundrect' ? 12 : 0);
+      html = optNum('모퉁이', 'to-r', U.fmt(r), '모퉁이 반경');
+      wire.push(['to-r', function (v) {
+        so[tool] = so[tool] || {}; so[tool].r = Math.max(0, v);
+        if (E.updateShape(a, ['rect'], 'r', Math.max(0, v))) return true;
+      }, '모퉁이 반경']);
+    } else if (tool === 'polygon') {
+      html = optNum('변', 'to-n', shapeOpt('polygon', 'n', 6), '변의 수', null, 44);
+      wire.push(['to-n', function (v) {
+        v = Math.max(3, Math.round(v));
+        so.polygon.n = v;
+        if (E.updateShape(a, ['polygon'], 'n', v)) return true;
+      }, '변의 수']);
+    } else if (tool === 'star') {
+      html = optNum('점', 'to-n', shapeOpt('star', 'n', 5), '별의 점 개수', null, 44) +
+        optNum('비율', 'to-ratio', U.fmt(shapeOpt('star', 'ratio', 0.5) * 100), '안쪽 반지름 비율(%)', null, 48) +
+        '<span class="ctl-label">%</span>';
+      wire.push(['to-n', function (v) {
+        v = Math.max(3, Math.round(v)); so.star.n = v;
+        if (E.updateShape(a, ['star'], 'n', v)) return true;
+      }, '별 점 개수']);
+      wire.push(['to-ratio', function (v) {
+        v = U.clamp(v, 1, 100) / 100; so.star.ratio = v;
+        if (E.updateShape(a, ['star'], 'ratio', v)) return true;
+      }, '별 비율']);
+    } else if (tool === 'brush' || tool === 'blob') {
+      html = optNum('폭', 'to-bw', U.fmt(a.brushWidth || 3), '브러시 폭', null, 48);
+      wire.push(['to-bw', function (v) { a.brushWidth = U.clamp(v, 0.1, 400); }, '브러시 폭']);
+    } else if (tool === 'eraser') {
+      html = optNum('폭', 'to-ew', U.fmt(a.eraserWidth || 20), '지우개 폭', null, 48);
+      wire.push(['to-ew', function (v) { a.eraserWidth = U.clamp(v, 0.5, 800); }, '지우개 폭']);
+    } else if (tool === 'pencil') {
+      html = optNum('정밀도', 'to-fid', U.fmt(a.pencilFidelity == null ? 2.5 : a.pencilFidelity), '값이 클수록 단순화', null, 48);
+      wire.push(['to-fid', function (v) { a.pencilFidelity = U.clamp(v, 0.2, 20); }, '연필 정밀도']);
+    } else if (tool === 'type' || tool === 'typearea') {
+      a.typeOpts = a.typeOpts || { family: 'Noto Sans KR, sans-serif', size: 24 };
+      html = '<select class="ctl-input" id="to-font" style="width:130px">' +
+        FONTS.map(function (f) { return '<option value="' + f[0] + '"' + (f[0] === a.typeOpts.family ? ' selected' : '') + '>' + f[1] + '</option>'; }).join('') +
+        '</select>' + optNum('크기', 'to-size', U.fmt(a.typeOpts.size || 24), '글꼴 크기', null, 48);
+      wire.push(['to-size', function (v) {
+        a.typeOpts.size = U.clamp(v, 1, 1200);
+        var list = selectedTexts(a);
+        list.forEach(function (t) { t.text.size = a.typeOpts.size; });
+        UI.syncType(a);
+        return list.length > 0;
+      }, '글꼴 크기']);
+    } else if (tool === 'zoom') {
+      html = [50, 100, 200, 400].map(function (z) {
+        return '<button class="mini-btn" data-zoom="' + z + '">' + z + '%</button>';
+      }).join('');
+    } else if (tool === 'gradient') {
+      html = '<span class="ctl-label">그레이디언트 도구로 캔버스를 드래그해 방향을 지정하세요</span>';
+    } else if (tool === 'artboard') {
+      html = '<span class="ctl-label">사전 설정</span>' +
+        [['A4', 595, 842], ['FHD', 1920, 1080], ['정사각', 1080, 1080]].map(function (o) {
+          return '<button class="mini-btn" data-ab="' + o[1] + 'x' + o[2] + '">' + o[0] + '</button>';
+        }).join('');
+    } else {
+      html = '<button class="mini-btn" id="to-smart" title="고급 안내선 (Ctrl+U)">고급 안내선</button>' +
+        '<button class="mini-btn" id="to-grid" title="격자 표시 (Ctrl+\')">격자</button>' +
+        '<button class="mini-btn" id="to-snap" title="격자에 물리기">스냅</button>';
+    }
+
+    host.innerHTML = html;
+
+    wire.forEach(function (w) {
+      var el = document.getElementById(w[0]);
+      if (!el) return;
+      num(el, function () { return 0; }, function (v) { w[1](v); }, w[2]);
+    });
+
+    var fo = document.getElementById('to-font');
+    if (fo) U.on(fo, 'change', function () {
+      a.typeOpts.family = this.value;
+      var list = selectedTexts(a);
+      if (list.length) {
+        a.history.begin('글꼴', a.doc);
+        list.forEach(function (t) { t.text.family = a.typeOpts.family; });
+        a.history.commit();
+      }
+      a.invalidate(); UI.syncType(a);
+    });
+    U.qa('[data-zoom]', host).forEach(function (b) {
+      U.on(b, 'click', function () { AI.viewT.setZoom(a, +b.dataset.zoom / 100); });
+    });
+    U.qa('[data-ab]', host).forEach(function (b) {
+      U.on(b, 'click', function () {
+        var d = b.dataset.ab.split('x');
+        var ab = a.doc.artboards[a.doc.activeArtboard];
+        a.history.begin('대지 크기', a.doc);
+        ab.w = +d[0]; ab.h = +d[1];
+        a.history.commit();
+        a.invalidate(); AI.viewT.fitArtboard(a);
+      });
+    });
+    var sm = document.getElementById('to-smart');
+    if (sm) {
+      sm.classList.toggle('on', !!a.prefs.smart);
+      U.on(sm, 'click', function () { C.run('smartGuides'); UI.buildToolOptions(a); });
+      var gr = document.getElementById('to-grid');
+      gr.classList.toggle('on', !!a.prefs.grid);
+      U.on(gr, 'click', function () { C.run('showGrid'); UI.buildToolOptions(a); });
+      var sn = document.getElementById('to-snap');
+      sn.classList.toggle('on', !!a.prefs.snapGrid);
+      U.on(sn, 'click', function () { C.run('snapGrid'); UI.buildToolOptions(a); });
+    }
+  };
+
   /* ================= 동기화 ================= */
   UI.syncTool = function (a) {
     U.qa('#toolbar .tool').forEach(function (el) { el.classList.toggle('active', el.dataset.tool === a.tool); });
+    UI.buildToolOptions(a);
     var t = T.current(a);
     var n = document.getElementById('ctl-toolname');
     if (n && t) n.textContent = t.name.replace(' 도구', '');
@@ -479,6 +909,8 @@
   UI.syncAll = function (a) {
     UI.syncTool(a);
     UI.syncSelection(a);
+    UI.syncType(a);
+    UI.syncGradient(a);
     UI.syncStatus(a);
     UI.updateZoom(a);
     UI.buildLayers(a);

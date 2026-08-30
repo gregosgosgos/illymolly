@@ -168,40 +168,57 @@
   }
   PF.normalize = normalize;
 
-  /* ---------- 핵심 불리언 ---------- */
+  /* ---------- 핵심 불리언 ----------
+     각 분할 에지의 양옆(법선 방향 ±eps)을 연산 술어로 평가해
+     "한쪽만 결과에 속하면 결과의 경계" 라는 방향 무관 규칙으로 판정한다.
+     겹쳐 있는(공유) 경계는 A 쪽에서만 한 번 취해 중복을 막는다.            */
   /* op: 'unite' | 'intersect' | 'minus' | 'exclude'  (A op B) */
   PF.boolean = function (A, B, op) {
     if (!A.length) return op === 'unite' || op === 'exclude' ? normalize(B.slice()) : [];
     if (!B.length) return op === 'intersect' ? [] : normalize(A.slice());
 
     var ea = splitEdges(A, B), eb = splitEdges(B, A);
-    var keep = [], i, e, mx, my, eps = 1e-5;
 
-    function classify(list, other, self) {
-      var out = [];
-      for (i = 0; i < list.length; i++) {
-        e = list[i];
-        mx = (e.a.x + e.b.x) / 2; my = (e.a.y + e.b.y) / 2;
-        if (nearRings(other, mx, my, eps)) { e.on = true; }
-        e.inside = pointInRings(other, mx, my);
-        out.push(e);
-      }
-      return out;
-    }
-    classify(ea, B); classify(eb, A);
+    /* 좌표 규모에 맞춘 오프셋 */
+    var bb = AI.rect.empty();
+    A.concat(B).forEach(function (r) { r.forEach(function (p) { AI.rect.add(bb, p.x, p.y); }); });
+    var diag = Math.hypot(bb.x2 - bb.x, bb.y2 - bb.y) || 1;
+    var EPSN = Math.max(diag * 1e-6, 1e-9);
 
-    function push(list, wantInside, allowOn) {
-      for (i = 0; i < list.length; i++) {
-        e = list[i];
-        if (e.on) { if (allowOn) keep.push({ a: e.a, b: e.b }); continue; }
-        if (wantInside === null || e.inside === wantInside) keep.push({ a: e.a, b: e.b });
-      }
+    function pred(x, y) {
+      var ia = pointInRings(A, x, y), ib = pointInRings(B, x, y);
+      if (op === 'unite') return ia || ib;
+      if (op === 'intersect') return ia && ib;
+      if (op === 'minus') return ia && !ib;
+      return ia !== ib;                                   /* exclude */
     }
 
-    if (op === 'unite') { push(ea, false, true); push(eb, false, false); }
-    else if (op === 'intersect') { push(ea, true, true); push(eb, true, false); }
-    else if (op === 'minus') { push(ea, false, false); push(eb, true, false); }
-    else { push(ea, null, false); push(eb, null, false); } /* exclude */
+    /* A 에지의 무향 키 집합 (B 의 중복 경계 제거용) */
+    var akeys = Object.create(null);
+    ea.forEach(function (e) {
+      var k1 = key(e.a), k2 = key(e.b);
+      akeys[(k1 < k2 ? k1 + '|' + k2 : k2 + '|' + k1)] = 1;
+    });
+
+    var keep = [];
+    function collect(list, isB) {
+      for (var i = 0; i < list.length; i++) {
+        var e = list[i];
+        var dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
+        var len = Math.hypot(dx, dy);
+        if (len < 1e-12) continue;
+        if (isB) {
+          var k1 = key(e.a), k2 = key(e.b);
+          if (akeys[(k1 < k2 ? k1 + '|' + k2 : k2 + '|' + k1)]) continue;   /* A 와 공유 */
+        }
+        var off = Math.min(EPSN, len * 0.25);
+        var mx = (e.a.x + e.b.x) / 2, my = (e.a.y + e.b.y) / 2;
+        var nx = -dy / len * off, ny = dx / len * off;
+        if (pred(mx + nx, my + ny) !== pred(mx - nx, my - ny)) keep.push({ a: e.a, b: e.b });
+      }
+    }
+    collect(ea, false);
+    collect(eb, true);
 
     return normalize(chain(keep));
   };

@@ -327,6 +327,131 @@ await check('고해상도(DPR 1.5/2) 레이아웃', async () => {
   return out.join(', ') + ' 정상 렌더';
 });
 
+/* ---------------- 신규 기능 ---------------- */
+const PNG1x1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAF0lEQVR42mNk+M/wn4EIwDiqkL4KAcT9A/0k030hAAAAAElFTkSuQmCC';
+
+await check('이미지 배치 · 렌더 · 히트 · 저장', async () => {
+  const r = await page.evaluate(async (src) => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 300));
+    AI.viewT.setZoom(app, 1); app.view.tx = 0; app.view.ty = 0;
+    const it = AI.model.newImage(src, 50, 50, 120, 90);
+    app.doc.layers[0].children.push(it);
+    app.invalidate();
+    await new Promise(res => { const im = AI.render.getImage(src, res); if (im.complete) res(); });
+    AI.render.scene(app.canvas.getContext('2d'), app);
+    const b = AI.render.worldBounds(app.doc, it, true);
+    const hit = AI.hit.itemAt(app, 100, 90, false) === it;
+    const svg = AI.io.toSVG(app);
+    const json = JSON.parse(JSON.stringify({ doc: app.doc })).doc;
+    AI.io.normalizeDoc(json);
+    return {
+      bounds: [b.x, b.y, b.x2 - b.x, b.y2 - b.y], hit,
+      svgHasImage: /<image[^>]+href="data:image\/png/.test(svg),
+      jsonOk: json.layers[0].children[0].type === 'image' && json.layers[0].children[0].src === src
+    };
+  }, PNG1x1);
+  if (!r.hit) throw new Error('히트 실패');
+  if (String(r.bounds) !== '50,50,120,90') throw new Error('bounds=' + r.bounds);
+  if (!r.svgHasImage) throw new Error('SVG image 누락');
+  if (!r.jsonOk) throw new Error('JSON 왕복 실패');
+  return '배치/히트/SVG/JSON 모두 정상';
+});
+
+await check('문자 패널로 글꼴·크기·정렬 변경', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(800, 600));
+    const t = AI.model.newText(100, 100, '가나다 ABC');
+    app.doc.layers[0].children.push(t);
+    AI.sel.set(app, [t]);
+    AI.ui.syncAll(app);
+  });
+  await page.selectOption('#ty-font', 'Georgia, serif');
+  await page.fill('#ty-size', '48');
+  await page.press('#ty-size', 'Enter');
+  await page.click('[data-talign="center"]');
+  const t = await ev(() => { let r = null; AI.model.walk(AI.app.doc, it => { if (it.type === 'text') r = it.text; }); return r; });
+  if (t.family !== 'Georgia, serif' || t.size !== 48 || t.align !== 'center') throw new Error(JSON.stringify(t));
+  return `${t.family} / ${t.size}px / ${t.align}`;
+});
+
+await check('그레이디언트 패널 정지점 추가·이동·반전', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(800, 600));
+    const r = AI.model.newRect(50, 50, 200, 150, 0);
+    r.fill = AI.color.gradient('linear', '#ff0000', '#0000ff');
+    app.doc.layers[0].children.push(r);
+    AI.sel.set(app, [r]);
+    app.fillFocus = true;
+    AI.ui.syncAll(app);
+  });
+  const bar = await (await page.$('#gr-bar')).boundingBox();
+  await page.mouse.click(bar.x + bar.width * 0.5, bar.y + bar.height / 2);
+  await page.waitForTimeout(60);
+  const n1 = await ev(() => AI.app.sel[0].fill.stops.length);
+  if (n1 !== 3) throw new Error('정지점 추가 실패 n=' + n1);
+  const firstBefore = await ev(() => AI.app.sel[0].fill.stops[0].color);
+  await page.click('#gr-rev');
+  const firstAfter = await ev(() => AI.app.sel[0].fill.stops[0].color);
+  if (firstBefore === firstAfter) throw new Error('반전 실패');
+  await page.selectOption('#gr-type', 'radial');
+  const ty = await ev(() => AI.app.sel[0].fill.type);
+  if (ty !== 'radial') throw new Error('type=' + ty);
+  return `정지점 ${n1}개 / 반전 / ${ty}`;
+});
+
+await check('컨트롤 바 도구 옵션 (모퉁이·별·브러시)', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(800, 600));
+    const r = AI.model.newRect(50, 50, 200, 150, 0);
+    app.doc.layers[0].children.push(r);
+    AI.sel.set(app, [r]);
+    AI.ui.syncAll(app);
+  });
+  await page.keyboard.press('KeyM');
+  await page.fill('#to-r', '24');
+  await page.press('#to-r', 'Enter');
+  const rr = await ev(() => AI.app.sel[0].shape.r);
+  if (rr !== 24) throw new Error('모퉁이 반경=' + rr);
+  await ev(() => { AI.tools.setTool(AI.app, 'star', true); AI.ui.syncTool(AI.app); });
+  const hasN = await page.evaluate(() => !!document.getElementById('to-n'));
+  await ev(() => { AI.tools.setTool(AI.app, 'brush', true); AI.ui.syncTool(AI.app); });
+  await page.fill('#to-bw', '9');
+  await page.press('#to-bw', 'Enter');
+  const bw = await ev(() => AI.app.brushWidth);
+  await page.keyboard.press('KeyV');
+  if (!hasN || bw !== 9) throw new Error(`hasN=${hasN} brushWidth=${bw}`);
+  return '모퉁이 24 / 별 옵션 / 브러시 폭 9';
+});
+
+await check('패스파인더 나누기·병합', async () => {
+  const r = await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(800, 600));
+    const L = app.doc.layers[0];
+    const a = AI.model.newRect(0, 0, 100, 100, 0), b = AI.model.newRect(50, 50, 100, 100, 0);
+    a.fill = AI.color.solid('#ff0000'); b.fill = AI.color.solid('#ff0000');
+    L.children.push(a, b);
+    AI.sel.set(app, [a, b]);
+    AI.commands.run('pf_divide');
+    const pieces = app.sel[0].children ? app.sel[0].children.length : 0;
+    AI.commands.run('undo');
+    const a2 = app.doc.layers[0].children[0], b2 = app.doc.layers[0].children[1];
+    AI.sel.set(app, [a2, b2]);
+    AI.commands.run('pf_merge');
+    const it = app.sel[0];
+    const rings = AI.edit.itemRings(app, it.type === 'group' ? it.children[0] : it);
+    const area = Math.round(rings.reduce((s, x) => s + Math.abs(AI.pathfinder.area(x)), 0));
+    return { pieces, mergedArea: area };
+  });
+  if (r.pieces !== 3) throw new Error('divide 조각=' + r.pieces);
+  if (Math.abs(r.mergedArea - 17500) > 40) throw new Error('merge 면적=' + r.mergedArea);
+  return `나누기 ${r.pieces}조각 / 병합 면적 ${r.mergedArea}`;
+});
+
 /* ---------------- 결과 ---------------- */
 console.log('\n=== Illymolly E2E ===');
 for (const [n, s, d] of results) console.log(`${s === 'OK' ? '✔' : '✘'} ${n}${d ? ' — ' + d : ''}`);

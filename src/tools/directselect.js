@@ -104,9 +104,8 @@
         var p2 = AI.viewT.toDoc(app, app.marquee.x2, app.marquee.y2);
         var rect = R.fromPts(p1.x, p1.y, p2.x, p2.y);
         var list = st.additive ? st.base.slice() : [];
-        H.allPathItems(app).forEach(function (it) {
-          if (Model.effLocked(app.doc, it) || !Model.effVisible(app.doc, it)) return;
-          var wm = Model.worldMatrix(app.doc, it);
+        H.editablePaths(app).forEach(function (o) {
+          var it = o.it, wm = o.m;
           it.subs.forEach(function (sub, si) {
             sub.pts.forEach(function (p, pi) {
               var w = M.apply(wm, p.x, p.y);

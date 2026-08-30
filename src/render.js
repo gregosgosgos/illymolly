@@ -24,9 +24,24 @@
     var lh = t.size * (t.leading || 1.2);
     return { w: w, h: (lines.length - 1) * lh + t.size, lineH: lh, lines: lines, asc: t.size * 0.8 };
   };
+  /* ---------------- 이미지 캐시 ---------------- */
+  Rn.imageCache = Object.create(null);
+  Rn.getImage = function (src, onLoad) {
+    var im = Rn.imageCache[src];
+    if (!im) {
+      im = new Image();
+      Rn.imageCache[src] = im;
+      im.onload = function () { if (onLoad) onLoad(); };
+      im.onerror = function () { im.__failed = true; if (onLoad) onLoad(); };
+      im.src = src;
+    }
+    return im;
+  };
+
   /* ---------------- 아이템 바운딩 (로컬) ---------------- */
   Rn.localBounds = function (it) {
     if (it.type === 'path') return G.pathBounds(it, null);
+    if (it.type === 'image') return { x: 0, y: 0, x2: it.w, y2: it.h };
     if (it.type === 'text') {
       var m = Rn.measureText(it), t = it.text, x0 = 0;
       if (t.align === 'center') x0 = -m.w / 2; else if (t.align === 'right') x0 = -m.w;
@@ -53,21 +68,26 @@
     return r;
   };
 
-  /* 월드 바운딩 (문서 좌표) — geo=true 면 획 두께 무시 */
-  Rn.worldBounds = function (doc, it, geo) {
-    var wm = Model.worldMatrix(doc, it);
-    var b;
+  /* 누적 행렬 m 을 직접 받는 바운딩 — 트리를 되짚지 않으므로 O(항목수)
+     sw: 획 두께에 곱할 배율 (화면 좌표계 계산 시 view.scale) */
+  Rn.boundsM = function (it, m, geo, sw) {
     if (it.type === 'group') {
       var r = R.empty();
-      for (var i = 0; i < it.children.length; i++) r = R.union(r, Rn.worldBounds(doc, it.children[i], geo));
+      for (var i = 0; i < it.children.length; i++) {
+        r = R.union(r, Rn.boundsM(it.children[i], M.mul(m, it.children[i].m), geo, sw));
+      }
       return r;
     }
-    if (it.type === 'path') b = G.pathBounds(it, wm);
-    else b = Rn.xformBounds(Rn.localBounds(it), wm);
-    if (!geo && it.stroke && it.stroke.type !== 'none' && it.type === 'path') {
-      b = R.grow(b, (it.stroke.width || 0) / 2);
+    var b = (it.type === 'path') ? G.pathBounds(it, m) : Rn.xformBounds(Rn.localBounds(it), m);
+    if (!geo && it.type === 'path' && it.stroke && it.stroke.type !== 'none') {
+      b = R.grow(b, (it.stroke.width || 0) * (sw == null ? 1 : sw) / 2);
     }
     return b;
+  };
+
+  /* 월드 바운딩 (문서 좌표) — geo=true 면 획 두께 무시 */
+  Rn.worldBounds = function (doc, it, geo) {
+    return Rn.boundsM(it, Model.worldMatrix(doc, it), geo, 1);
   };
 
   Rn.selectionBounds = function (app, geo) {
@@ -229,6 +249,7 @@
 
     if (it.type === 'path') drawPath(ctx, app, it, m);
     else if (it.type === 'text') drawText(ctx, app, it, m);
+    else if (it.type === 'image') drawImage(ctx, app, it, m);
     ctx.restore();
   };
 
@@ -260,6 +281,23 @@
       ctx.stroke();
       ctx.setLineDash([]);
     }
+  }
+
+  function drawImage(ctx, app, it, m) {
+    var im = Rn.getImage(it.src, function () { app.invalidate && app.invalidate(); });
+    ctx.save();
+    ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
+    if (im.complete && im.naturalWidth && !im.__failed) {
+      ctx.imageSmoothingQuality = 'high';
+      try { ctx.drawImage(im, 0, 0, it.w, it.h); } catch (e) { }
+    } else {
+      ctx.fillStyle = 'rgba(150,150,150,.25)';
+      ctx.fillRect(0, 0, it.w, it.h);
+      ctx.strokeStyle = 'rgba(120,120,120,.7)';
+      ctx.lineWidth = 1 / Math.max(Math.hypot(m[0], m[1]), 1e-6);
+      ctx.strokeRect(0, 0, it.w, it.h);
+    }
+    ctx.restore();
   }
 
   function drawText(ctx, app, it, m) {

@@ -41,6 +41,7 @@
   def('open', '열기...', 'Ctrl+O', function (a) { AI.io.openFile(a); });
   def('save', '저장', 'Ctrl+S', function (a) { AI.io.save(a); });
   def('saveAs', '다른 이름으로 저장...', 'Ctrl+Shift+S', function (a) { AI.io.save(a, true); });
+  def('place', '가져오기(이미지)...', 'Ctrl+Shift+P', function (a) { AI.io.placeImage(a); });
   def('exportSvg', 'SVG로 내보내기...', 'Ctrl+Shift+E', function (a) { AI.io.exportSVG(a); });
   def('exportPng', 'PNG로 내보내기...', 'Ctrl+Alt+E', function (a) { AI.io.exportPNG(a); });
   def('docSetup', '문서 설정...', 'Ctrl+Alt+P', function (a) { AI.io.docSetup(a); });
@@ -386,7 +387,7 @@
   /* ================= 메뉴 구조 ================= */
   C.MENUS = [
     {
-      title: '파일', items: ['new', 'open', '-', 'save', 'saveAs', '-', 'exportSvg', 'exportPng', '-', 'docSetup']
+      title: '파일', items: ['new', 'open', '-', 'save', 'saveAs', '-', 'place', '-', 'exportSvg', 'exportPng', '-', 'docSetup']
     },
     {
       title: '편집', items: ['undo', 'redo', '-', 'cut', 'copy', 'paste', 'pasteFront', 'pasteBack', 'pasteInPlace', '-', 'clear', 'duplicate']

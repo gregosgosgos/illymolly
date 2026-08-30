@@ -103,6 +103,7 @@
   function itemLabel(it) {
     if (it.type === 'text') return '<' + (it.text.content.split('\n')[0].slice(0, 14) || '텍스트') + '>';
     if (it.type === 'group') return it.clip ? '클립 그룹' : '그룹';
+    if (it.type === 'image') return it.name || '이미지';
     return it.name || '패스';
   }
 

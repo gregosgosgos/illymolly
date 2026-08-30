@@ -47,7 +47,13 @@
       onDown: function (app, e) {
         app.history.begin(name, app.doc);
         var d = AI.viewT.toDoc(app, e.x, e.y);
-        st = { kind: kind, start: d, item: null, n: (app.shapeOpts && app.shapeOpts[kind] && app.shapeOpts[kind].n) || (defaults && defaults.n) || 6, moved: false };
+        var o = (app.shapeOpts && app.shapeOpts[kind]) || {};
+        st = {
+          kind: kind, start: d, item: null, moved: false,
+          n: o.n || (defaults && defaults.n) || 6,
+          r: kind === 'roundrect' ? (o.r == null ? null : o.r) : (o.r || 0),
+          ratio: o.ratio == null ? 0.5 : o.ratio
+        };
       },
       onMove: function (app, e) {
         if (!st || !e.down) return;
@@ -67,7 +73,7 @@
         if (kind === 'polygon' || kind === 'star') {
           var rr = Math.hypot(dx, dy);
           var ang = Math.atan2(dy, dx) + Math.PI / 2;
-          it = makeShape(app, kind, sx, sy, rr, rr, { n: st.n, ratio: 0.5 });
+          it = makeShape(app, kind, sx, sy, rr, rr, { n: st.n, ratio: st.ratio });
           it.m = M.mulAll(M.translate(sx, sy), M.rotate(e.shift ? 0 : ang), M.translate(-rr, -rr));
         } else if (w < 0 || h < 0) {
           it = makeShape(app, kind, Math.min(x, x + w), Math.min(y, y + h), Math.abs(w), Math.abs(h), { r: st.r });
@@ -85,7 +91,7 @@
           /* 클릭만 = 기본 크기 */
           var d = st.start;
           var it = (kind === 'polygon' || kind === 'star')
-            ? makeShape(app, kind, d.x, d.y, 50, 50, { n: st.n, ratio: 0.5 })
+            ? makeShape(app, kind, d.x, d.y, 50, 50, { n: st.n, ratio: st.ratio })
             : makeShape(app, kind, d.x, d.y, 100, kind === 'line' ? 0 : 100, { r: st.r });
           if (kind === 'line') { it = makeShape(app, kind, d.x, d.y, 100, 0, {}); }
           place(app, it);
@@ -103,7 +109,10 @@
         else return false;
         st.item.shape.n = st.n;
         Model.buildShape(st.item);
-        app.shapeOpts = app.shapeOpts || {}; app.shapeOpts[kind] = { n: st.n };
+        app.shapeOpts = app.shapeOpts || {};
+        app.shapeOpts[kind] = app.shapeOpts[kind] || {};
+        app.shapeOpts[kind].n = st.n;
+        AI.ui && AI.ui.buildToolOptions && AI.ui.buildToolOptions(app);
         app.invalidate();
         return true;
       }

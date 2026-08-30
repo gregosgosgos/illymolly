@@ -423,12 +423,86 @@ const out = await page.evaluate(() => {
       `d=(${(w1.x - w0.x).toFixed(2)},${(w1.y - w0.y).toFixed(2)})`);
   } catch (e) { ok('앵커 이동', false, e.message); }
 
+  /* ---------- 22b. 불리언 강건성 (곡선·포함·다중) ---------- */
+  try {
+    const rings = it => E.itemRings(app, it);
+    const sum = rs => Math.abs(rs.reduce((s, r) => s + PF.area(r), 0));
+
+    fresh();
+    let L = app.doc.layers[0];
+    const c1 = Mo.newEllipse(0, 0, 200, 200), c2 = Mo.newEllipse(100, 0, 200, 200);
+    L.children.push(c1, c2);
+    /* 두 원(r=100, 중심거리 100) 교집합 넓이 = 2r²cos⁻¹(d/2r) − (d/2)√(4r²−d²) */
+    const r0 = 100, d0 = 100;
+    const lens = 2 * r0 * r0 * Math.acos(d0 / (2 * r0)) - (d0 / 2) * Math.sqrt(4 * r0 * r0 - d0 * d0);
+    AI.sel.set(app, [c1, c2]);
+    E.pathfinder(app, 'intersect');
+    ok('원∩원 면적 (해석해 비교)', near(sum(rings(app.sel[0])), lens, lens * 0.01),
+      sum(rings(app.sel[0])).toFixed(1) + ' vs ' + lens.toFixed(1));
+
+    fresh(); L = app.doc.layers[0];
+    const u1 = Mo.newEllipse(0, 0, 200, 200), u2 = Mo.newEllipse(100, 0, 200, 200);
+    L.children.push(u1, u2);
+    AI.sel.set(app, [u1, u2]);
+    E.pathfinder(app, 'unite');
+    const expectU = 2 * Math.PI * 1e4 - lens;
+    ok('원∪원 면적', near(sum(rings(app.sel[0])), expectU, expectU * 0.01),
+      sum(rings(app.sel[0])).toFixed(1) + ' vs ' + expectU.toFixed(1));
+
+    /* A 가 B 를 완전히 포함 -> 도넛 */
+    fresh(); L = app.doc.layers[0];
+    const big = Mo.newRect(0, 0, 200, 200, 0), small = Mo.newRect(80, 80, 40, 40, 0);
+    L.children.push(big, small);
+    AI.sel.set(app, [big, small]);
+    E.pathfinder(app, 'minusFront');
+    ok('포함 관계 minus -> 구멍', app.sel[0].subs.length === 2 && near(sum(rings(app.sel[0])), 40000 - 1600, 20),
+      'subs=' + app.sel[0].subs.length + ' area=' + sum(rings(app.sel[0])).toFixed(0));
+
+    /* B 가 A 를 완전히 포함 -> 빈 결과 */
+    fresh(); L = app.doc.layers[0];
+    const inner = Mo.newRect(80, 80, 40, 40, 0), outer = Mo.newRect(0, 0, 200, 200, 0);
+    L.children.push(inner, outer);
+    AI.sel.set(app, [inner, outer]);
+    const before = L.children.length;
+    E.pathfinder(app, 'minusFront');
+    ok('완전 포함 minus -> 빈 결과', L.children.length === before, 'children=' + L.children.length);
+
+    /* 5개 원 합치기 */
+    fresh(); L = app.doc.layers[0];
+    const cs = [];
+    for (let i = 0; i < 5; i++) { const c = Mo.newEllipse(i * 60, 0, 120, 120); L.children.push(c); cs.push(c); }
+    AI.sel.set(app, cs);
+    E.pathfinder(app, 'unite');
+    const merged = sum(rings(app.sel[0]));
+    ok('원 5개 합치기 (단일 링)', app.sel[0].subs.length === 1 && merged > Math.PI * 3600 && merged < 5 * Math.PI * 3600,
+      'subs=' + app.sel[0].subs.length + ' area=' + merged.toFixed(0));
+
+    /* 별 ∩ 원 */
+    fresh(); L = app.doc.layers[0];
+    const star = Mo.newStar(100, 100, 90, 40, 7), circ = Mo.newEllipse(30, 30, 140, 140);
+    L.children.push(star, circ);
+    AI.sel.set(app, [star, circ]);
+    E.pathfinder(app, 'intersect');
+    const ia = sum(rings(app.sel[0]));
+    ok('별 ∩ 원 결과 유효', app.sel.length === 1 && ia > 0 && ia < Math.PI * 70 * 70 + 1, 'area=' + ia.toFixed(0));
+
+    /* 인접(변 공유) 사각형 합치기 -> 내부 벽 제거 */
+    fresh(); L = app.doc.layers[0];
+    const t1 = Mo.newRect(0, 0, 100, 100, 0), t2 = Mo.newRect(100, 0, 100, 100, 0);
+    L.children.push(t1, t2);
+    AI.sel.set(app, [t1, t2]);
+    E.pathfinder(app, 'unite');
+    ok('변을 공유한 사각형 합치기', app.sel[0].subs.length === 1 && near(sum(rings(app.sel[0])), 20000, 5),
+      'subs=' + app.sel[0].subs.length + ' area=' + sum(rings(app.sel[0])).toFixed(0));
+  } catch (e) { ok('불리언 강건성', false, e.message); }
+
   /* ---------- 23. 성능 ---------- */
   try {
     fresh();
     const L = app.doc.layers[0];
-    for (let i = 0; i < 600; i++) {
-      const r = Mo.newRect((i % 30) * 25, Math.floor(i / 30) * 25, 20, 20, 0);
+    const N = 2000;
+    for (let i = 0; i < N; i++) {
+      const r = Mo.newRect((i % 50) * 16, Math.floor(i / 50) * 16, 12, 12, 0);
       r.fill = AI.color.solid('#88aaff');
       L.children.push(r);
     }
@@ -445,10 +519,18 @@ const out = await page.evaluate(() => {
     const t3 = performance.now();
     Rn.selectionBounds(app, true);
     const tBounds = performance.now() - t3;
-    ok('600개 렌더 < 200ms', tRender < 200, tRender.toFixed(1) + 'ms');
-    ok('히트 테스트 1회 < 20ms', tHit < 20, tHit.toFixed(2) + 'ms');
-    ok('200개 이동 < 150ms', tMove < 150, tMove.toFixed(1) + 'ms');
-    ok('200개 바운딩 < 100ms', tBounds < 100, tBounds.toFixed(1) + 'ms');
+    const t4 = performance.now();
+    AI.hit.itemsInRect(app, { x: 0, y: 0, x2: 400, y2: 400 }, false);
+    const tRect = performance.now() - t4;
+    const t5 = performance.now();
+    E.collectSnapTargets(app, app.sel);
+    const tSnap = performance.now() - t5;
+    ok('2000개 렌더 < 200ms', tRender < 200, tRender.toFixed(1) + 'ms');
+    ok('히트 테스트 1회 < 10ms', tHit < 10, tHit.toFixed(2) + 'ms');
+    ok('200개 이동 < 100ms', tMove < 100, tMove.toFixed(1) + 'ms');
+    ok('200개 바운딩 < 60ms', tBounds < 60, tBounds.toFixed(1) + 'ms');
+    ok('마퀴 검색 < 60ms', tRect < 60, tRect.toFixed(1) + 'ms');
+    ok('스냅 타깃 수집 < 60ms', tSnap < 60, tSnap.toFixed(1) + 'ms');
   } catch (e) { ok('성능', false, e.message); }
 
   fresh();

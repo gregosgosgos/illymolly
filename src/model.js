@@ -63,6 +63,16 @@
     return it;
   };
 
+  Model.newImage = function (src, x, y, w, h) {
+    var it = base('image', '이미지');
+    it.src = src;
+    it.w = w; it.h = h;
+    it.m = M.translate(x, y);
+    it.fill = Col.none();
+    it.stroke = Model.defaultStroke();
+    return it;
+  };
+
   Model.newText = function (x, y, content) {
     var it = base('text', '텍스트');
     it.m = M.translate(x, y);
@@ -233,6 +243,32 @@
     }
     for (var L = 0; L < doc.layers.length; L++) {
       if (rec(doc.layers[L].children, null, doc.layers[L]) === false) return;
+    }
+  };
+
+  /* 월드 행렬 · 유효 잠금/표시 상태를 누적하며 한 번에 순회 (O(n))
+     fn(item, info) — info = {m, locked, visible, list, index, parent, layer, depth}
+     fn 이 false 를 반환하면 그 아이템의 하위(그룹 자식)는 건너뛴다. */
+  Model.walkWorld = function (doc, fn, opts) {
+    opts = opts || {};
+    function rec(list, pm, locked, visible, parent, layer, depth) {
+      for (var i = 0; i < list.length; i++) {
+        var it = list[i];
+        var lk = locked || !!it.locked;
+        var vi = visible && it.visible !== false;
+        if (opts.skipLocked && lk) continue;
+        if (opts.skipHidden && !vi) continue;
+        var m = M.mul(pm, it.m);
+        var r = fn(it, { m: m, locked: lk, visible: vi, list: list, index: i, parent: parent, layer: layer, depth: depth });
+        if (r === false) continue;
+        if (it.type === 'group') rec(it.children, m, lk, vi, it, layer, depth + 1);
+      }
+    }
+    for (var L = 0; L < doc.layers.length; L++) {
+      var ly = doc.layers[L];
+      if (opts.skipLocked && ly.locked) continue;
+      if (opts.skipHidden && !ly.visible) continue;
+      rec(ly.children, opts.base || M.ident(), !!ly.locked, ly.visible !== false, null, ly, 0);
     }
   };
 

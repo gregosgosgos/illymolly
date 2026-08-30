@@ -39,6 +39,41 @@
     app.invalidate();
   };
 
+  /* ---------------- 이미지 배치 ---------------- */
+  IO.placeImage = function (app) {
+    var inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'image/png,image/jpeg,image/gif,image/webp,image/svg+xml';
+    inp.onchange = function () {
+      var f = inp.files[0];
+      if (!f) return;
+      var r = new FileReader();
+      r.onload = function () {
+        var src = String(r.result);
+        var probe = new Image();
+        probe.onload = function () {
+          var ab = app.doc.artboards[app.doc.activeArtboard];
+          var iw = probe.naturalWidth || 100, ih = probe.naturalHeight || 100;
+          var k = Math.min(1, ab.w * 0.8 / iw, ab.h * 0.8 / ih);
+          var w = iw * k, h = ih * k;
+          app.history.begin('이미지 배치', app.doc);
+          var it = Model.newImage(src, ab.x + (ab.w - w) / 2, ab.y + (ab.h - h) / 2, w, h);
+          it.name = f.name;
+          Model.activeLayer(app.doc).children.push(it);
+          AI.sel.set(app, [it]);
+          app.history.commit();
+          app.invalidate();
+          AI.ui.syncAll(app);
+          U.toast('이미지 배치: ' + f.name + ' (' + iw + '×' + ih + ')');
+        };
+        probe.onerror = function () { U.toast('이미지를 읽을 수 없습니다'); };
+        probe.src = src;
+      };
+      r.readAsDataURL(f);
+    };
+    inp.click();
+  };
+
   IO.save = function (app, asNew) {
     var name = app.doc.name;
     if (asNew) {
@@ -141,6 +176,10 @@
       if (it.stroke.dash && it.stroke.dash.length) style += ' stroke-dasharray="' + it.stroke.dash.join(' ') + '"';
     }
     if (it.type === 'path') return '<path' + tr + op + ' d="' + G.toSvgD(it, null) + '"' + style + '/>';
+    if (it.type === 'image') {
+      return '<image' + tr + op + ' x="0" y="0" width="' + U.round(it.w, 3) + '" height="' + U.round(it.h, 3) +
+        '" preserveAspectRatio="none" href="' + escXml(it.src) + '"/>';
+    }
     if (it.type === 'text') {
       var t = it.text, lh = t.size * (t.leading || 1.2);
       var lines = String(t.content).split('\n').map(function (l, i) {
@@ -267,6 +306,11 @@
           var arr = [];
           for (var k = 0; k + 1 < pts.length; k += 2) arr.push({ x: pts[k], y: pts[k + 1] });
           it = Model.newPath([{ closed: tag === 'polygon', pts: arr }]);
+        } else if (tag === 'image') {
+          var href = c.getAttribute('href') || c.getAttributeNS('http://www.w3.org/1999/xlink', 'href') || '';
+          if (!href) continue;
+          it = Model.newImage(href, +c.getAttribute('x') || 0, +c.getAttribute('y') || 0,
+            +c.getAttribute('width') || 100, +c.getAttribute('height') || 100);
         } else if (tag === 'text') {
           it = Model.newText(+c.getAttribute('x') || 0, +c.getAttribute('y') || 0, c.textContent || '');
           it.text.size = parseFloat(c.getAttribute('font-size')) || 24;
@@ -274,7 +318,7 @@
         if (!it) continue;
         var tm = parseTransform(c.getAttribute('transform'));
         if (!M.isIdent(tm)) it.m = M.mul(tm, it.m);
-        styleOf(c, it);
+        if (it.type !== 'image') styleOf(c, it);
         parentList.push(it);
       }
     }

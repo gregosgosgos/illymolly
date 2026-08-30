@@ -9,20 +9,14 @@
 
   H.TOL = 4; /* 화면 픽셀 */
 
-  /* 아이템(화면 좌표) 히트 */
-  H.testItem = function (app, it, sx, sy, vm) {
-    if (!it.visible) return false;
-    var m = M.mul(vm, Model.worldMatrix(app.doc, it));
-    if (it.type === 'group') {
-      for (var i = it.children.length - 1; i >= 0; i--) if (H.testItem(app, it.children[i], sx, sy, vm)) return true;
-      return false;
-    }
-    if (it.type === 'text') {
+  /* 아이템(화면 좌표) 히트 — m 은 이미 합성된 (view × world) 행렬 */
+  H.testItemM = function (app, it, sx, sy, m) {
+    if (it.type === 'text' || it.type === 'image') {
       var b = Rn.localBounds(it);
-      var inv = M.invert(m), p = M.apply(inv, sx, sy);
+      var p = M.apply(M.invert(m), sx, sy);
       return p.x >= b.x - 1 && p.x <= b.x2 + 1 && p.y >= b.y - 1 && p.y <= b.y2 + 1;
     }
-    /* path */
+    if (it.type !== 'path') return false;
     hctx.setTransform(1, 0, 0, 1, 0, 0);
     hctx.beginPath();
     G.tracePath(hctx, it, m);
@@ -32,30 +26,46 @@
     var sw = (it.stroke && it.stroke.type !== 'none') ? it.stroke.width * app.view.scale : 0;
     hctx.lineWidth = Math.max(sw, H.TOL * 2);
     hctx.lineJoin = 'round'; hctx.lineCap = 'round';
-    if (hctx.isPointInStroke(sx, sy)) return true;
-    return false;
+    return hctx.isPointInStroke(sx, sy);
   };
 
-  /* 클릭 지점의 아이템 — deep=true 면 그룹 내부 아이템 반환 */
-  H.itemAt = function (app, sx, sy, deep) {
-    var vm = AI.viewT.matrix(app), doc = app.doc, res = null;
-    for (var L = doc.layers.length - 1; L >= 0 && !res; L--) {
-      var ly = doc.layers[L];
-      if (!ly.visible || ly.locked) continue;
-      res = scan(ly.children);
+  H.testItem = function (app, it, sx, sy, vm) {
+    if (!it.visible) return false;
+    var m = M.mul(vm, Model.worldMatrix(app.doc, it));
+    if (it.type === 'group') {
+      for (var i = it.children.length - 1; i >= 0; i--) if (H.testItem(app, it.children[i], sx, sy, vm)) return true;
+      return false;
     }
-    function scan(list) {
+    return H.testItemM(app, it, sx, sy, m);
+  };
+
+  /* 클릭 지점의 아이템 — deep=true 면 그룹 내부 아이템 반환
+     행렬을 하향 누적하고 화면 바운딩으로 먼저 걸러 O(n) 로 동작한다. */
+  H.itemAt = function (app, sx, sy, deep) {
+    var vm = AI.viewT.matrix(app), doc = app.doc, tol = H.TOL + 2, sc = app.view.scale;
+
+    function scan(list, pm) {
       for (var i = list.length - 1; i >= 0; i--) {
         var it = list[i];
         if (!it.visible || it.locked) continue;
+        var m = M.mul(pm, it.m);
+        var b = Rn.boundsM(it, m, false, sc);
+        if (R.isEmpty(b) || !R.has(R.grow(b, tol), sx, sy)) continue;
         if (it.type === 'group') {
-          var inner = scan(it.children);
+          var inner = scan(it.children, m);
           if (inner) return deep ? inner : it;
-        } else if (H.testItem(app, it, sx, sy, vm)) return it;
+        } else if (H.testItemM(app, it, sx, sy, m)) return it;
       }
       return null;
     }
-    return res;
+
+    for (var L = doc.layers.length - 1; L >= 0; L--) {
+      var ly = doc.layers[L];
+      if (!ly.visible || ly.locked) continue;
+      var res = scan(ly.children, vm);
+      if (res) return res;
+    }
+    return null;
   };
 
   /* 격리 모드 / 그룹 컨텍스트를 고려한 선택 대상 */
@@ -91,36 +101,52 @@
   function topAncestor(doc, it) { var c = ancestors(doc, it); return c[0] || it; }
   H.topAncestor = topAncestor;
 
-  /* 사각 영역과 교차하는 아이템(최상위) */
+  /* 사각 영역과 교차하는 아이템 (문서 좌표)
+     deep=false 면 레이어 직속 아이템만, deep=true 면 말단 아이템까지 */
   H.itemsInRect = function (app, r, deep) {
-    var out = [], doc = app.doc;
-    doc.layers.forEach(function (ly) {
+    var out = [];
+    function scan(list, pm) {
+      for (var i = 0; i < list.length; i++) {
+        var it = list[i];
+        if (!it.visible || it.locked) continue;
+        var m = M.mul(pm, it.m);
+        var b = Rn.boundsM(it, m, false, 1);
+        if (R.isEmpty(b) || !R.hit(b, r)) continue;
+        if (it.type === 'group' && deep) scan(it.children, m);
+        else out.push(it);
+      }
+    }
+    app.doc.layers.forEach(function (ly) {
       if (!ly.visible || ly.locked) return;
-      (function scan(list) {
-        list.forEach(function (it) {
-          if (!it.visible || it.locked) return;
-          var b = Rn.worldBounds(doc, it);
-          if (R.isEmpty(b) || !R.hit(b, r)) return;
-          if (it.type === 'group' && deep) scan(it.children);
-          else out.push(it);
-        });
-      })(ly.children);
+      scan(ly.children, M.ident());
     });
+    return out;
+  };
+
+  /* 편집 가능한 패스 목록 (월드 행렬 동반) */
+  H.editablePaths = function (app) {
+    var out = [];
+    Model.walkWorld(app.doc, function (it, info) {
+      if (it.type === 'path') out.push({ it: it, m: info.m });
+    }, { skipLocked: true, skipHidden: true });
     return out;
   };
 
   /* 앵커 포인트 히트 (직접 선택) */
   H.anchorAt = function (app, sx, sy, items) {
-    var vm = AI.viewT.matrix(app), best = null;
-    (items || allPathItems(app)).forEach(function (it) {
-      if (it.type !== 'path') return;
-      if (Model.effLocked(app.doc, it)) return;
-      var wm = M.mul(vm, Model.worldMatrix(app.doc, it));
-      it.subs.forEach(function (sub, si) {
+    var vm = AI.viewT.matrix(app), best = null, tol = H.TOL + 2;
+    var list = items
+      ? items.filter(function (i) { return i.type === 'path'; })
+        .map(function (i) { return { it: i, m: Model.worldMatrix(app.doc, i) }; })
+      : H.editablePaths(app);
+    list.forEach(function (o) {
+      var wm = M.mul(vm, o.m);
+      o.it.subs.forEach(function (sub, si) {
         sub.pts.forEach(function (p, pi) {
           var sp = M.apply(wm, p.x, p.y);
+          if (Math.abs(sp.x - sx) > tol || Math.abs(sp.y - sy) > tol) return;
           var d = U.dist(sp.x, sp.y, sx, sy);
-          if (d <= H.TOL + 2 && (!best || d < best.d)) best = { d: d, it: it, si: si, pi: pi, part: 'a' };
+          if (d <= tol && (!best || d < best.d)) best = { d: d, it: o.it, si: si, pi: pi, part: 'a' };
         });
       });
     });
@@ -150,24 +176,27 @@
 
   /* 패스 위(세그먼트) 히트 */
   H.segmentAt = function (app, sx, sy, items) {
-    var vm = AI.viewT.matrix(app), best = null;
-    (items || allPathItems(app)).forEach(function (it) {
-      if (it.type !== 'path' || Model.effLocked(app.doc, it)) return;
-      var wm = M.mul(vm, Model.worldMatrix(app.doc, it));
+    var vm = AI.viewT.matrix(app), best = null, tol = H.TOL + 2, sc = app.view.scale;
+    var list = items
+      ? items.filter(function (i) { return i.type === 'path'; })
+        .map(function (i) { return { it: i, m: Model.worldMatrix(app.doc, i) }; })
+      : H.editablePaths(app);
+    list.forEach(function (o) {
+      var wm = M.mul(vm, o.m);
+      var b = Rn.boundsM(o.it, wm, false, sc);
+      if (R.isEmpty(b) || !R.has(R.grow(b, tol), sx, sy)) return;
       var inv = M.invert(wm), lp = M.apply(inv, sx, sy);
-      var n = G.nearestOnPath(it, lp.x, lp.y);
+      var n = G.nearestOnPath(o.it, lp.x, lp.y);
       if (!n) return;
       var sp = M.apply(wm, n.x, n.y);
       var d = U.dist(sp.x, sp.y, sx, sy);
-      if (d <= H.TOL + 2 && (!best || d < best.d)) best = { d: d, it: it, sub: n.sub, seg: n.seg, t: n.t, x: n.x, y: n.y };
+      if (d <= tol && (!best || d < best.d)) best = { d: d, it: o.it, sub: n.sub, seg: n.seg, t: n.t, x: n.x, y: n.y };
     });
     return best;
   };
 
   function allPathItems(app) {
-    var out = [];
-    Model.walk(app.doc, function (it) { if (it.type === 'path') out.push(it); });
-    return out;
+    return H.editablePaths(app).map(function (o) { return o.it; });
   }
   H.allPathItems = allPathItems;
 

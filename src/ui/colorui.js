@@ -91,6 +91,10 @@
     if (document.activeElement !== hx) hx.value = hex;
 
     var a = appRef;
+    if (a.gradStopEdit) {
+      if (!state.began && a.sel.length) { a.history.begin('정지점 색상', a.doc); state.began = true; }
+      if (UI.setGradientStopColor(a, hex)) { a.lastColor = hex; return; }
+    }
     var paint = Col.solid(hex);
     if (a.fillFocus) a.fill = paint; else a.stroke = paint;
     a.lastColor = hex;
@@ -105,6 +109,7 @@
   function close() {
     if (!pop) return;
     if (state && state.began) { appRef.history.commit(); state.began = false; }
+    if (appRef) appRef.gradStopEdit = false;
     pop.hidden = true;
   }
   UI.closeColorPicker = close;
@@ -114,6 +119,17 @@
     if (!pop) build();
     var cur = app.fillFocus ? app.fill : app.stroke;
     var hex = (cur && cur.type === 'solid') ? cur.color : (app.lastColor || '#000000');
+    if (app.gradStopEdit) {
+      var sw = document.querySelector('#gr-color i');
+      if (sw && sw.style.background) {
+        var probe = document.createElement('div');
+        probe.style.color = sw.style.background;
+        document.body.appendChild(probe);
+        var m = getComputedStyle(probe).color.match(/\d+/g);
+        probe.remove();
+        if (m) hex = Col.rgbToHex(+m[0], +m[1], +m[2]);
+      }
+    }
     var rgb = Col.hexToRgb(hex), hsb = Col.rgbToHsb(rgb.r, rgb.g, rgb.b);
     state = { h: hsb.h, s: hsb.s, v: hsb.b, began: false };
     pop.hidden = false;

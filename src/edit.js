@@ -270,6 +270,7 @@
     targets.forEach(function (it) {
       (function rec(o) {
         if (o.type === 'group') { o.children.forEach(rec); return; }
+        if (o.type === 'image') return;
         if (which === 'stroke') {
           var s = o.stroke || Model.defaultStroke();
           if (paint.type === 'none') s.type = 'none';
@@ -307,6 +308,23 @@
         o.fill = nf; o.stroke = ns;
       })(it);
     });
+  };
+
+  /* 선택된 라이브 셰이프의 속성 변경 (모퉁이 반경, 변 수, 별 비율 …) */
+  E.updateShape = function (app, kinds, key, value) {
+    var any = false;
+    app.sel.forEach(function (it) {
+      (function rec(o) {
+        if (o.type === 'group') { o.children.forEach(rec); return; }
+        if (o.type !== 'path' || !o.shape) return;
+        if (kinds.indexOf(o.shape.kind) < 0) return;
+        if (key === 'ratio') o.shape.r2 = o.shape.r * value;
+        else o.shape[key] = value;
+        Model.buildShape(o);
+        any = true;
+      })(it);
+    });
+    return any;
   };
 
   /* ---------------- 클리핑 마스크 ---------------- */
@@ -575,14 +593,14 @@
       ys.push(ab.y, ab.y + ab.h / 2, ab.y + ab.h);
     }
     app.doc.guides.forEach(function (g) { (g.axis === 'v' ? xs : ys).push(g.pos); });
-    Model.walk(app.doc, function (it) {
-      if (exclude.indexOf(it) >= 0) return;
-      if (!Model.effVisible(app.doc, it)) return;
-      var b = Rn.worldBounds(app.doc, it, true);
+    Model.walkWorld(app.doc, function (it, info) {
+      if (exclude.indexOf(it) >= 0) return false;   /* 자식까지 건너뜀 */
+      var b = Rn.boundsM(it, info.m, true, 1);
       if (R.isEmpty(b)) return;
       xs.push(b.x, R.cx(b), b.x2);
       ys.push(b.y, R.cy(b), b.y2);
-    });
+      if (it.type === 'group') return false;        /* 그룹 바운딩만 사용 */
+    }, { skipHidden: true });
     return { xs: xs, ys: ys };
   };
 

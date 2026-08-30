@@ -136,8 +136,6 @@
         var tid = K.TOOLKEYS[s];
         if (tid && T.get(tid)) {
           ev.preventDefault();
-          T.syncSlotFor(app, tid);
-          T.buildToolbar(app);
           T.setTool(app, tid);
           return;
         }
