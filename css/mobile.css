@@ -35,6 +35,7 @@ body.mobile #ruler-v,
 body.mobile #ruler-corner{ display:none !important; }
 
 body.mobile #workspace{ grid-template-columns:1fr; grid-template-rows:1fr; }
+body.mobile #doctabs{ display:none; }   /* 모바일은 앱바 제목이 문서를 나타낸다 */
 body.mobile #canvas-wrap{ grid-column:1; grid-row:1; }
 body.mobile #main{ padding-top:calc(var(--m-appbar) + var(--sat)); padding-bottom:calc(var(--m-dock) + var(--sab)); }
 

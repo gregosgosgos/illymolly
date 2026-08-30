@@ -470,6 +470,71 @@
     return it;
   });
 
+  /* ---------- 문서 (탭) ---------- */
+  op('documents', {
+    undoable: false, group: '문서', desc: '열려 있는 문서(탭) 목록을 반환합니다.', params: {},
+    run: function (ctx) {
+      if (!AI.docs) return [];
+      AI.docs.sync(ctx);
+      return AI.docs.list(ctx).map(function (s, i) {
+        return {
+          index: i, name: s.doc.name, active: i === ctx.docIndex,
+          modified: !!s.dirty, artboards: s.doc.artboards.length,
+          objects: s.doc.layers.reduce(function (n, l) { return n + l.children.length; }, 0)
+        };
+      });
+    }
+  });
+  op('newDocument', {
+    undoable: false, group: '문서', desc: '새 문서를 새 탭으로 열고 활성화합니다.',
+    params: {
+      name: p('string', '문서 이름'),
+      width: p('number', '폭 (pt)', { default: 595.28 }),
+      height: p('number', '높이 (pt)', { default: 841.89 })
+    },
+    returns: 'string',
+    run: function (ctx, a) {
+      var d = Model.newDoc(Math.max(1, a.width), Math.max(1, a.height));
+      if (a.name) d.name = a.name;
+      if (!AI.docs) { ctx.setDoc(d); ctx.history.reset(d, '새 문서'); return d.name; }
+      AI.docs.add(ctx, d, { label: '새 문서' });
+      return ctx.doc.name;
+    }
+  });
+  op('activateDocument', {
+    undoable: false, group: '문서', desc: '탭 번호 또는 이름으로 문서를 전환합니다.',
+    params: { document: p('string', '문서 이름 또는 0부터 시작하는 탭 번호', { required: true }) },
+    returns: 'string',
+    run: function (ctx, a) {
+      if (!AI.docs) throw err('NO_DOCS', '다중 문서를 쓸 수 없습니다');
+      var list = AI.docs.list(ctx), i = -1;
+      if (/^\d+$/.test(String(a.document))) i = +a.document;
+      else for (var k = 0; k < list.length; k++) if (list[k].doc.name === a.document) { i = k; break; }
+      if (i < 0 || i >= list.length) {
+        throw err('NO_DOC', "문서를 찾을 수 없습니다: '" + a.document + "'. 열린 문서: " +
+          list.map(function (s) { return s.doc.name; }).join(', '));
+      }
+      AI.docs.switchTo(ctx, i);
+      return ctx.doc.name;
+    }
+  });
+  op('closeDocument', {
+    undoable: false, group: '문서', desc: '문서 탭을 닫습니다. 저장 여부는 묻지 않습니다.',
+    params: { document: p('string', '문서 이름 또는 탭 번호 (생략하면 현재 문서)') },
+    returns: 'string',
+    run: function (ctx, a) {
+      if (!AI.docs) throw err('NO_DOCS', '다중 문서를 쓸 수 없습니다');
+      var list = AI.docs.list(ctx), i = ctx.docIndex;
+      if (a.document != null && a.document !== '') {
+        if (/^\d+$/.test(String(a.document))) i = +a.document;
+        else { i = -1; for (var k = 0; k < list.length; k++) if (list[k].doc.name === a.document) { i = k; break; } }
+      }
+      if (i < 0 || i >= list.length) throw err('NO_DOC', '문서를 찾을 수 없습니다: ' + a.document);
+      AI.docs.close(ctx, i, true);
+      return ctx.doc.name;
+    }
+  });
+
   op('typeOnPath', {
     undoable: true, group: '문자',
     desc: '선택한 패스를 기준선 삼아 글을 흘립니다 (패스 상의 문자). 원본 패스는 문자 오브젝트가 됩니다.',

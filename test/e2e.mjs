@@ -17,7 +17,9 @@ page.on('pageerror', e => errors.push('PAGEERROR: ' + e.message));
 await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'load' });
 await page.waitForTimeout(400);
 
-const box = await (await page.$('#view')).boundingBox();
+let box = await (await page.$('#view')).boundingBox();
+/* 문서 탭 줄이 나타나거나 사라지면 캔버스 위치가 달라지므로 다시 잰다 */
+const refreshBox = async () => { box = await (await page.$('#view')).boundingBox(); };
 const at = (fx, fy) => ({ x: box.x + box.width * fx, y: box.y + box.height * fy });
 const ev = f => page.evaluate(f);
 const count = () => ev(() => AI.app.doc.layers.reduce((n, l) => n + l.children.length, 0));
@@ -477,7 +479,10 @@ await check('새 문서 대화상자 (사전 설정 · 방향)', async () => {
   if (w1 !== '1920') throw new Error('FHD 폭=' + w1);
   if (w2 !== '1080') throw new Error('세로 전환 폭=' + w2);
   if (doc.n !== '테스트 문서' || doc.w !== 1080) throw new Error(JSON.stringify(doc));
-  return `${title} · FHD ${w1} → 세로 ${w2} · ${doc.w}×${doc.h}`;
+  const tabs = await ev(() => illy.documents().length);
+  if (tabs !== 2) throw new Error('새 문서가 새 탭으로 열리지 않음=' + tabs);
+  await refreshBox();      /* 탭 줄이 생겨 캔버스가 아래로 밀렸다 */
+  return `${title} · FHD ${w1} → 세로 ${w2} · ${doc.w}×${doc.h} · 새 탭`;
 });
 
 await check('회전 대화상자 — 미리 보기 · 복사', async () => {
@@ -2035,6 +2040,94 @@ await check('패스 상의 문자 — 옵션 · 뒤집기 · 풀기 · SVG textP
   const back = await ev(() => AI.app.doc.layers[0].children[0].type);
   if (back !== 'text') throw new Error('실행 취소 실패=' + back);
   return `맞추기 ascender · 시작 40pt · 뒤집기 · SVG textPath · 풀기/복원`;
+});
+
+/* ---------------- 다중 문서 탭 ---------------- */
+await check('문서 탭 — 여러 문서를 한 창에서 · 문서마다 실행 취소가 따로', async () => {
+  /* 앞선 테스트들이 열어 둔 탭을 정리하고 하나만 남긴다 */
+  await ev(() => {
+    while (illy.documents().length > 1) AI.docs.close(AI.app, illy.documents().length - 1, true);
+    AI.app.doc.name = '무제-1';
+  });
+  await refreshBox();
+  const start = await ev(() => ({
+    n: illy.documents().length,
+    hidden: document.getElementById('doctabs').classList.contains('one')
+  }));
+  if (start.n !== 1 || !start.hidden) throw new Error('시작 상태=' + JSON.stringify(start));
+
+  await ev(() => {
+    AI.app.setDoc(AI.model.newDoc(400, 400));
+    AI.app.history.reset(AI.app.doc, '새 문서');
+    illy.rect({ x: 10, y: 10, width: 100, height: 100, fill: '#ff0000' });
+  });
+  /* Ctrl+N 대화상자로 두 번째 문서 */
+  await ev(() => AI.commands.run('new'));
+  await page.waitForSelector('.dlg');
+  await page.fill('#dlgf-name', '두번째');
+  await page.click('.dlg-btn:has-text("확인")');
+  await page.waitForTimeout(80);
+
+  const two = await ev(() => ({
+    docs: illy.documents().map(d => d.name + ':' + (d.active ? 'on' : 'off') + ':' + d.objects),
+    tabs: [...document.querySelectorAll('#doctabs .dtab')].length,
+    shown: !document.getElementById('doctabs').classList.contains('one'),
+    on: document.querySelector('#doctabs .dtab.on .dt-name').textContent
+  }));
+  if (two.tabs !== 2 || !two.shown) throw new Error('탭=' + JSON.stringify(two));
+  if (two.on !== '두번째') throw new Error('활성 탭=' + two.on);
+  if (two.docs[0] !== '무제-1:off:1') throw new Error('첫 문서=' + two.docs[0]);
+
+  /* 두 번째 문서에 도형을 넣고 실행 취소 — 첫 문서에는 영향이 없어야 한다 */
+  const undo = await ev(() => {
+    illy.ellipse({ x: 0, y: 0, width: 60, height: 60, fill: '#00ff00' });
+    const before = illy.documents().map(d => d.objects).join(',');
+    AI.commands.run('undo');
+    return { before, after: illy.documents().map(d => d.objects).join(',') };
+  });
+  if (undo.before !== '1,1' || undo.after !== '1,0') throw new Error('실행 취소 격리 실패 ' + JSON.stringify(undo));
+
+  /* 탭 클릭으로 전환 — 선택과 화면 배율도 문서마다 따로 */
+  await page.click('#doctabs .dtab:nth-child(1)');
+  await page.waitForTimeout(60);
+  const back = await ev(() => ({
+    name: AI.app.doc.name,
+    objs: AI.app.doc.layers[0].children.length,
+    label: AI.app.history.undoLabel(),
+    on: document.querySelector('#doctabs .dtab.on .dt-name').textContent
+  }));
+  if (back.name !== '무제-1' || back.objs !== 1) throw new Error('전환=' + JSON.stringify(back));
+  if (back.on !== '무제-1') throw new Error('탭 표시=' + back.on);
+  if (back.label !== 'addRect') throw new Error('실행 취소 스택이 섞임=' + back.label);
+  return `탭 2개 · 문서별 실행 취소(${undo.before}→${undo.after}) · 클릭 전환`;
+});
+
+await check('문서 탭 — Ctrl+Tab 순환 · 닫기 · 마지막 하나는 남는다', async () => {
+  await page.keyboard.press('Control+Tab');
+  await page.waitForTimeout(60);
+  const next = await ev(() => AI.app.doc.name);
+  await page.keyboard.press('Control+Shift+Tab');
+  await page.waitForTimeout(60);
+  const prev = await ev(() => AI.app.doc.name);
+  if (next !== '두번째' || prev !== '무제-1') throw new Error('순환=' + next + '/' + prev);
+
+  /* 탭의 × 로 닫기 (수정 표시가 없는 문서라 확인 없이 닫힌다) */
+  const closed = await ev(() => {
+    AI.docs.close(AI.app, 1, true);
+    return { n: illy.documents().length, name: AI.app.doc.name };
+  });
+  if (closed.n !== 1 || closed.name !== '무제-1') throw new Error('닫기=' + JSON.stringify(closed));
+
+  /* 마지막 문서를 닫으면 빈 새 문서가 대신 열린다 (일러스트레이터와 같다) */
+  const last = await ev(() => {
+    AI.docs.close(AI.app, 0, true);
+    return { n: illy.documents().length, objs: AI.app.doc.layers[0].children.length };
+  });
+  if (last.n !== 1 || last.objs !== 0) throw new Error('마지막 닫기=' + JSON.stringify(last));
+  const hidden = await ev(() => document.getElementById('doctabs').classList.contains('one'));
+  if (!hidden) throw new Error('탭 줄이 다시 숨겨지지 않음');
+  await refreshBox();
+  return 'Ctrl+Tab 순환 · 닫기 · 마지막 문서는 빈 문서로 대체 · 탭 줄 자동 숨김';
 });
 
 /* ---------------- 결과 ---------------- */

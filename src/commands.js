@@ -49,6 +49,11 @@
   def('exportSvg', 'SVG로 내보내기...', 'Ctrl+Alt+Shift+S', function (a) { AI.io.exportSVG(a); });
   def('exportPng', 'PNG로 내보내기...', 'Ctrl+Alt+E', function (a) { AI.io.exportPNG(a); });
   def('exportPdf', 'PDF로 내보내기...', null, function (a) { AI.io.exportPDF(a); });
+  def('closeDoc', '닫기', 'Ctrl+W', function (a) { AI.docs.close(a); });
+  def('nextDoc', '다음 문서', 'Ctrl+Tab', function (a) { AI.docs.next(a, 1); },
+    { enabled: function (a) { return AI.docs.count(a) > 1; } });
+  def('prevDoc', '이전 문서', 'Ctrl+Shift+Tab', function (a) { AI.docs.next(a, -1); },
+    { enabled: function (a) { return AI.docs.count(a) > 1; } });
   def('docSetup', '문서 설정...', 'Ctrl+Alt+P', function (a) { AI.dialogs.documentSetup(a); });
   def('preferences', '환경 설정...', 'Ctrl+K', function (a) { AI.dialogs.preferences(a); });
 
@@ -739,7 +744,7 @@
   /* ================= 메뉴 구조 ================= */
   C.MENUS = [
     {
-      title: '파일', items: ['new', 'open', '-', 'save', 'saveAs', '-', 'place', '-', 'exportSvg', 'exportPng', 'exportPdf', '-', 'docSetup']
+      title: '파일', items: ['new', 'open', 'closeDoc', '-', 'save', 'saveAs', '-', 'place', '-', 'exportSvg', 'exportPng', 'exportPdf', '-', 'docSetup']
     },
     {
       title: '편집', items: ['undo', 'redo', '-', 'cut', 'copy', 'paste', 'pasteFront', 'pasteBack', 'pasteInPlace', '-', 'clear', 'duplicate', '-', 'preferences']
@@ -790,7 +795,7 @@
       ]
     },
     {
-      title: '윈도우', items: ['togglePanels', 'togglePanelsKeepTools', '-'].concat(
+      title: '윈도우', items: ['nextDoc', 'prevDoc', '-', 'togglePanels', 'togglePanelsKeepTools', '-'].concat(
         C.PANELS.map(function (o) { return 'panel_' + o[0]; }))
     },
     {

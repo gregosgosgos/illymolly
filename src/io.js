@@ -84,9 +84,8 @@
           var o = JSON.parse(String(r.result));
           var doc = o.doc || o;
           normalizeDoc(doc);
-          app.setDoc(doc);
-          app.history.reset(app.doc, '열기');
-          AI.viewT.fitArtboard(app);
+          /* 일러스트레이터처럼 파일은 새 탭으로 열린다 */
+          AI.docs.add(app, doc, { label: '열기' });
           U.toast(f.name + ' 열기 완료');
         } catch (e) {
           U.toast('파일을 읽을 수 없습니다: ' + e.message);
@@ -531,9 +530,7 @@
     } else {
       walk(svg, layer.children);
     }
-    app.setDoc(doc);
-    app.history.reset(doc, 'SVG 가져오기');
-    AI.viewT.fitArtboard(app);
+    AI.docs.add(app, doc, { label: 'SVG 가져오기' });
     U.toast('SVG 가져오기 완료');
   };
 

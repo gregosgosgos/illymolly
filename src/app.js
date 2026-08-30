@@ -49,6 +49,8 @@
       if (it && it.subs && it.subs[r.si] && it.subs[r.si].pts[r.pi]) app.selPts.push({ it: it, si: r.si, pi: r.pi });
     });
     app.isolation = [];
+    /* 현재 탭이 가리키는 문서도 함께 바꿔 준다 (실행 취소 · 되돌리기) */
+    if (app.docs && app.docs[app.docIndex]) app.docs[app.docIndex].doc = doc;
     app.invalidate();
     AI.ui && AI.ui.syncAll && AI.ui.syncAll(app);
   };
@@ -467,6 +469,7 @@
     ctx = canvas.getContext('2d');
     app.doc = Model.newDoc(800, 600);
     app.history.reset(app.doc, '새 문서');
+    AI.docs.init(app);          /* 첫 문서를 첫 탭으로 등록 */
 
     C.bind(app);
     T.buildToolbar(app);
@@ -480,7 +483,8 @@
     new ResizeObserver(function () { app.resize(); }).observe(document.getElementById('canvas-wrap'));
 
     U.on(window, 'beforeunload', function (ev) {
-      if (!app.dirty) return;
+      /* 열려 있는 문서 중 하나라도 저장되지 않았으면 확인한다 */
+      if (!AI.docs.anyDirty(app)) return;
       ev.preventDefault();
       ev.returnValue = '';
     });

@@ -29,6 +29,7 @@
     buildArtboards();
     UI.buildLayers(a);
     bindPanelFolding();
+    UI.syncDocTabs(a);
     UI.syncAll(a);
   };
 
@@ -44,6 +45,50 @@
       if (el && !el.firstChild) el.innerHTML = UI.icon(map[id], 12);
     });
   }
+
+  /* ---------------- 문서 탭 ----------------
+     일러스트레이터처럼 열려 있는 문서를 탭으로 늘어놓는다.
+     문서가 하나뿐이면 줄 자체를 감춘다 (지금까지의 화면과 똑같아 보이도록). */
+  var docTabSig = null;
+  UI.syncDocTabs = function (a) {
+    var host = document.getElementById('doctabs');
+    if (!host) return;
+    AI.docs.init(a);
+    AI.docs.sync(a);
+    var list = AI.docs.list(a);
+    /* 이름 · 수정 여부 · 활성 탭이 그대로면 다시 그리지 않는다 */
+    var sig = a.docIndex + '|' + list.map(function (s) { return s.doc.name + (s.dirty ? '*' : ''); }).join('\u0001');
+    if (sig === docTabSig) return;
+    docTabSig = sig;
+    host.classList.toggle('one', list.length < 2);
+    host.innerHTML = list.map(function (s, i) {
+      return '<button class="dtab' + (i === a.docIndex ? ' on' : '') + '" data-doc="' + i + '"' +
+        ' title="' + U.esc(s.doc.name) + (s.dirty ? ' (저장 안 됨)' : '') + '">' +
+        '<span class="dt-name">' + U.esc(s.doc.name) + '</span>' +
+        (s.dirty ? '<span class="dt-dirty">•</span>' : '') +
+        '<span class="dt-x" data-close="' + i + '" title="닫기">' + UI.icon('close', 8) + '</span>' +
+        '</button>';
+    }).join('') +
+      '<button id="dt-new" title="새 문서 (Ctrl+N)">' + UI.icon('plus', 11) + '</button>';
+
+    U.qa('.dtab', host).forEach(function (b) {
+      U.on(b, 'click', function (ev) {
+        if (ev.target.closest('[data-close]')) return;
+        AI.docs.switchTo(a, +b.dataset.doc);
+      });
+      /* 가운데 버튼으로 닫기 — 브라우저 탭과 같은 관례 */
+      U.on(b, 'auxclick', function (ev) {
+        if (ev.button !== 1) return;
+        ev.preventDefault();
+        AI.docs.close(a, +b.dataset.doc);
+      });
+    });
+    U.qa('[data-close]', host).forEach(function (x) {
+      U.on(x, 'click', function (ev) { ev.stopPropagation(); AI.docs.close(a, +x.dataset.close); });
+    });
+    var nb = document.getElementById('dt-new');
+    if (nb) U.on(nb, 'click', function () { C.run('new'); });
+  };
 
   /* 패널 그룹: 탭 전환 + 그룹 접기 */
   function bindPanelFolding() {
@@ -1548,6 +1593,7 @@
   };
 
   UI.syncAll = function (a) {
+    UI.syncDocTabs(a);
     UI.syncTool(a);
     UI.syncSelection(a);
     UI.syncType(a);

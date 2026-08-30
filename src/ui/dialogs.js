@@ -217,10 +217,8 @@
         doc.name = v.name || '무제-1';
         doc.bg = v.bg;
         doc.artboards[0].name = '대지 1';
-        app.setDoc(doc);
-        app.history.reset(app.doc, '새 문서');
-        app.dirty = false;
-        AI.viewT.fitArtboard(app);
+        /* 일러스트레이터처럼 새 문서는 새 탭으로 열린다 */
+        AI.docs.add(app, doc, { label: '새 문서' });
         U.toast('새 문서 ' + U.round(v.w) + ' × ' + U.round(v.h));
       }
     });

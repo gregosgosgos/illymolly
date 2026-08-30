@@ -154,6 +154,38 @@ button,input,select,textarea{font:inherit;color:inherit}
 .fs-swap .ic,.fs-def .ic{width:12px;height:12px;stroke-width:1.4}
 
 /* workspace */
+/* ---- 문서 탭 (여러 문서를 한 창에서) ---- */
+#stage{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
+#doctabs{
+  display:flex;align-items:stretch;flex:0 0 auto;height:25px;
+  background:var(--bg3);border-bottom:1px solid var(--line);
+  overflow-x:auto;overflow-y:hidden;scrollbar-width:none;user-select:none;
+}
+#doctabs::-webkit-scrollbar{height:0}
+#doctabs.one{display:none}            /* 문서가 하나면 탭 줄을 숨긴다 */
+.dtab{
+  display:flex;align-items:center;gap:6px;flex:0 0 auto;
+  max-width:220px;padding:0 6px 0 10px;
+  background:var(--bg3);color:var(--txt-dim);
+  border:0;border-right:1px solid var(--line);
+  font:inherit;font-size:11px;line-height:1;cursor:pointer;white-space:nowrap;
+}
+.dtab:hover{background:var(--btn-bg-hover);color:var(--txt)}
+.dtab.on{background:var(--bg2);color:var(--txt);box-shadow:inset 0 -2px 0 var(--accent)}
+.dtab .dt-name{overflow:hidden;text-overflow:ellipsis}
+.dtab .dt-dirty{color:var(--accent);font-size:14px;line-height:0}
+.dtab .dt-x{
+  width:14px;height:14px;border-radius:2px;display:flex;align-items:center;justify-content:center;
+  opacity:.45;flex:0 0 auto;
+}
+.dtab .dt-x:hover{opacity:1;background:var(--btn-bg-hover)}
+.dtab .dt-x .ic{width:8px;height:8px}
+#dt-new{
+  flex:0 0 auto;width:24px;background:transparent;border:0;color:var(--txt-dim);
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+}
+#dt-new:hover{color:var(--txt);background:var(--btn-bg-hover)}
+
 #workspace{
   flex:1;min-width:0;min-height:0;position:relative;
   display:grid;grid-template-columns:var(--ruler) 1fr;grid-template-rows:var(--ruler) 1fr;
