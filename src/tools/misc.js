@@ -13,7 +13,7 @@
     id: 'zoom', name: '확대 도구', key: 'z', cursor: 'zoom-in',
     onDown: function (app, e) { st = { x: e.x, y: e.y, moved: false }; },
     onMove: function (app, e) {
-      if (!st || !e.down) { app.canvas.style.cursor = e.alt ? 'zoom-out' : 'zoom-in'; return; }
+      if (!st || !e.down) { AI.cursors.set(app, e.alt ? AI.cursors.zoomOut() : AI.cursors.zoomIn()); return; }
       if (Math.hypot(e.x - st.x, e.y - st.y) > 3) { st.moved = true; app.marquee = R.fromPts(st.x, st.y, e.x, e.y); app.invalidate(); }
     },
     onUp: function (app, e) {
@@ -32,13 +32,13 @@
   /* ---------------- 손 ---------------- */
   T.mk({
     id: 'hand', name: '손 도구', key: 'h', cursor: 'grab',
-    onDown: function (app, e) { st = { x: e.x, y: e.y }; app.canvas.style.cursor = 'grabbing'; },
+    onDown: function (app, e) { st = { x: e.x, y: e.y }; AI.cursors.set(app, AI.cursors.hand(true)); },
     onMove: function (app, e) {
       if (!st || !e.down) return;
       AI.viewT.pan(app, e.x - st.x, e.y - st.y);
       st.x = e.x; st.y = e.y;
     },
-    onUp: function (app) { st = null; app.canvas.style.cursor = 'grab'; }
+    onUp: function (app) { st = null; AI.cursors.set(app, AI.cursors.hand(false)); }
   });
 
   /* ---------------- 스포이드 ---------------- */

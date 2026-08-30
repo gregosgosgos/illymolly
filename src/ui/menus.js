@@ -9,7 +9,7 @@
   var openMenu = null;
 
   function buildPop(app, items) {
-    var pop = U.el('div', 'menu-pop');
+    var pop = U.el('div', 'menu-pop menubar-pop');
     items.forEach(function (id) {
       if (id === '-') { pop.appendChild(U.el('div', 'sep')); return; }
       var d = C.defs[id];
@@ -18,7 +18,8 @@
       var enabled = !d.enabled || d.enabled(app);
       if (!enabled) mi.classList.add('disabled');
       var chk = d.checked ? (d.checked(app) ? '✓' : '') : '';
-      mi.innerHTML = '<span class="chk">' + chk + '</span><span>' + d.label + '</span>' +
+      var text = d.label2 ? d.label2(app) : d.label;
+      mi.innerHTML = '<span class="chk">' + chk + '</span><span>' + text + '</span>' +
         (d.key ? '<span class="k">' + K.display(d.key) + '</span>' : '');
       U.on(mi, 'mousedown', function (ev) { ev.preventDefault(); });
       U.on(mi, 'click', function () {
@@ -84,7 +85,8 @@
       var mi = U.el('div', 'mi');
       var enabled = !d.enabled || d.enabled(app);
       if (!enabled) mi.classList.add('disabled');
-      mi.innerHTML = '<span class="chk"></span><span>' + d.label + '</span>' + (d.key ? '<span class="k">' + K.display(d.key) + '</span>' : '');
+      mi.innerHTML = '<span class="chk"></span><span>' + (d.label2 ? d.label2(app) : d.label) + '</span>' +
+        (d.key ? '<span class="k">' + K.display(d.key) + '</span>' : '');
       U.on(mi, 'click', function () { cm.hidden = true; if (enabled) C.run(id); });
       cm.appendChild(mi);
     });

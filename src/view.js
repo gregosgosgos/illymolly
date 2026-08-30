@@ -79,9 +79,13 @@
       if (c.width !== w * dpr || c.height !== h * dpr) { c.width = w * dpr; c.height = h * dpr; }
     });
     var s = app.view.scale;
-    var step = 100;
-    var cand = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000];
-    for (var i = 0; i < cand.length; i++) { if (cand[i] * s >= 60) { step = cand[i]; break; } step = cand[cand.length - 1]; }
+    var unit = app.prefs.unit || 'pt';
+    var uf = U.unitFactor(unit);
+    /* 눈금 간격은 문서 단위 기준으로 고른 뒤 pt 로 환산 */
+    var cand = [0.5, 1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000];
+    var stepU = cand[cand.length - 1];
+    for (var i = 0; i < cand.length; i++) { if (cand[i] * uf * s >= 60) { stepU = cand[i]; break; } }
+    var step = stepU * uf;
     var sub = step / 5;
 
     function ruler(c, horiz) {
@@ -103,7 +107,7 @@
         if (horiz) { ctx.moveTo(p, t); ctx.lineTo(p, 20); }
         else { ctx.moveTo(t, p); ctx.lineTo(20, p); }
         if (major) {
-          var label = String(U.round(v, 2));
+          var label = String(U.round(v / uf, 2));
           if (horiz) ctx.fillText(label, p + 2, 1);
           else {
             ctx.save(); ctx.translate(2, p - 2); ctx.rotate(-Math.PI / 2);

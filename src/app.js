@@ -25,8 +25,9 @@
     prefs: {
       rulers: true, grid: false, guides: true, smart: true, snapGrid: false,
       outline: false, bbox: true, centerPoint: false, previewBounds: false,
-      keyIncrement: 1
-    }
+      keyIncrement: 1, unit: 'pt', gridSize: 72, gridDiv: 8, scaleStrokes: false
+    },
+    refPoint: 0
   };
 
   app.history = new AI.History(150);
@@ -118,7 +119,8 @@
       if (inCanvas) {
         var d = AI.viewT.toDoc(app, e.x, e.y);
         var co = document.getElementById('st-coords');
-        if (co) co.textContent = U.fmt(d.x) + ' , ' + U.fmt(d.y);
+        var un = app.prefs.unit || 'pt';
+        if (co) co.textContent = U.fmtUnit(d.x, un) + ' , ' + U.fmtUnit(d.y, un) + ' ' + un;
       }
     });
 

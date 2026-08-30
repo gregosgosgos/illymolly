@@ -73,6 +73,7 @@
     buildIndex();
 
     U.on(window, 'keydown', function (ev) {
+      if (AI.dialog && AI.dialog.isOpen()) return;      /* 모달이 열려 있으면 도구 단축키 차단 */
       var tag = (ev.target && ev.target.tagName || '').toLowerCase();
       var editable = tag === 'input' || tag === 'textarea' || tag === 'select' || (ev.target && ev.target.isContentEditable);
       if (editable) {
@@ -84,12 +85,18 @@
       var s = K.sig(ev);
       var base = K.baseKey(ev);
 
-      /* --- Space = 임시 손 도구 --- */
+      /* --- Space = 임시 손 도구, Ctrl+Space = 임시 확대 도구 (Illustrator) --- */
+      var ctrlDown = U.isMac ? ev.metaKey : ev.ctrlKey;
       if (base === 'Space' && !app.spacePan) {
         ev.preventDefault();
         app.spacePan = true;
         app.spacePrevTool = app.tool;
-        T.setTool(app, 'hand', true);
+        T.setTool(app, ctrlDown ? 'zoom' : 'hand', true);
+        return;
+      }
+      /* Space 를 누른 상태에서 Ctrl 을 추가하면 손 -> 확대 로 전환 */
+      if (app.spacePan && (base === 'Control' || base === 'Meta') && app.tool === 'hand') {
+        T.setTool(app, 'zoom', true);
         return;
       }
 
@@ -143,7 +150,12 @@
     }, true);
 
     U.on(window, 'keyup', function (ev) {
-      if (K.baseKey(ev) === 'Space' && app.spacePan) {
+      var bk = K.baseKey(ev);
+      if (app.spacePan && (bk === 'Control' || bk === 'Meta') && app.tool === 'zoom') {
+        T.setTool(app, 'hand', true);
+        return;
+      }
+      if (bk === 'Space' && app.spacePan) {
         app.spacePan = false;
         var prev = app.spacePrevTool || 'select';
         app.spacePrevTool = null;

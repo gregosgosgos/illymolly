@@ -111,6 +111,7 @@
   /* ---------------- 지우개 ---------------- */
   T.mk({
     id: 'eraser', name: '지우개 도구', key: null, cursor: 'crosshair',
+    deactivate: function (app) { app.eraserCursor = null; },
     onDown: function (app, e) {
       app.history.begin('지우기', app.doc);
       st = { pts: [{ x: e.x, y: e.y }] };
@@ -118,11 +119,12 @@
       app.invalidate();
     },
     onMove: function (app, e) {
+      app.eraserCursor = { x: e.x, y: e.y };
+      app.invalidate();
       if (!st || !e.down) return;
       var last = st.pts[st.pts.length - 1];
       if (U.dist(last.x, last.y, e.x, e.y) < 2) return;
       st.pts.push({ x: e.x, y: e.y });
-      app.invalidate();
     },
     onUp: function (app) {
       if (!st) return;
@@ -161,6 +163,15 @@
       app.invalidate();
     },
     drawUI: function (ctx, app) {
+      /* Illustrator 처럼 지우개 크기를 원으로 표시 */
+      if (app.eraserCursor) {
+        var r = (app.eraserWidth || 20) * app.view.scale / 2;
+        ctx.save();
+        ctx.beginPath(); ctx.arc(app.eraserCursor.x, app.eraserCursor.y, r, 0, 6.2832);
+        ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.lineWidth = 0.7; ctx.stroke();
+        ctx.restore();
+      }
       if (!app.eraserPath || app.eraserPath.length < 2) return;
       ctx.save();
       ctx.strokeStyle = 'rgba(255,255,255,.8)';

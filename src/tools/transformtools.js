@@ -76,9 +76,10 @@
       onUp: function (app, e) {
         if (!st) return;
         if (!st.moved) {
-          /* 클릭 = 기준점 설정 */
+          /* 클릭 = 기준점 설정, Alt+클릭 = 기준점 + 옵션 대화상자 (Illustrator 동작) */
           app.transformOrigin = AI.viewT.toDoc(app, e.x, e.y);
           app.history.abort();
+          if (st.alt && AI.dialogs[kind]) { st = null; app.invalidate(); AI.dialogs[kind](app); return; }
           U.toast('기준점 설정');
         } else {
           app.lastTransform = app.lastTransformCandidate;

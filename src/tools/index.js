@@ -77,6 +77,7 @@
       });
       U.on(el, 'mouseup mouseleave', function () { clearTimeout(pressTimer); });
       U.on(el, 'click', function () { clearTimeout(pressTimer); T.setTool(app, current); });
+      U.on(el, 'dblclick', function () { clearTimeout(pressTimer); T.openToolOptions(app, current); });
       U.on(el, 'contextmenu', function (ev) { ev.preventDefault(); if (slot.length > 1) showFly(app, si, slot, el); });
       bar.appendChild(el);
       if (si === 2 || si === 6 || si === 9 || si === 12 || si === 14) bar.appendChild(U.el('div', 'tool-div'));
@@ -126,6 +127,40 @@
     pop.style.top = r.top + 'px';
     pop.hidden = false;
   }
+
+  /* 도구 아이콘 더블클릭 = 도구 옵션 (Illustrator 동작) */
+  T.openToolOptions = function (app, id) {
+    var Dl = AI.dialogs;
+    var center = AI.viewT.toDoc(app, app.canvas.clientWidth / 2, app.canvas.clientHeight / 2);
+    if (['rect', 'roundrect', 'ellipse', 'polygon', 'star', 'line'].indexOf(id) >= 0) { Dl.shapeOptions(app, id, center); return; }
+    if (id === 'rotate') { Dl.rotate(app); return; }
+    if (id === 'scale') { Dl.scale(app); return; }
+    if (id === 'reflect') { Dl.reflect(app); return; }
+    if (id === 'shear') { Dl.shear(app); return; }
+    if (id === 'brush' || id === 'blob' || id === 'eraser' || id === 'pencil' || id === 'type') {
+      AI.dialog.open({
+        title: T.get(id).name + ' 옵션',
+        fields: id === 'eraser'
+          ? [{ id: 'w', label: '지우개 폭', type: 'num', value: app.eraserWidth || 20, unit: 'pt' }]
+          : id === 'pencil'
+            ? [{ id: 'f', label: '정밀도', type: 'num', value: app.pencilFidelity == null ? 2.5 : app.pencilFidelity, unit: 'px' }]
+            : id === 'type'
+              ? [{ id: 'size', label: '글꼴 크기', type: 'num', value: (app.typeOpts && app.typeOpts.size) || 24, unit: 'pt' }]
+              : [{ id: 'w', label: '브러시 폭', type: 'num', value: app.brushWidth || 3, unit: 'pt' }],
+        onDone: function (v) {
+          if (id === 'eraser') app.eraserWidth = Math.max(0.5, v.w);
+          else if (id === 'pencil') app.pencilFidelity = AI.util.clamp(v.f, 0.2, 20);
+          else if (id === 'type') { app.typeOpts = app.typeOpts || {}; app.typeOpts.size = Math.max(1, v.size); }
+          else app.brushWidth = Math.max(0.1, v.w);
+          AI.ui.buildToolOptions(app);
+        }
+      });
+      return;
+    }
+    if (id === 'zoom') { AI.viewT.setZoom(app, 1); return; }
+    if (id === 'hand') { AI.viewT.fitArtboard(app); return; }
+    AI.util.toast(T.get(id).name + ' 은(는) 옵션이 없습니다');
+  };
 
   /* 도구 단축키 -> 슬롯 반영 */
   T.syncSlotFor = function (app, id) {

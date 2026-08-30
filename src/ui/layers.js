@@ -35,7 +35,7 @@
 
     U.on(U.q('#ly-new', tools), 'click', function () {
       app.history.begin('새 레이어', app.doc);
-      app.doc.layers.push(Model.newLayer('레이어 ' + (app.doc.layers.length + 1)));
+      app.doc.layers.push(Model.newLayer('레이어 ' + (app.doc.layers.length + 1), app.doc.layers.length));
       app.doc.activeLayer = app.doc.layers.length - 1;
       app.history.commit();
       UI.buildLayers(app);
@@ -56,16 +56,27 @@
   function layerRow(app, ly, li) {
     var row = U.el('div', 'lyr' + (app.doc.activeLayer === li ? ' sel' : ''));
     row.draggable = true;
+    var anySel = app.sel.some(function (it) { var l = Model.locate(app.doc, it); return l && l.layer === ly; });
     row.innerHTML =
       '<span class="eye' + (ly.visible ? '' : ' off') + '">👁</span>' +
       '<span class="lock' + (ly.locked ? '' : ' off') + '">🔒</span>' +
       '<span class="tw">' + (ly.collapsed ? '▸' : '▾') + '</span>' +
-      '<span class="thumb" style="background:' + ly.color + '"></span>' +
-      '<span class="nm">' + esc(ly.name) + '</span>';
+      '<span class="lyr-color" style="background:' + ly.color + '"></span>' +
+      '<span class="nm">' + esc(ly.name) + '</span>' +
+      '<span class="target" title="레이어 전체 선택">' + (anySel ? '◉' : '○') + '</span>' +
+      '<span class="selsq" style="' + (anySel ? 'background:' + ly.color + ';border-color:' + ly.color : '') + '"></span>';
     U.on(U.q('.eye', row), 'click', function (e) { e.stopPropagation(); ly.visible = !ly.visible; app.invalidate(); UI.buildLayers(app); });
     U.on(U.q('.lock', row), 'click', function (e) { e.stopPropagation(); ly.locked = !ly.locked; UI.buildLayers(app); });
     U.on(U.q('.tw', row), 'click', function (e) { e.stopPropagation(); ly.collapsed = !ly.collapsed; UI.buildLayers(app); });
     U.on(row, 'click', function () { app.doc.activeLayer = li; UI.buildLayers(app); });
+    U.on(U.q('.target', row), 'click', function (e) {
+      e.stopPropagation();
+      app.doc.activeLayer = li;
+      AI.sel.set(app, ly.children.filter(function (c) { return c.visible && !c.locked; }));
+      app.invalidate();
+      UI.syncSelection(app);
+      UI.buildLayers(app);
+    });
     bindRename(app, U.q('.nm', row), ly);
     bindDrag(app, row, { kind: 'layer', index: li });
     return row;
@@ -77,17 +88,27 @@
     var pad = 4 + depth * 12;
     row.style.paddingLeft = pad + 'px';
     var isGroup = it.type === 'group';
+    var selected = AI.sel.has(app, it);
+    var col = (layer && layer.color) || '#2d8ceb';
     row.innerHTML =
       '<span class="eye' + (it.visible ? '' : ' off') + '">👁</span>' +
       '<span class="lock' + (it.locked ? '' : ' off') + '">🔒</span>' +
       (isGroup ? '<span class="tw">' + (it.collapsed ? '▸' : '▾') + '</span>' : '<span class="tw"></span>') +
       '<span class="nm">' + esc(itemLabel(it)) + '</span>' +
-      '<span class="dot"></span>';
+      '<span class="target" title="이 항목을 타겟으로 선택">' + (selected ? '◉' : '○') + '</span>' +
+      '<span class="selsq" style="' + (selected ? 'background:' + col + ';border-color:' + col : '') + '"></span>';
     U.on(U.q('.eye', row), 'click', function (e) { e.stopPropagation(); it.visible = !it.visible; app.invalidate(); UI.buildLayers(app); });
     U.on(U.q('.lock', row), 'click', function (e) { e.stopPropagation(); it.locked = !it.locked; UI.buildLayers(app); });
     if (isGroup) U.on(U.q('.tw', row), 'click', function (e) { e.stopPropagation(); it.collapsed = !it.collapsed; UI.buildLayers(app); });
     U.on(row, 'click', function (e) {
       if (e.shiftKey) AI.sel.toggle(app, it); else AI.sel.set(app, [it]);
+      app.invalidate();
+      UI.syncSelection(app);
+      UI.buildLayers(app);
+    });
+    U.on(U.q('.target', row), 'click', function (e) {
+      e.stopPropagation();
+      AI.sel.set(app, [it]);
       app.invalidate();
       UI.syncSelection(app);
       UI.buildLayers(app);

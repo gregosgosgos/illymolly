@@ -16,6 +16,13 @@
 
   function commonDown(app, e, groupMode) {
     app.smart = [];
+    /* 0) 라이브 모퉁이 위젯 */
+    var cwHit = H.cornerWidgetAt(app, e.x, e.y);
+    if (cwHit) {
+      app.history.begin('모퉁이 반경', app.doc);
+      st = { kind: 'corner', it: cwHit.item, pt: cwHit.pt, moved: false, r0: cwHit.item.shape.r || 0 };
+      return;
+    }
     /* 1) 바운딩 박스 핸들 */
     if (app.sel.length) {
       var hh = H.bboxHandleAt(app, e.x, e.y);
@@ -100,14 +107,27 @@
         var b = { x: st.startBounds.x + dx, y: st.startBounds.y + dy, x2: st.startBounds.x2 + dx, y2: st.startBounds.y2 + dy };
         var snap = E.snapBounds(app, b, st.targets, 6 / app.view.scale);
         dx += snap.dx; dy += snap.dy;
-        app.smart = snap.guides.map(function (g) {
-          if (g.axis === 'v') { var x = AI.viewT.toScreen(app, g.pos, 0).x; return { x1: x, y1: 0, x2: x, y2: app.canvas.clientHeight }; }
-          var y = AI.viewT.toScreen(app, 0, g.pos).y; return { x1: 0, y1: y, x2: app.canvas.clientWidth, y2: y };
-        });
+        var moved = { x: b.x + snap.dx, y: b.y + snap.dy, x2: b.x2 + snap.dx, y2: b.y2 + snap.dy };
+        app.smart = snap.guides.map(function (g) { g.moving = moved; return g; });
       }
       E.move(app, dx, dy);
       app.invalidate();
       AI.ui && AI.ui.syncSelection && AI.ui.syncSelection(app);
+      return;
+    }
+    if (st.kind === 'corner') {
+      st.moved = true;
+      var it = st.it, sh = it.shape;
+      var inv = M.invert(Model.worldMatrix(app.doc, it));
+      var d0 = AI.viewT.toDoc(app, e.x, e.y);
+      var lp = M.apply(inv, d0.x, d0.y);
+      var lim = Math.min(Math.abs(sh.w), Math.abs(sh.h)) / 2;
+      var r = Math.min(Math.abs(lp.x - st.pt.cx), Math.abs(lp.y - st.pt.cy));
+      sh.r = U.clamp(r, 0, lim);
+      Model.buildShape(it);
+      app.hudText = '반경 ' + U.fmt(sh.r);
+      app.invalidate();
+      AI.ui && AI.ui.buildToolOptions && AI.ui.buildToolOptions(app);
       return;
     }
     if (st.kind === 'scale') { doScale(app, e); return; }
@@ -190,26 +210,34 @@
     else if (st.moved) app.history.commit();
     else app.history.abort();
     app.smart = [];
+    app.hudText = null;
     app.rotateFeedback = null;
+    app.hoverItem = null;
     st = null;
     app.invalidate();
     AI.ui && AI.ui.syncSelection && AI.ui.syncSelection(app);
   }
 
   function hoverFeedback(app, e) {
-    var c = 'default';
+    var C = AI.cursors;
     if (app.sel.length) {
       var hh = H.bboxHandleAt(app, e.x, e.y);
       if (hh) {
-        if (hh.rotate) c = 'grab';
-        else c = ['nwse-resize', 'ns-resize', 'nesw-resize', 'ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize', 'ew-resize'][hh.index];
+        var f = hh.frame;
+        var cx = (f.pts[0].x + f.pts[4].x) / 2, cy = (f.pts[0].y + f.pts[4].y) / 2;
+        var p = f.pts[hh.index];
+        var ang = U.deg(Math.atan2(p.y - cy, p.x - cx));
+        C.set(app, hh.rotate ? C.rotateAt(ang) : C.resizeAt(ang));
+        return;
       }
     }
-    if (c === 'default') {
-      var hit = H.itemAt(app, e.x, e.y, false);
-      c = hit ? 'move' : 'default';
-    }
-    app.canvas.style.cursor = c;
+    if (H.cornerWidgetAt(app, e.x, e.y)) { C.set(app, 'pointer'); return; }
+    var hit = H.itemAt(app, e.x, e.y, false);
+    if (app.prefs.smart) {
+      if (app.hoverItem !== hit) { app.hoverItem = hit; app.invalidate(); }
+    } else if (app.hoverItem) { app.hoverItem = null; app.invalidate(); }
+    if (e.shift && hit) C.set(app, C.arrowPlus());
+    else C.set(app, C.forTool(app.tool) || C.arrow());
   }
 
   T.mk({
@@ -230,9 +258,20 @@
         AI.sel.set(app, [chain[i + 1] || inner]);
         U.toast('격리 모드: ' + top.name);
         app.invalidate();
+        AI.ui.syncAll(app);
       }
     },
     drawUI: function (ctx, app) {
+      if (app.hudText && st && st.kind === 'corner') {
+        ctx.save();
+        ctx.font = '11px sans-serif';
+        var w = ctx.measureText(app.hudText).width + 10;
+        ctx.fillStyle = 'rgba(0,0,0,.78)';
+        ctx.fillRect(st.pt.x + 10, st.pt.y - 22, w, 16);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(app.hudText, st.pt.x + 15, st.pt.y - 10);
+        ctx.restore();
+      }
       if (app.rotateFeedback != null && st && st.kind === 'rotate') {
         ctx.save();
         ctx.fillStyle = '#fff'; ctx.strokeStyle = '#000';

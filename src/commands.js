@@ -37,14 +37,15 @@
   var hasSel = function (a) { return a.sel.length > 0; };
 
   /* ================= 파일 ================= */
-  def('new', '새로 만들기...', 'Ctrl+N', function (a) { AI.io.newDoc(a); });
+  def('new', '새로 만들기...', 'Ctrl+N', function (a) { AI.dialogs.newDocument(a); });
   def('open', '열기...', 'Ctrl+O', function (a) { AI.io.openFile(a); });
   def('save', '저장', 'Ctrl+S', function (a) { AI.io.save(a); });
   def('saveAs', '다른 이름으로 저장...', 'Ctrl+Shift+S', function (a) { AI.io.save(a, true); });
   def('place', '가져오기(이미지)...', 'Ctrl+Shift+P', function (a) { AI.io.placeImage(a); });
   def('exportSvg', 'SVG로 내보내기...', 'Ctrl+Shift+E', function (a) { AI.io.exportSVG(a); });
   def('exportPng', 'PNG로 내보내기...', 'Ctrl+Alt+E', function (a) { AI.io.exportPNG(a); });
-  def('docSetup', '문서 설정...', 'Ctrl+Alt+P', function (a) { AI.io.docSetup(a); });
+  def('docSetup', '문서 설정...', 'Ctrl+Alt+P', function (a) { AI.dialogs.documentSetup(a); });
+  def('preferences', '환경 설정...', 'Ctrl+K', function (a) { AI.dialogs.preferences(a); });
 
   /* ================= 편집 ================= */
   def('undo', '실행 취소', 'Ctrl+Z', function (a) {
@@ -52,12 +53,18 @@
     if (!s) { U.toast('더 이상 취소할 수 없습니다'); return; }
     a.setDoc(s);
     U.toast('실행 취소');
+  }, {
+    label2: function (a) { var l = a.history.undoLabel(); return l ? '실행 취소 ' + l : '실행 취소'; },
+    enabled: function (a) { return a.history.canUndo(); }
   });
   def('redo', '다시 실행', 'Ctrl+Shift+Z', function (a) {
     var s = a.history.redo(a.doc);
     if (!s) { U.toast('다시 실행할 항목이 없습니다'); return; }
     a.setDoc(s);
     U.toast('다시 실행');
+  }, {
+    label2: function (a) { var l = a.history.redoLabel(); return l ? '다시 실행 ' + l : '다시 실행'; },
+    enabled: function (a) { return a.history.canRedo(); }
   });
   def('cut', '오려두기', 'Ctrl+X', hist('오려두기', function (a) {
     if (!a.sel.length) return false;
@@ -143,33 +150,11 @@
     if (!a.lastTransform || !a.sel.length) return false;
     E.transformSelection(a, a.lastTransform);
   }));
-  def('moveDialog', '이동...', 'Ctrl+Shift+M', hist('이동', function (a) {
-    if (!a.sel.length) return false;
-    var s = prompt('이동 (가로, 세로)', '10, 0');
-    if (!s) return false;
-    var p = s.split(',');
-    var dx = U.parseNum(p[0], 0), dy = U.parseNum(p[1], 0);
-    a.lastTransform = M.translate(dx, dy);
-    E.move(a, dx, dy);
-  }), { enabled: hasSel });
-  def('rotateDialog', '회전...', null, hist('회전', function (a) {
-    if (!a.sel.length) return false;
-    var s = prompt('회전 각도 (도)', '90');
-    if (s == null) return false;
-    var deg = U.parseNum(s, 0);
-    var b = Rn.selectionBounds(a, true);
-    a.lastTransform = M.around(M.rotate(U.rad(deg)), R.cx(b), R.cy(b));
-    E.rotate(a, deg);
-  }), { enabled: hasSel });
-  def('scaleDialog', '크기 조절...', null, hist('크기 조절', function (a) {
-    if (!a.sel.length) return false;
-    var s = prompt('크기 비율 (%)', '150');
-    if (s == null) return false;
-    var k = U.parseNum(s, 100) / 100;
-    var b = Rn.selectionBounds(a, true);
-    a.lastTransform = M.around(M.scale(k, k), R.cx(b), R.cy(b));
-    E.scale(a, k, k);
-  }), { enabled: hasSel });
+  def('moveDialog', '이동...', 'Ctrl+Shift+M', function (a) { AI.dialogs.move(a); }, { enabled: hasSel });
+  def('rotateDialog', '회전...', null, function (a) { AI.dialogs.rotate(a); }, { enabled: hasSel });
+  def('scaleDialog', '크기 조절...', null, function (a) { AI.dialogs.scale(a); }, { enabled: hasSel });
+  def('reflectDialog', '반사...', null, function (a) { AI.dialogs.reflect(a); }, { enabled: hasSel });
+  def('shearDialog', '기울이기...', null, function (a) { AI.dialogs.shear(a); }, { enabled: hasSel });
   def('reflectH', '가로 반사', null, hist('반사', function (a) { if (!a.sel.length) return false; E.reflect(a, 'v'); }), { enabled: hasSel });
   def('reflectV', '세로 반사', null, hist('반사', function (a) { if (!a.sel.length) return false; E.reflect(a, 'h'); }), { enabled: hasSel });
 
@@ -235,11 +220,14 @@
   }));
 
   def('joinPath', '연결', 'Ctrl+J', hist('연결', function (a) { return E.joinPath(a); }));
-  def('averagePath', '평균점 연결...', 'Ctrl+Alt+J', hist('평균', function (a) {
-    var s = prompt('평균 축: both / h / v', 'both');
-    if (!s) return false;
-    return E.averagePoints(a, s.trim());
-  }));
+  def('averagePath', '평균점 연결...', 'Ctrl+Alt+J', function (a) {
+    if (a.selPts.length < 2) { U.toast('앵커를 2개 이상 선택하세요'); return; }
+    AI.dialogs.average(a, function (axis) {
+      a.history.begin('평균', a.doc);
+      if (E.averagePoints(a, axis) === false) a.history.abort(); else a.history.commit();
+      a.invalidate();
+    });
+  });
   def('outlineStroke', '패스 > 윤곽선', null, function (a) { E.pathfinder(a, 'outline'); });
 
   /* 패스파인더 */
@@ -305,6 +293,41 @@
   }), { enabled: hasSel });
   def('clearGuides', '안내선 지우기', null, hist('안내선 지우기', function (a) { a.doc.guides = []; }));
   def('showBBox', '테두리 상자 표시', 'Ctrl+Shift+B', function (a) { a.prefs.bbox = a.prefs.bbox === false; }, { checked: function (a) { return a.prefs.bbox !== false; } });
+
+  /* ================= 대지 ================= */
+  function gotoArtboard(a, i) {
+    a.doc.activeArtboard = U.clamp(i, 0, a.doc.artboards.length - 1);
+    AI.viewT.fitArtboard(a);
+    AI.ui.syncStatus(a);
+  }
+  def('nextArtboard', '다음 대지', 'Alt+PageDown', function (a) { gotoArtboard(a, a.doc.activeArtboard + 1); });
+  def('prevArtboard', '이전 대지', 'Alt+PageUp', function (a) { gotoArtboard(a, a.doc.activeArtboard - 1); });
+  def('firstArtboard', '첫 대지', null, function (a) { gotoArtboard(a, 0); });
+  def('lastArtboard', '마지막 대지', null, function (a) { gotoArtboard(a, a.doc.artboards.length - 1); });
+  def('newArtboard', '새 대지', null, hist('새 대지', function (a) {
+    var last = a.doc.artboards[a.doc.artboards.length - 1];
+    a.doc.artboards.push({
+      id: U.uid('AB'), name: '대지 ' + (a.doc.artboards.length + 1),
+      x: last.x + last.w + 40, y: last.y, w: last.w, h: last.h
+    });
+    a.doc.activeArtboard = a.doc.artboards.length - 1;
+    AI.viewT.fitArtboard(a);
+  }));
+  def('deleteArtboard', '대지 삭제', null, hist('대지 삭제', function (a) {
+    if (a.doc.artboards.length < 2) { U.toast('대지는 최소 1개 필요합니다'); return false; }
+    a.doc.artboards.splice(a.doc.activeArtboard, 1);
+    a.doc.activeArtboard = Math.max(0, a.doc.activeArtboard - 1);
+    AI.viewT.fitArtboard(a);
+  }));
+
+  /* ================= 단위 ================= */
+  def('setUnit', '단위', null, function () { });
+  C.setUnit = function (a, u) {
+    a.prefs.unit = u;
+    a.invalidate();
+    AI.ui.syncAll(a);
+    U.toast('단위: ' + u);
+  };
 
   /* ================= 윈도우 ================= */
   def('togglePanels', '패널 숨기기/표시', 'Tab', function (a) {
@@ -390,11 +413,12 @@
       title: '파일', items: ['new', 'open', '-', 'save', 'saveAs', '-', 'place', '-', 'exportSvg', 'exportPng', '-', 'docSetup']
     },
     {
-      title: '편집', items: ['undo', 'redo', '-', 'cut', 'copy', 'paste', 'pasteFront', 'pasteBack', 'pasteInPlace', '-', 'clear', 'duplicate']
+      title: '편집', items: ['undo', 'redo', '-', 'cut', 'copy', 'paste', 'pasteFront', 'pasteBack', 'pasteInPlace', '-', 'clear', 'duplicate', '-', 'preferences']
     },
     {
       title: '오브젝트', items: [
-        'transformAgain', 'moveDialog', 'rotateDialog', 'scaleDialog', 'reflectH', 'reflectV', '-',
+        'transformAgain', 'moveDialog', 'rotateDialog', 'scaleDialog', 'reflectDialog', 'shearDialog', '-',
+        'reflectH', 'reflectV', '-',
         'bringToFront', 'bringForward', 'sendBackward', 'sendToBack', '-',
         'group', 'ungroup', '-', 'lock', 'unlockAll', 'hide', 'showAll', '-',
         'clipMake', 'clipRelease', '-', 'compoundMake', 'compoundRelease', '-',
@@ -412,6 +436,7 @@
       ]
     },
     { title: '윈도우', items: ['togglePanels', 'togglePanelsKeepTools'] },
+    { title: '대지', items: ['newArtboard', 'deleteArtboard', '-', 'prevArtboard', 'nextArtboard', 'firstArtboard', 'lastArtboard', '-', 'docSetup'] },
     { title: '도움말', items: ['shortcutHelp', 'about'] }
   ];
 })(window.AI);

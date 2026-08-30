@@ -52,6 +52,22 @@ window.AI = window.AI || {};
     } catch (e) { return fallback; }
   };
 
+  /* ---------------------- 단위 (내부 기준은 pt) ---------------------- */
+  U.UNITS = { pt: 1, px: 1, mm: 2.8346456693, cm: 28.346456693, in: 72 };
+  U.unitFactor = function (u) { return U.UNITS[u] || 1; };
+  U.toUnit = function (v, u) { return v / U.unitFactor(u); };
+  U.fromUnit = function (v, u) { return v * U.unitFactor(u); };
+  U.fmtUnit = function (v, u) { return U.fmt(U.toUnit(v, u)); };
+  /* 사용자가 단위를 직접 적었으면 그 값을 쓰고, 아니면 문서 단위로 해석 */
+  U.parseLen = function (s, fallbackPt, unit) {
+    if (typeof s === 'number') return s;
+    var str = String(s == null ? '' : s);
+    var explicit = /(px|pt|mm|cm|in)\s*$/i.test(str);
+    var v = U.parseNum(str, null);
+    if (v == null || !isFinite(v)) return fallbackPt;
+    return explicit ? v : U.fromUnit(v, unit);
+  };
+
   U.deepCopy = function (o) {
     if (o === null || typeof o !== 'object') return o;
     if (Array.isArray(o)) { var a = new Array(o.length); for (var i = 0; i < o.length; i++) a[i] = U.deepCopy(o[i]); return a; }

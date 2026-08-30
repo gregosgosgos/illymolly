@@ -91,7 +91,7 @@
     onMove: function (app, e) {
       if (!st) {
         var over = H.anchorAt(app, e.x, e.y) || H.handleAt(app, e.x, e.y);
-        app.canvas.style.cursor = over ? 'pointer' : 'default';
+        AI.cursors.set(app, over ? AI.cursors.arrowPlus() : AI.cursors.arrowWhite());
         return;
       }
       var dpt = AI.viewT.toDoc(app, e.x, e.y), spt = AI.viewT.toDoc(app, e.sx, e.sy);

@@ -20,6 +20,7 @@
   --ruler:20px;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{height:100%;margin:0}
 body{
   background:var(--bg);color:var(--txt);
@@ -193,8 +194,10 @@ body.no-rulers #ruler-h,body.no-rulers #ruler-v,body.no-rulers #ruler-corner{dis
 .lyr .thumb{width:14px;height:14px;border:1px solid #666;flex:none;background:#fff}
 .lyr .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lyr .nm[contenteditable="true"]{background:#111;outline:1px solid var(--accent)}
-.lyr .dot{width:8px;height:8px;border-radius:50%;border:1px solid #888}
-.lyr.sel .dot{background:var(--accent)}
+.lyr .lyr-color{width:5px;height:14px;border-radius:1px;flex:none}
+.lyr .target{width:12px;text-align:center;color:#9a9a9a;cursor:pointer;font-size:10px;flex:none}
+.lyr .target:hover{color:#fff}
+.lyr .selsq{width:8px;height:8px;border:1px solid #6a6a6a;border-radius:1px;flex:none}
 .lyr-tools{display:flex;gap:4px;margin-top:6px;justify-content:flex-end}
 .lyr-indent{display:inline-block}
 .lyr .tw{width:10px;color:#aaa;cursor:pointer;text-align:center}
@@ -243,3 +246,78 @@ body.no-rulers #ruler-h,body.no-rulers #ruler-v,body.no-rulers #ruler-corner{dis
   background:var(--c,#000);border:1px solid #fff;box-shadow:0 0 0 1px #222;
 }
 .gstop.sel{border-color:var(--accent);box-shadow:0 0 0 1px #fff,0 0 0 2px var(--accent)}
+
+/* ============================ 모달 대화상자 ============================ */
+.dlg-backdrop{
+  position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.35);
+  display:flex;align-items:center;justify-content:center;
+}
+.dlg{
+  min-width:260px;max-width:min(520px,92vw);
+  background:#323232;border:1px solid #101010;border-radius:4px;
+  box-shadow:0 18px 60px rgba(0,0,0,.6);color:var(--txt);
+}
+.dlg-title{
+  padding:9px 14px;font-weight:700;font-size:12px;
+  background:#3a3a3a;border-bottom:1px solid #262626;border-radius:4px 4px 0 0;
+}
+.dlg-body{padding:12px 14px 4px}
+.dlg-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.dlg-label{min-width:74px;color:var(--txt-dim);text-align:right;white-space:nowrap}
+.dlg-input{
+  background:#1a1a1a;border:1px solid #4a4a4a;border-radius:2px;height:22px;padding:0 5px;text-align:right;
+}
+select.dlg-input{text-align:left;min-width:110px}
+.dlg-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.dlg-unit{color:#8a8a8a;min-width:16px}
+.dlg-sep{height:1px;background:#484848;margin:10px 0}
+.dlg-info{color:#9a9a9a;margin:2px 0 10px;line-height:1.6}
+.dlg-check{display:inline-flex;align-items:center;gap:2px;cursor:default;user-select:none}
+.dlg-check input{accent-color:var(--accent);margin:0 2px 0 0}
+.dlg-radios{display:flex;gap:12px;flex-wrap:wrap}
+.dlg-foot{
+  display:flex;align-items:center;padding:8px 14px 12px;
+}
+.dlg-buttons{margin-left:auto;display:flex;gap:8px}
+.dlg-btn{
+  min-width:74px;height:26px;padding:0 12px;border-radius:13px;cursor:pointer;
+  background:#4b4b4b;border:1px solid #5a5a5a;color:#eee;
+}
+.dlg-btn:hover{background:#575757}
+.dlg-btn.primary{background:var(--accent2);border-color:var(--accent);color:#fff}
+.dlg-btn.primary:hover{background:#2a7fe0}
+
+/* 기준점 위젯 (3×3) */
+.refpoint{display:grid;grid-template-columns:repeat(3,11px);gap:3px}
+.refpoint .rp{
+  width:11px;height:11px;background:#1c1c1c;border:1px solid #6a6a6a;cursor:pointer;border-radius:1px;
+}
+.refpoint .rp:hover{border-color:#9a9a9a}
+.refpoint .rp.on{background:var(--accent);border-color:var(--accent)}
+
+/* ============================ 격리 모드 ============================ */
+#iso-bar{
+  position:absolute;left:0;right:0;top:0;height:24px;z-index:5;
+  display:flex;align-items:center;gap:6px;padding:0 10px;
+  background:linear-gradient(#6a6a6a,#5b5b5b);border-bottom:1px solid #3d3d3d;
+  color:#f0f0f0;font-size:11px;user-select:none;
+}
+#iso-bar .iso-back{
+  cursor:pointer;font-size:15px;line-height:1;padding:0 6px;border-radius:2px;
+}
+#iso-bar .iso-back:hover{background:rgba(255,255,255,.18)}
+#iso-bar .iso-crumbs{display:flex;align-items:center;gap:4px}
+#iso-bar .crumb{cursor:pointer;padding:1px 5px;border-radius:2px}
+#iso-bar .crumb:hover{background:rgba(255,255,255,.18)}
+#iso-bar .crumb.cur{font-weight:700;background:rgba(255,255,255,.12)}
+#iso-bar .sepc{opacity:.6}
+
+/* 상태바 대지 네비게이션 */
+.ab-nav{display:flex;align-items:center;gap:2px}
+.ab-btn{
+  width:16px;height:16px;line-height:1;padding:0;font-size:8px;
+  background:#3a3a3a;border:1px solid #4a4a4a;border-radius:2px;color:#c0c0c0;cursor:pointer;
+}
+.ab-btn:hover{background:#4a4a4a;color:#fff}
+.ab-btn:disabled{opacity:.35;cursor:default}
+#st-artboard{min-width:56px;text-align:center}

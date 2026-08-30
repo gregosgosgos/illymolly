@@ -64,6 +64,7 @@
         <canvas id="view" tabindex="0"></canvas>
         <textarea id="text-editor" spellcheck="false"></textarea>
         <div id="canvas-hud"></div>
+        <div id="iso-bar" hidden><span class="iso-back" title="한 단계 나가기 (Esc)">‹</span><span class="iso-crumbs"></span></div>
       </div>
     </div>
 
@@ -128,7 +129,13 @@
       <span class="pct">%</span>
     </div>
     <span class="ctl-sep"></span>
-    <span id="st-artboard">대지 1</span>
+    <span class="ab-nav">
+      <button class="ab-btn" id="ab-first" title="첫 대지">⏮</button>
+      <button class="ab-btn" id="ab-prev" title="이전 대지">◀</button>
+      <span id="st-artboard">대지 1</span>
+      <button class="ab-btn" id="ab-next" title="다음 대지">▶</button>
+      <button class="ab-btn" id="ab-last" title="마지막 대지">⏭</button>
+    </span>
     <span class="ctl-sep"></span>
     <span id="st-hint">선택 도구</span>
     <span class="ctl-spacer"></span>
@@ -148,6 +155,7 @@
 <script src="src/history.js"></script>
 <script src="src/render.js"></script>
 <script src="src/hit.js"></script>
+<script src="src/cursors.js"></script>
 <script src="src/view.js"></script>
 <script src="src/edit.js"></script>
 <script src="src/tools/base.js"></script>
@@ -162,6 +170,8 @@
 <script src="src/tools/index.js"></script>
 <script src="src/commands.js"></script>
 <script src="src/keymap.js"></script>
+<script src="src/ui/dialog.js"></script>
+<script src="src/ui/dialogs.js"></script>
 <script src="src/ui/menus.js"></script>
 <script src="src/ui/panels.js"></script>
 <script src="src/ui/layers.js"></script>

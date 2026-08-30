@@ -80,7 +80,8 @@
     }
     var b = (it.type === 'path') ? G.pathBounds(it, m) : Rn.xformBounds(Rn.localBounds(it), m);
     if (!geo && it.type === 'path' && it.stroke && it.stroke.type !== 'none') {
-      b = R.grow(b, (it.stroke.width || 0) * (sw == null ? 1 : sw) / 2);
+      var al = it.stroke.align, k = al === 'inside' ? 0 : al === 'outside' ? 1 : 0.5;
+      b = R.grow(b, (it.stroke.width || 0) * (sw == null ? 1 : sw) * k);
     }
     return b;
   };
@@ -173,7 +174,7 @@
     for (var L = 0; L < doc.layers.length; L++) {
       var ly = doc.layers[L];
       if (!ly.visible) continue;
-      drawList(ctx, app, ly.children, vm, 1);
+      drawList(ctx, app, ly.children, vm, 1, undefined);
     }
 
     if (app.prefs.guides) drawGuides(ctx, app, vw, vh);
@@ -181,7 +182,7 @@
   };
 
   function drawGrid(ctx, app, vw, vh) {
-    var step = 72 / 8 * app.view.scale;
+    var step = (app.prefs.gridSize || 72) / (app.prefs.gridDiv || 8) * app.view.scale;
     while (step < 6) step *= 2;
     var o = AI.viewT.toScreen(app, 0, 0);
     ctx.save(); ctx.lineWidth = 1;
@@ -209,14 +210,18 @@
     ctx.restore();
   }
 
-  function drawList(ctx, app, list, pm, alpha) {
-    for (var i = 0; i < list.length; i++) Rn.item(ctx, app, list[i], pm, alpha);
+  function drawList(ctx, app, list, pm, alpha, inIso) {
+    for (var i = 0; i < list.length; i++) Rn.item(ctx, app, list[i], pm, alpha, inIso);
   }
 
-  Rn.item = function (ctx, app, it, pm, alpha) {
+  Rn.item = function (ctx, app, it, pm, alpha, inIso) {
     if (!it.visible || it.__editing) return;
+    var iso = app.isolation && app.isolation.length;
+    if (iso && inIso === undefined) inIso = false;
+    if (iso && !inIso && app.isolation.indexOf(it) >= 0) inIso = true;
     var m = M.mul(pm, it.m);
     var a = alpha * (it.opacity == null ? 1 : it.opacity);
+    if (iso && !inIso && it.type !== 'group') a *= 0.28;
     if (a <= 0.001) return;
 
     if (it.type === 'group') {
@@ -227,9 +232,9 @@
         ctx.beginPath();
         G.tracePath(ctx, cp, M.mul(m, cp.m));
         ctx.clip();
-        for (var i = 0; i < it.children.length - 1; i++) Rn.item(ctx, app, it.children[i], m, a);
+        for (var i = 0; i < it.children.length - 1; i++) Rn.item(ctx, app, it.children[i], m, a, inIso);
       } else {
-        drawList(ctx, app, it.children, m, a);
+        drawList(ctx, app, it.children, m, a, inIso);
       }
       ctx.restore();
       return;
@@ -268,19 +273,54 @@
       ctx.fill('nonzero');
     }
     var s = it.stroke;
-    if (s && s.type !== 'none' && s.width > 0) {
-      if (!vb) vb = viewBoundsOf(it, m);
+    if (!s || s.type === 'none' || !(s.width > 0)) return;
+    if (!vb) vb = viewBoundsOf(it, m);
+
+    var allClosed = it.subs.length > 0 && it.subs.every(function (sub) { return sub.closed; });
+    var align = (s.align === 'inside' || s.align === 'outside') && allClosed ? s.align : 'center';
+    var w = Math.max(s.width * app.view.scale, 0.08);
+
+    function setup(lw, doubled) {
       ctx.strokeStyle = paintStyle(ctx, s, vb);
-      ctx.lineWidth = Math.max(s.width * app.view.scale, 0.08);
-      ctx.lineCap = s.cap || 'butt';
+      ctx.lineWidth = lw;
+      /* 두께를 2배로 그려 클리핑하는 방식에서는 둥근 끝이 2배가 되어
+         점선 바깥 가장자리가 톱니처럼 보인다. 이 경우에만 butt 로 대체. */
+      ctx.lineCap = (doubled && s.dash && s.dash.length) ? 'butt' : (s.cap || 'butt');
       ctx.lineJoin = s.join || 'miter';
       ctx.miterLimit = s.miter || 10;
       if (s.dash && s.dash.length) ctx.setLineDash(s.dash.map(function (d) { return d * app.view.scale; }));
       else ctx.setLineDash([]);
       ctx.lineDashOffset = (s.dashOffset || 0) * app.view.scale;
+    }
+
+    if (align === 'center') {
+      setup(w);
+      ctx.beginPath();
+      G.tracePath(ctx, it, m);
       ctx.stroke();
       ctx.setLineDash([]);
+      return;
     }
+
+    /* 안쪽/바깥쪽 정렬: 두 배 두께로 그린 뒤 반대쪽을 클리핑으로 잘라낸다 */
+    ctx.save();
+    ctx.beginPath();
+    if (align === 'outside') {
+      /* 도형 바깥만 남기는 역클리핑 (evenodd + 큰 사각형) */
+      var big = 1e6;
+      ctx.moveTo(-big, -big); ctx.lineTo(big, -big); ctx.lineTo(big, big); ctx.lineTo(-big, big); ctx.closePath();
+      G.tracePath(ctx, it, m);
+      ctx.clip('evenodd');
+    } else {
+      G.tracePath(ctx, it, m);
+      ctx.clip('nonzero');
+    }
+    setup(w * 2, true);
+    ctx.beginPath();
+    G.tracePath(ctx, it, m);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
   }
 
   function drawImage(ctx, app, it, m) {
@@ -342,14 +382,37 @@
      ========================================================================= */
   var UIC = { blue: '#2d8ceb', box: '#2d8ceb', handleFill: '#ffffff', anchor: '#2d8ceb' };
 
+  /* 선택된 아이템 -> 소속 레이어 색상 (한 번의 순회로 수집) */
+  Rn.layerColors = function (app) {
+    var map = new Map();
+    if (!app.sel.length) return map;
+    Model.walkWorld(app.doc, function (it, info) {
+      if (app.sel.indexOf(it) >= 0) map.set(it, (info.layer && info.layer.color) || UIC.blue);
+    });
+    return map;
+  };
+
   Rn.ui = function (ctx, app) {
     ctx.save();
     ctx.setTransform(app.dpr, 0, 0, app.dpr, 0, 0);
     var tool = AI.tools.current(app);
+    var lc = Rn.layerColors(app);
+    var mainColor = (app.sel.length && lc.get(app.sel[0])) || UIC.blue;
 
     /* 선택된 오브젝트 패스 하이라이트 */
     var vm = AI.viewT.matrix(app);
     var directMode = tool && tool.direct;
+
+    if (!app.hideEdges && app.hoverItem && app.sel.indexOf(app.hoverItem) < 0) {
+      var hm = M.mul(vm, Model.worldMatrix(app.doc, app.hoverItem));
+      ctx.save();
+      ctx.beginPath();
+      if (app.hoverItem.type === 'path') G.tracePath(ctx, app.hoverItem, hm);
+      else if (app.hoverItem.type === 'group') outlineBox(ctx, Rn.localBounds(app.hoverItem), hm);
+      else outlineBox(ctx, Rn.localBounds(app.hoverItem), hm);
+      ctx.strokeStyle = 'rgba(45,140,235,.9)'; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.restore();
+    }
 
     if (!app.hideEdges) {
       app.sel.forEach(function (it) {
@@ -357,14 +420,15 @@
         ctx.beginPath();
         if (it.type === 'path') G.tracePath(ctx, it, wm);
         else outlineBox(ctx, Rn.localBounds(it), wm);
-        ctx.strokeStyle = UIC.blue; ctx.lineWidth = 1; ctx.setLineDash([]); ctx.stroke();
+        ctx.strokeStyle = lc.get(it) || UIC.blue; ctx.lineWidth = 1; ctx.setLineDash([]); ctx.stroke();
       });
 
       /* 바운딩 박스 */
-      if (!directMode && app.sel.length && app.prefs.bbox !== false) drawBBox(ctx, app);
+      if (!directMode && app.sel.length && app.prefs.bbox !== false) drawBBox(ctx, app, mainColor);
+      if (app.prefs.cornerWidgets !== false) drawCornerWidgets(ctx, app, mainColor);
 
       /* 직접 선택: 앵커/핸들 */
-      if (directMode) drawAnchors(ctx, app, vm);
+      if (directMode) drawAnchors(ctx, app, vm, lc);
     }
 
     if (tool && tool.drawUI) tool.drawUI(ctx, app);
@@ -381,18 +445,56 @@
       ctx.restore();
     }
 
-    /* 스마트 가이드 */
-    if (app.smart && app.smart.length) {
-      ctx.save();
-      ctx.strokeStyle = '#ff2fd0'; ctx.lineWidth = 1; ctx.setLineDash([]);
-      app.smart.forEach(function (g) {
-        ctx.beginPath(); ctx.moveTo(g.x1, g.y1); ctx.lineTo(g.x2, g.y2); ctx.stroke();
-      });
-      ctx.restore();
-    }
+    /* 스마트 가이드 — 정렬선 + 라벨 (Illustrator 방식) */
+    if (app.smart && app.smart.length) drawSmartGuides(ctx, app);
 
     ctx.restore();
   };
+
+  var SG = '#ff2fd0';
+  function drawSmartGuides(ctx, app) {
+    var vw = ctx.canvas.width / app.dpr, vh = ctx.canvas.height / app.dpr;
+    ctx.save();
+    ctx.font = '10px sans-serif';
+    ctx.textBaseline = 'middle';
+    app.smart.forEach(function (g) {
+      var a, b, lx, ly;
+      if (g.axis === 'v') {
+        var x = AI.viewT.toScreen(app, g.pos, 0).x;
+        /* 대상과 이동 중인 오브젝트를 잇는 구간을 강조 */
+        var ys = [];
+        if (g.src) { ys.push(AI.viewT.toScreen(app, 0, g.src.y).y, AI.viewT.toScreen(app, 0, g.src.y2).y); }
+        if (g.moving) { ys.push(AI.viewT.toScreen(app, 0, g.moving.y).y, AI.viewT.toScreen(app, 0, g.moving.y2).y); }
+        var y0 = ys.length ? Math.min.apply(null, ys) - 10 : 0;
+        var y1 = ys.length ? Math.max.apply(null, ys) + 10 : vh;
+        ctx.strokeStyle = SG; ctx.lineWidth = 1; ctx.setLineDash([]);
+        ctx.beginPath(); ctx.moveTo(Math.round(x) + .5, 0); ctx.lineTo(Math.round(x) + .5, vh); ctx.stroke();
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(Math.round(x) + .5, y0); ctx.lineTo(Math.round(x) + .5, y1); ctx.stroke();
+        lx = x + 6; ly = (y0 + y1) / 2;
+      } else {
+        var y = AI.viewT.toScreen(app, 0, g.pos).y;
+        var xs = [];
+        if (g.src) { xs.push(AI.viewT.toScreen(app, g.src.x, 0).x, AI.viewT.toScreen(app, g.src.x2, 0).x); }
+        if (g.moving) { xs.push(AI.viewT.toScreen(app, g.moving.x, 0).x, AI.viewT.toScreen(app, g.moving.x2, 0).x); }
+        var x0 = xs.length ? Math.min.apply(null, xs) - 10 : 0;
+        var x1 = xs.length ? Math.max.apply(null, xs) + 10 : vw;
+        ctx.strokeStyle = SG; ctx.lineWidth = 1; ctx.setLineDash([]);
+        ctx.beginPath(); ctx.moveTo(0, Math.round(y) + .5); ctx.lineTo(vw, Math.round(y) + .5); ctx.stroke();
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(x0, Math.round(y) + .5); ctx.lineTo(x1, Math.round(y) + .5); ctx.stroke();
+        lx = (x0 + x1) / 2; ly = y - 10;
+      }
+      if (g.label) {
+        var w = ctx.measureText(g.label).width + 8;
+        ctx.fillStyle = SG;
+        ctx.fillRect(lx, ly - 8, w, 15);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(g.label, lx + 4, ly);
+      }
+    });
+    ctx.restore();
+  }
 
   function outlineBox(ctx, b, m) {
     if (R.isEmpty(b)) return;
@@ -437,18 +539,64 @@
     };
   };
 
-  function drawBBox(ctx, app) {
+  /* 라이브 사각형의 모퉁이 반경 위젯 (Illustrator CC 의 코너 위젯) */
+  Rn.cornerWidgets = function (app) {
+    if (app.sel.length !== 1) return null;
+    var it = app.sel[0];
+    if (it.type !== 'path' || !it.shape || it.shape.kind !== 'rect') return null;
+    var sh = it.shape;
+    var w = sh.w, h = sh.h;
+    if (Math.abs(w) < 1e-3 || Math.abs(h) < 1e-3) return null;
+    var wm = M.mul(AI.viewT.matrix(app), Model.worldMatrix(app.doc, it));
+    var sc = Math.hypot(wm[0], wm[1]) || 1;
+    var lim = Math.min(Math.abs(w), Math.abs(h)) / 2;
+    var d = U.clamp(sh.r || 0, 12 / sc, lim);
+    if (lim * sc < 22) return null;               /* 너무 작으면 표시하지 않음 */
+    var corners = [[0, 0, 1, 1], [w, 0, -1, 1], [w, h, -1, -1], [0, h, 1, -1]];
+    return {
+      item: it,
+      pts: corners.map(function (c, i) {
+        var p = M.apply(wm, c[0] + c[2] * d, c[1] + c[3] * d);
+        return { x: p.x, y: p.y, i: i, cx: c[0], cy: c[1], sx: c[2], sy: c[3] };
+      })
+    };
+  };
+
+  function drawCornerWidgets(ctx, app, color) {
+    var cw = Rn.cornerWidgets(app);
+    if (!cw) return;
+    color = color || UIC.box;
+    ctx.save();
+    cw.pts.forEach(function (p) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 5, 0, 6.2832);
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.2;
+      ctx.fill(); ctx.stroke();
+      /* 안쪽 원호 표식 */
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2.2, 0, 6.2832);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+
+  function drawBBox(ctx, app, color) {
     var f = Rn.bboxFrame(app);
     if (!f) return;
+    color = color || UIC.box;
     ctx.save();
-    ctx.strokeStyle = UIC.box; ctx.lineWidth = 1; ctx.setLineDash([]);
+    ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash([]);
     ctx.beginPath();
     ctx.moveTo(f.pts[0].x, f.pts[0].y);
     [2, 4, 6].forEach(function (i) { ctx.lineTo(f.pts[i].x, f.pts[i].y); });
     ctx.closePath(); ctx.stroke();
     for (var i = 0; i < 8; i++) {
       var p = f.pts[i];
-      ctx.fillStyle = UIC.handleFill; ctx.strokeStyle = UIC.box;
+      ctx.fillStyle = UIC.handleFill; ctx.strokeStyle = color;
       ctx.beginPath();
       ctx.rect(Math.round(p.x) - 3.5, Math.round(p.y) - 3.5, 7, 7);
       ctx.fill(); ctx.stroke();
@@ -456,17 +604,18 @@
     /* 중심점 */
     if (app.prefs.centerPoint) {
       var c = { x: (f.pts[0].x + f.pts[4].x) / 2, y: (f.pts[0].y + f.pts[4].y) / 2 };
-      ctx.strokeStyle = UIC.box;
+      ctx.strokeStyle = color;
       ctx.beginPath(); ctx.moveTo(c.x - 4, c.y); ctx.lineTo(c.x + 4, c.y);
       ctx.moveTo(c.x, c.y - 4); ctx.lineTo(c.x, c.y + 4); ctx.stroke();
     }
     ctx.restore();
   }
 
-  function drawAnchors(ctx, app, vm) {
+  function drawAnchors(ctx, app, vm, lc) {
     ctx.save();
     app.sel.forEach(function (it) {
       if (it.type !== 'path') return;
+      var col = (lc && lc.get(it)) || UIC.blue;
       var wm = M.mul(vm, Model.worldMatrix(app.doc, it));
       it.subs.forEach(function (sub, si) {
         sub.pts.forEach(function (p, pi) {
@@ -477,16 +626,16 @@
             [['i', p.ix, p.iy], ['o', p.ox, p.oy]].forEach(function (h) {
               if (h[1] == null) return;
               var hp = M.apply(wm, h[1], h[2]);
-              ctx.strokeStyle = UIC.blue; ctx.lineWidth = 1;
+              ctx.strokeStyle = col; ctx.lineWidth = 1;
               ctx.beginPath(); ctx.moveTo(sp.x, sp.y); ctx.lineTo(hp.x, hp.y); ctx.stroke();
               ctx.beginPath(); ctx.arc(hp.x, hp.y, 3, 0, 6.2832);
-              ctx.fillStyle = UIC.blue; ctx.fill();
+              ctx.fillStyle = col; ctx.fill();
             });
           }
           ctx.beginPath();
           ctx.rect(Math.round(sp.x) - 3.5, Math.round(sp.y) - 3.5, 7, 7);
-          ctx.fillStyle = selP ? UIC.blue : '#ffffff';
-          ctx.strokeStyle = UIC.blue; ctx.lineWidth = 1;
+          ctx.fillStyle = selP ? col : '#ffffff';
+          ctx.strokeStyle = col; ctx.lineWidth = 1;
           ctx.fill(); ctx.stroke();
         });
       });

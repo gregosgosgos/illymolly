@@ -200,6 +200,17 @@
   }
   H.allPathItems = allPathItems;
 
+  /* 라이브 모퉁이 위젯 히트 */
+  H.cornerWidgetAt = function (app, sx, sy) {
+    var cw = Rn.cornerWidgets(app);
+    if (!cw) return null;
+    for (var i = 0; i < cw.pts.length; i++) {
+      var p = cw.pts[i];
+      if (U.dist(p.x, p.y, sx, sy) <= 7) return { item: cw.item, pt: p };
+    }
+    return null;
+  };
+
   /* 바운딩 박스 핸들 히트: 0..7 인덱스 / 'rotate' / null */
   H.bboxHandleAt = function (app, sx, sy) {
     var f = Rn.bboxFrame(app);

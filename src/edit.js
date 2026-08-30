@@ -43,16 +43,26 @@
   };
 
   /* 선택 영역의 바운딩을 원하는 값으로 */
-  E.setBounds = function (app, nx, ny, nw, nh) {
+  /* 기준점(ref 0..8) 기준으로 위치/크기 지정 — Illustrator 변형 패널과 동일 */
+  E.refPointOf = function (b, ref) {
+    var xs = [b.x, R.cx(b), b.x2], ys = [b.y, R.cy(b), b.y2];
+    ref = ref == null ? 0 : ref;
+    return { x: xs[ref % 3], y: ys[Math.floor(ref / 3)] };
+  };
+
+  E.setBounds = function (app, nx, ny, nw, nh, ref) {
     var b = Rn.selectionBounds(app, app.prefs.previewBounds ? false : true);
     if (R.isEmpty(b)) return;
+    ref = ref == null ? (app.refPoint || 0) : ref;
+    var anchor = E.refPointOf(b, ref);
     var w = R.w(b) || 1, h = R.h(b) || 1;
     var sx = nw == null ? 1 : nw / w, sy = nh == null ? 1 : nh / h;
-    var W = M.mulAll(
-      M.translate(nx == null ? b.x : nx, ny == null ? b.y : ny),
-      M.scale(sx, sy),
-      M.translate(-b.x, -b.y)
-    );
+    /* 기준점을 고정한 채 크기 조절 */
+    var W = M.around(M.scale(sx || 1e-6, sy || 1e-6), anchor.x, anchor.y);
+    /* 그다음 기준점 자체를 원하는 좌표로 이동 */
+    var dx = nx == null ? 0 : nx - anchor.x;
+    var dy = ny == null ? 0 : ny - anchor.y;
+    if (dx || dy) W = M.mul(M.translate(dx, dy), W);
     E.transformSelection(app, W);
   };
 
@@ -587,19 +597,23 @@
   /* ---------------- 스냅 / 스마트 가이드 ---------------- */
   E.collectSnapTargets = function (app, exclude) {
     var xs = [], ys = [];
+    function push(arr, v, b, kind) { arr.push({ v: v, b: b, kind: kind }); }
     var ab = app.doc.artboards[app.doc.activeArtboard];
     if (ab) {
-      xs.push(ab.x, ab.x + ab.w / 2, ab.x + ab.w);
-      ys.push(ab.y, ab.y + ab.h / 2, ab.y + ab.h);
+      var abb = { x: ab.x, y: ab.y, x2: ab.x + ab.w, y2: ab.y + ab.h };
+      push(xs, abb.x, abb, '대지'); push(xs, R.cx(abb), abb, '대지 중심'); push(xs, abb.x2, abb, '대지');
+      push(ys, abb.y, abb, '대지'); push(ys, R.cy(abb), abb, '대지 중심'); push(ys, abb.y2, abb, '대지');
     }
-    app.doc.guides.forEach(function (g) { (g.axis === 'v' ? xs : ys).push(g.pos); });
+    app.doc.guides.forEach(function (g) {
+      push(g.axis === 'v' ? xs : ys, g.pos, null, '안내선');
+    });
     Model.walkWorld(app.doc, function (it, info) {
-      if (exclude.indexOf(it) >= 0) return false;   /* 자식까지 건너뜀 */
+      if (exclude.indexOf(it) >= 0) return false;
       var b = Rn.boundsM(it, info.m, true, 1);
       if (R.isEmpty(b)) return;
-      xs.push(b.x, R.cx(b), b.x2);
-      ys.push(b.y, R.cy(b), b.y2);
-      if (it.type === 'group') return false;        /* 그룹 바운딩만 사용 */
+      push(xs, b.x, b, '가장자리'); push(xs, R.cx(b), b, '중심'); push(xs, b.x2, b, '가장자리');
+      push(ys, b.y, b, '가장자리'); push(ys, R.cy(b), b, '중심'); push(ys, b.y2, b, '가장자리');
+      if (it.type === 'group') return false;
     }, { skipHidden: true });
     return { xs: xs, ys: ys };
   };
@@ -608,28 +622,44 @@
   E.snapBounds = function (app, b, targets, tolDoc) {
     var res = { dx: 0, dy: 0, guides: [] };
     if (app.prefs.snapGrid) {
-      var g = 72 / 8;
+      var g = (app.prefs.gridSize || 72) / (app.prefs.gridDiv || 8);
       res.dx = Math.round(b.x / g) * g - b.x;
       res.dy = Math.round(b.y / g) * g - b.y;
       return res;
     }
     if (!app.prefs.smart) return res;
-    var cand = [b.x, R.cx(b), b.x2], candY = [b.y, R.cy(b), b.y2];
+
+    var candX = [{ v: b.x, k: '가장자리' }, { v: R.cx(b), k: '중심' }, { v: b.x2, k: '가장자리' }];
+    var candY = [{ v: b.y, k: '가장자리' }, { v: R.cy(b), k: '중심' }, { v: b.y2, k: '가장자리' }];
     var bestX = null, bestY = null;
-    cand.forEach(function (v) {
+
+    candX.forEach(function (c) {
       targets.xs.forEach(function (t) {
-        var d = t - v;
-        if (Math.abs(d) <= tolDoc && (!bestX || Math.abs(d) < Math.abs(bestX.d))) bestX = { d: d, t: t };
+        var d = t.v - c.v;
+        if (Math.abs(d) <= tolDoc && (!bestX || Math.abs(d) < Math.abs(bestX.d))) bestX = { d: d, t: t, c: c };
       });
     });
-    candY.forEach(function (v) {
+    candY.forEach(function (c) {
       targets.ys.forEach(function (t) {
-        var d = t - v;
-        if (Math.abs(d) <= tolDoc && (!bestY || Math.abs(d) < Math.abs(bestY.d))) bestY = { d: d, t: t };
+        var d = t.v - c.v;
+        if (Math.abs(d) <= tolDoc && (!bestY || Math.abs(d) < Math.abs(bestY.d))) bestY = { d: d, t: t, c: c };
       });
     });
-    if (bestX) { res.dx = bestX.d; res.guides.push({ axis: 'v', pos: bestX.t }); }
-    if (bestY) { res.dy = bestY.d; res.guides.push({ axis: 'h', pos: bestY.t }); }
+
+    function label(best) {
+      if (best.t.kind === '안내선') return '안내선';
+      if (best.t.kind.indexOf('대지') === 0) return best.t.kind;
+      if (best.c.k === '중심' && best.t.kind === '중심') return '중심';
+      return best.t.kind === '중심' ? '중심 정렬' : '가장자리';
+    }
+    if (bestX) {
+      res.dx = bestX.d;
+      res.guides.push({ axis: 'v', pos: bestX.t.v, label: label(bestX), src: bestX.t.b, moving: b, dx: bestX.d, dy: 0 });
+    }
+    if (bestY) {
+      res.dy = bestY.d;
+      res.guides.push({ axis: 'h', pos: bestY.t.v, label: label(bestY), src: bestY.t.b, moving: b, dx: 0, dy: bestY.d });
+    }
     return res;
   };
 

@@ -274,7 +274,7 @@ await check('눈금자 드래그로 안내선 생성', async () => {
 await check('메뉴 / 컨텍스트 메뉴', async () => {
   await page.click('#menus .menu-title');
   await page.waitForTimeout(100);
-  const n = await page.evaluate(() => document.querySelectorAll('.menu-pop .mi').length);
+  const n = await page.evaluate(() => document.querySelectorAll('.menubar-pop .mi').length);
   await page.keyboard.press('Escape');
   const p = at(0.5, 0.5);
   await page.mouse.click(p.x, p.y, { button: 'right' });
@@ -450,6 +450,341 @@ await check('패스파인더 나누기·병합', async () => {
   if (r.pieces !== 3) throw new Error('divide 조각=' + r.pieces);
   if (Math.abs(r.mergedArea - 17500) > 40) throw new Error('merge 면적=' + r.mergedArea);
   return `나누기 ${r.pieces}조각 / 병합 면적 ${r.mergedArea}`;
+});
+
+/* ---------------- Illustrator 재현도 ---------------- */
+await check('새 문서 대화상자 (사전 설정 · 방향)', async () => {
+  await page.keyboard.press('Control+KeyN');
+  await page.waitForSelector('.dlg', { timeout: 2000 });
+  const title = await page.textContent('.dlg-title');
+  await page.selectOption('#dlgf-preset', 'fhd');
+  const w1 = await page.inputValue('#dlgf-w');
+  const autoOrient = await page.isChecked('input[name="dlgf-orient"][value="l"]');
+  await page.click('input[name="dlgf-orient"][value="p"]');
+  const w2 = await page.inputValue('#dlgf-w');
+  if (!autoOrient) throw new Error('가로 사전 설정인데 방향 라디오가 가로로 바뀌지 않음');
+  await page.fill('#dlgf-name', '테스트 문서');
+  await page.click('.dlg-btn.primary');
+  await page.waitForTimeout(120);
+  const doc = await ev(() => ({ n: AI.app.doc.name, w: AI.app.doc.artboards[0].w, h: AI.app.doc.artboards[0].h }));
+  if (title !== '새 문서') throw new Error('제목=' + title);
+  if (w1 !== '1920') throw new Error('FHD 폭=' + w1);
+  if (w2 !== '1080') throw new Error('세로 전환 폭=' + w2);
+  if (doc.n !== '테스트 문서' || doc.w !== 1080) throw new Error(JSON.stringify(doc));
+  return `${title} · FHD ${w1} → 세로 ${w2} · ${doc.w}×${doc.h}`;
+});
+
+await check('회전 대화상자 — 미리 보기 · 복사', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(600, 600));
+    const r = AI.model.newRect(100, 100, 200, 100, 0);
+    app.doc.layers[0].children.push(r);
+    AI.sel.set(app, [r]);
+  });
+  await ev(() => AI.commands.run('rotateDialog'));
+  await page.waitForSelector('.dlg');
+  await page.fill('#dlgf-angle', '90');
+  await page.press('#dlgf-angle', 'Tab');
+  await page.waitForTimeout(80);
+  const previewW = await ev(() => { const b = AI.render.selectionBounds(AI.app, true); return Math.round(b.x2 - b.x); });
+  const buttons = await page.$$eval('.dlg-btn', els => els.map(e => e.textContent));
+  await page.click('.dlg-btn:has-text("복사")');
+  await page.waitForTimeout(100);
+  const n = await count();
+  if (previewW !== 100) throw new Error('미리보기 폭=' + previewW);
+  if (n !== 2) throw new Error('복사 후 개수=' + n);
+  if (buttons.join() !== '복사,취소,확인') throw new Error('버튼=' + buttons);
+  return `미리보기 회전 반영 · 버튼 ${buttons.join('/')} · 복사로 ${n}개`;
+});
+
+await check('도형 도구 클릭 → 크기 대화상자', async () => {
+  await ev(() => { AI.app.setDoc(AI.model.newDoc(600, 600)); });
+  await page.keyboard.press('KeyM');
+  const p = at(0.5, 0.5);
+  await page.mouse.click(p.x, p.y);
+  await page.waitForSelector('.dlg', { timeout: 2000 });
+  const t = await page.textContent('.dlg-title');
+  await page.fill('#dlgf-w', '240');
+  await page.fill('#dlgf-h', '160');
+  await page.fill('#dlgf-r', '20');
+  await page.click('.dlg-btn.primary');
+  await page.waitForTimeout(100);
+  const sh = await ev(() => AI.app.sel[0] && AI.app.sel[0].shape);
+  await page.keyboard.press('KeyV');
+  if (t !== '사각형') throw new Error('제목=' + t);
+  if (!sh || sh.w !== 240 || sh.h !== 160 || sh.r !== 20) throw new Error(JSON.stringify(sh));
+  return `${t} 240×160 r20`;
+});
+
+await check('도구 아이콘 더블클릭 → 도구 옵션', async () => {
+  await ev(() => { AI.tools.setTool(AI.app, 'star', true); });
+  await page.dblclick('#toolbar .tool.active');
+  await page.waitForSelector('.dlg', { timeout: 2000 });
+  const t = await page.textContent('.dlg-title');
+  await page.click('.dlg-btn:has-text("취소")');
+  await page.keyboard.press('KeyV');
+  if (t !== '별모양') throw new Error('제목=' + t);
+  return t + ' 옵션 열림';
+});
+
+await check('격리 모드 — 브레드크럼 바 · 외부 흐리게', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(600, 600));
+    AI.viewT.setZoom(app, 1); app.view.tx = 0; app.view.ty = 0;
+    const L = app.doc.layers[0];
+    const a = AI.model.newRect(50, 50, 100, 100, 0);
+    a.fill = AI.color.solid('#ff0000');
+    const g = AI.model.newGroup([AI.model.newRect(200, 50, 100, 100, 0)]);
+    g.children[0].fill = AI.color.solid('#0000ff');
+    g.name = '내부 그룹';
+    L.children.push(a, g);
+    app.isolation = [g];
+    AI.sel.set(app, [g.children[0]]);
+    app.invalidate();
+    AI.ui.syncAll(app);
+    AI.render.scene(app.canvas.getContext('2d'), app);
+  });
+  await page.waitForTimeout(80);
+  const bar = await page.evaluate(() => {
+    const b = document.getElementById('iso-bar');
+    return { hidden: b.hidden, crumbs: [...b.querySelectorAll('.crumb')].map(c => c.textContent) };
+  });
+  const px = await ev(() => {
+    const c = AI.app.canvas, ctx = c.getContext('2d'), d = AI.app.dpr;
+    const out = ctx.getImageData(Math.round(100 * d), Math.round(100 * d), 1, 1).data;   /* 격리 밖 빨강 */
+    const ins = ctx.getImageData(Math.round(250 * d), Math.round(100 * d), 1, 1).data;   /* 격리 안 파랑 */
+    return { out: [...out], ins: [...ins] };
+  });
+  if (bar.hidden) throw new Error('격리 바가 표시되지 않음');
+  if (bar.crumbs.length !== 2) throw new Error('브레드크럼=' + JSON.stringify(bar.crumbs));
+  if (px.out[0] < 200) throw new Error('격리 밖 픽셀=' + px.out);
+  if (px.out[1] < 150) throw new Error('흐리게 처리되지 않음: ' + px.out);
+  if (px.ins[2] < 200 || px.ins[0] > 60) throw new Error('격리 안 픽셀=' + px.ins);
+  await ev(() => { AI.app.isolation = []; AI.ui.syncAll(AI.app); });
+  return `${bar.crumbs.join(' › ')} · 외부 흐리게 rgb(${px.out.slice(0, 3)})`;
+});
+
+await check('획 정렬 — 가운데 / 안쪽 / 바깥쪽', async () => {
+  const sample = await page.evaluate(async () => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 400));
+    AI.viewT.setZoom(app, 1); app.view.tx = 0; app.view.ty = 0;
+    const r = AI.model.newRect(100, 100, 200, 200, 0);
+    r.fill = AI.color.solid('#ffffff');
+    r.stroke = AI.model.mkStroke('#ff0000', 20);
+    app.doc.layers[0].children.push(r);
+    const ctx = app.canvas.getContext('2d'), d = app.dpr;
+    function probe(align) {
+      r.stroke.align = align;
+      AI.render.scene(ctx, app);
+      /* 도형 바깥 6px 지점 / 안쪽 6px 지점 */
+      const outside = [...ctx.getImageData(Math.round(94 * d), Math.round(200 * d), 1, 1).data];
+      const inside = [...ctx.getImageData(Math.round(106 * d), Math.round(200 * d), 1, 1).data];
+      return { outside, inside };
+    }
+    return { center: probe('center'), inside: probe('inside'), outside: probe('outside') };
+  });
+  const isRed = p => p[0] > 200 && p[1] < 80;
+  if (!isRed(sample.center.outside) || !isRed(sample.center.inside)) throw new Error('가운데 정렬 실패');
+  if (isRed(sample.inside.outside) || !isRed(sample.inside.inside)) throw new Error('안쪽 정렬 실패');
+  if (!isRed(sample.outside.outside) || isRed(sample.outside.inside)) throw new Error('바깥쪽 정렬 실패');
+  return '세 정렬 모두 픽셀로 확인';
+});
+
+await check('변형 패널 기준점 (오른쪽 아래 고정 크기 조절)', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(600, 600));
+    const r = AI.model.newRect(100, 100, 200, 100, 0);
+    app.doc.layers[0].children.push(r);
+    AI.sel.set(app, [r]);
+    AI.ui.syncAll(app);
+  });
+  await page.click('#tf-ref .rp[data-i="8"]');          /* 오른쪽 아래 */
+  await page.fill('#tf-w', '100');
+  await page.press('#tf-w', 'Enter');
+  await page.waitForTimeout(80);
+  const b = await ev(() => { const x = AI.render.selectionBounds(AI.app, true); return [x.x, x.y, x.x2, x.y2].map(Math.round); });
+  if (b[2] !== 300 || b[3] !== 200 || b[0] !== 200) throw new Error('bounds=' + b);
+  const xy = await page.inputValue('#tf-x');
+  return `오른쪽 아래 고정 · bounds ${b} · X필드=${xy}`;
+});
+
+await check('라이브 모퉁이 위젯 드래그', async () => {
+  const geo = await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(600, 600));
+    AI.viewT.setZoom(app, 1); app.view.tx = 0; app.view.ty = 0;
+    const r = AI.model.newRect(100, 100, 300, 200, 0);
+    app.doc.layers[0].children.push(r);
+    AI.sel.set(app, [r]);
+    AI.tools.setTool(app, 'select', true);
+    app.invalidate();
+    const cw = AI.render.cornerWidgets(app);
+    return cw ? { x: cw.pts[0].x, y: cw.pts[0].y } : null;
+  });
+  if (!geo) throw new Error('모퉁이 위젯이 없음');
+  await drag({ x: box.x + geo.x, y: box.y + geo.y }, { x: box.x + geo.x + 40, y: box.y + geo.y + 40 });
+  const r = await ev(() => AI.app.sel[0].shape.r);
+  if (!(r > 30)) throw new Error('반경=' + r);
+  return '반경 0 → ' + Math.round(r);
+});
+
+await check('Ctrl+Space 임시 확대 도구', async () => {
+  await page.keyboard.press('KeyV');
+  await page.keyboard.down('Control');
+  await page.keyboard.down('Space');
+  const t1 = await ev(() => AI.app.tool);
+  await page.keyboard.up('Space');
+  await page.keyboard.up('Control');
+  const t2 = await ev(() => AI.app.tool);
+  if (t1 !== 'zoom' || t2 !== 'select') throw new Error(`${t1}/${t2}`);
+  return 'zoom → select 복귀';
+});
+
+await check('도구별 커서 적용', async () => {
+  const res = {};
+  for (const [key, tool] of [['KeyV', 'select'], ['KeyP', 'pen'], ['KeyT', 'type'], ['KeyZ', 'zoom']]) {
+    await page.keyboard.press(key);
+    res[tool] = await page.evaluate(() => document.getElementById('view').style.cursor);
+  }
+  await page.keyboard.press('KeyV');
+  const allSvg = Object.values(res).every(v => v.startsWith('url("data:image/svg+xml'));
+  const distinct = new Set(Object.values(res)).size;
+  if (!allSvg) throw new Error(Object.keys(res).join() + ' 중 SVG 커서가 아닌 것이 있음');
+  if (distinct !== 4) throw new Error('커서가 중복됨 ' + distinct);
+  return '4개 도구 모두 고유 SVG 커서';
+});
+
+await check('편집 메뉴가 실행 취소 동작 이름을 표시', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(600, 600));
+    const r = AI.model.newRect(50, 50, 100, 100, 0);
+    app.doc.layers[0].children.push(r);
+    AI.sel.set(app, [r]);
+    app.history.reset(app.doc, 'base');
+    app.history.begin('이동', app.doc);
+    AI.edit.move(app, 10, 0);
+    app.history.commit();
+  });
+  await page.click('#menus .menu-title:has-text("편집")');
+  await page.waitForTimeout(100);
+  const first = await page.textContent('.menubar-pop .mi span:nth-child(2)');
+  await page.keyboard.press('Escape');
+  if (first !== '실행 취소 이동') throw new Error('메뉴=' + first);
+  return first;
+});
+
+await check('환경 설정 대화상자 (키보드 증감)', async () => {
+  await page.keyboard.press('Control+KeyK');
+  await page.waitForSelector('.dlg');
+  await page.fill('#dlgf-inc', '5');
+  await page.click('.dlg-btn.primary');
+  await page.waitForTimeout(80);
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(600, 600));
+    const r = AI.model.newRect(50, 50, 100, 100, 0);
+    app.doc.layers[0].children.push(r);
+    AI.sel.set(app, [r]);
+  });
+  const x0 = await ev(() => AI.render.selectionBounds(AI.app, true).x);
+  await page.keyboard.press('ArrowRight');
+  const x1 = await ev(() => AI.render.selectionBounds(AI.app, true).x);
+  await ev(() => { AI.app.prefs.keyIncrement = 1; });
+  if (Math.abs(x1 - x0 - 5) > 0.01) throw new Error(`${x0} -> ${x1}`);
+  return '증감 5pt 적용';
+});
+
+await check('문서 단위 (mm) — 패널 · 눈금자 · 상태바', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(595.28, 841.89));
+    const r = AI.model.newRect(0, 0, 283.4646, 141.7323, 0);   /* 100mm × 50mm */
+    app.doc.layers[0].children.push(r);
+    AI.sel.set(app, [r]);
+    AI.commands.setUnit(app, 'mm');
+  });
+  await page.waitForTimeout(100);
+  const w = await page.inputValue('#tf-w');
+  const h = await page.inputValue('#tf-h');
+  /* mm 로 입력 -> pt 로 저장되는지 */
+  await page.fill('#tf-w', '200');
+  await page.press('#tf-w', 'Enter');
+  await page.waitForTimeout(80);
+  const pt = await ev(() => { const b = AI.render.selectionBounds(AI.app, true); return b.x2 - b.x; });
+  /* 단위 접미사를 직접 적으면 그 단위로 해석 */
+  await page.fill('#tf-w', '72pt');
+  await page.press('#tf-w', 'Enter');
+  await page.waitForTimeout(80);
+  const pt2 = await ev(() => { const b = AI.render.selectionBounds(AI.app, true); return b.x2 - b.x; });
+  await ev(() => AI.commands.setUnit(AI.app, 'pt'));
+  if (Math.abs(+w - 100) > 0.05 || Math.abs(+h - 50) > 0.05) throw new Error(`표시 ${w}×${h} (기대 100×50)`);
+  if (Math.abs(pt - 566.93) > 0.5) throw new Error('200mm -> ' + pt + 'pt');
+  if (Math.abs(pt2 - 72) > 0.01) throw new Error('72pt -> ' + pt2);
+  return `${w}×${h} mm · 200mm=${Math.round(pt)}pt · "72pt" 그대로 해석`;
+});
+
+await check('대지 추가 · 네비게이션', async () => {
+  await ev(() => { AI.app.setDoc(AI.model.newDoc(400, 300)); AI.ui.syncAll(AI.app); });
+  const disabled0 = await page.isDisabled('#ab-next');
+  await ev(() => AI.commands.run('newArtboard'));
+  await ev(() => AI.commands.run('newArtboard'));
+  await page.waitForTimeout(80);
+  const label = await page.textContent('#st-artboard');
+  await page.click('#ab-first');
+  await page.waitForTimeout(60);
+  const idx = await ev(() => AI.app.doc.activeArtboard);
+  const n = await ev(() => AI.app.doc.artboards.length);
+  if (!disabled0) throw new Error('대지 1개일 때 다음 버튼이 활성 상태');
+  if (n !== 3 || idx !== 0) throw new Error(`n=${n} idx=${idx}`);
+  if (!/3\/3/.test(label)) throw new Error('상태바=' + label);
+  return `${n}개 · 상태바 "${label}" · 첫 대지 이동`;
+});
+
+await check('눈금자 우클릭 단위 메뉴', async () => {
+  const rh = await (await page.$('#ruler-h')).boundingBox();
+  await page.mouse.click(rh.x + 200, rh.y + 10, { button: 'right' });
+  await page.waitForTimeout(120);
+  const items = await page.$$eval('#contextmenu .mi', els => els.map(e => e.textContent.replace('✓', '').trim()));
+  await page.click('#contextmenu .mi:has-text("밀리미터")');
+  await page.waitForTimeout(80);
+  const u = await ev(() => AI.app.prefs.unit);
+  await ev(() => AI.commands.setUnit(AI.app, 'pt'));
+  if (items.length !== 5) throw new Error('항목=' + items);
+  if (u !== 'mm') throw new Error('단위=' + u);
+  return items.join('/');
+});
+
+await check('환경 설정의 격자 간격이 실제 격자에 반영', async () => {
+  const px = await page.evaluate(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 400));
+    AI.viewT.setZoom(app, 1); app.view.tx = 0; app.view.ty = 0;
+    app.prefs.grid = true;
+    const ctx = app.canvas.getContext('2d'), d = app.dpr;
+    function lineCount(size, div) {
+      app.prefs.gridSize = size; app.prefs.gridDiv = div;
+      AI.render.scene(ctx, app);
+      let n = 0, prev = false;
+      for (let x = 0; x < 300; x++) {
+        const p = ctx.getImageData(Math.round(x * d), Math.round(50 * d), 1, 1).data;
+        const isLine = p[2] > p[0] + 6;
+        if (isLine && !prev) n++;
+        prev = isLine;
+      }
+      return n;
+    }
+    const a = lineCount(72, 8);    /* 9pt 간격 */
+    const b = lineCount(72, 4);    /* 18pt 간격 */
+    app.prefs.grid = false;
+    return { a, b };
+  });
+  if (!(px.a > px.b * 1.6)) throw new Error(JSON.stringify(px));
+  return `분할 8 → ${px.a}줄, 분할 4 → ${px.b}줄`;
 });
 
 /* ---------------- 결과 ---------------- */

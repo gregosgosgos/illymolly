@@ -112,13 +112,25 @@
         app.invalidate();
         return;
       }
-      /* 커서 힌트 */
-      var c = 'crosshair';
-      if (!pen) {
-        if (H.anchorAt(app, e.x, e.y, app.sel)) c = 'pointer';
-        else if (H.segmentAt(app, e.x, e.y, app.sel)) c = 'copy';
+      /* Illustrator 방식 펜 커서 상태 (× + − ○ /) */
+      var C = AI.cursors, state = 'new';
+      if (pen) {
+        state = '';
+        var sub = pen.it.subs[pen.si];
+        if (sub && sub.pts.length > 1 && !sub.closed) {
+          var first = sub.pts[0];
+          var fs = M.apply(M.mul(AI.viewT.matrix(app), Model.worldMatrix(app.doc, pen.it)), first.x, first.y);
+          if (U.dist(fs.x, fs.y, e.x, e.y) <= 7) state = 'close';
+        }
+      } else {
+        var an = H.anchorAt(app, e.x, e.y, app.sel.length ? app.sel : null);
+        if (an) {
+          var sb = an.it.subs[an.si];
+          var isEnd = !sb.closed && (an.pi === 0 || an.pi === sb.pts.length - 1);
+          state = isEnd ? 'join' : 'del';
+        } else if (H.segmentAt(app, e.x, e.y, app.sel.length ? app.sel : null)) state = 'add';
       }
-      app.canvas.style.cursor = c;
+      C.set(app, C.pen(state));
       if (pen) app.invalidate();
     },
 

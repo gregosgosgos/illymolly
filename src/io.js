@@ -15,29 +15,8 @@
     setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   }
 
-  IO.newDoc = function (app) {
-    var s = prompt('새 문서 크기 (가로 x 세로)', app.doc.width + ' x ' + app.doc.height);
-    if (s == null) return;
-    var m = s.split(/[x×,]/);
-    var w = U.parseNum(m[0], 800), h = U.parseNum(m[1], 600);
-    app.setDoc(Model.newDoc(Math.max(1, w), Math.max(1, h)));
-    app.history.reset(app.doc, '새 문서');
-    AI.viewT.fitArtboard(app);
-    U.toast('새 문서 ' + U.round(w) + ' × ' + U.round(h));
-  };
-
-  IO.docSetup = function (app) {
-    var ab = app.doc.artboards[app.doc.activeArtboard];
-    var s = prompt('대지 크기 (가로 x 세로)', U.round(ab.w) + ' x ' + U.round(ab.h));
-    if (s == null) return;
-    var m = s.split(/[x×,]/);
-    app.history.begin('문서 설정', app.doc);
-    ab.w = Math.max(1, U.parseNum(m[0], ab.w));
-    ab.h = Math.max(1, U.parseNum(m[1], ab.h));
-    app.doc.width = ab.w; app.doc.height = ab.h;
-    app.history.commit();
-    app.invalidate();
-  };
+  IO.newDoc = function (app) { AI.dialogs.newDocument(app); };
+  IO.docSetup = function (app) { AI.dialogs.documentSetup(app); };
 
   /* ---------------- 이미지 배치 ---------------- */
   IO.placeImage = function (app) {
@@ -74,18 +53,21 @@
     inp.click();
   };
 
-  IO.save = function (app, asNew) {
-    var name = app.doc.name;
-    if (asNew) {
-      var n = prompt('파일 이름', name);
-      if (n == null) return;
-      name = n; app.doc.name = n;
-    }
+  function writeFile(app, name) {
+    app.doc.name = name;
     var data = JSON.stringify({ format: 'illymolly', version: 1, doc: app.doc }, null, 1);
     download(name.replace(/\.[a-z]+$/i, '') + '.illy.json', new Blob([data], { type: 'application/json' }));
     app.dirty = false;
     AI.ui.syncStatus(app);
-    U.toast('저장됨');
+    U.toast('저장됨: ' + name);
+  }
+  IO.save = function (app, asNew) {
+    if (!asNew) { writeFile(app, app.doc.name); return; }
+    AI.dialog.open({
+      title: '다른 이름으로 저장',
+      fields: [{ id: 'name', label: '파일 이름', type: 'text', value: app.doc.name, width: 180 }],
+      onDone: function (v) { writeFile(app, (v.name || '무제-1').trim()); }
+    });
   };
 
   IO.openFile = function (app) {
@@ -220,25 +202,24 @@
   };
 
   IO.exportPNG = function (app) {
-    var s = prompt('PNG 배율 (1 = 100%)', '2');
-    if (s == null) return;
-    var scale = U.clamp(U.parseNum(s, 2), 0.1, 10);
-    var ab = app.doc.artboards[app.doc.activeArtboard];
-    var cv = document.createElement('canvas');
-    cv.width = Math.max(1, Math.round(ab.w * scale));
-    cv.height = Math.max(1, Math.round(ab.h * scale));
-    var ctx = cv.getContext('2d');
-    var fake = {
-      doc: app.doc, dpr: 1, exporting: true, exportBg: true,
-      view: { scale: scale, tx: -ab.x * scale, ty: -ab.y * scale },
-      prefs: { grid: false, guides: false, outline: false },
-      canvas: cv, sel: [], selPts: []
-    };
-    Rn.scene(ctx, fake);
-    cv.toBlob(function (blob) {
-      download(app.doc.name.replace(/\.[a-z.]+$/i, '') + '.png', blob);
-      U.toast('PNG 내보내기 완료 (' + cv.width + '×' + cv.height + ')');
-    }, 'image/png');
+    AI.dialogs.exportPNG(app, function (scale, withBg) {
+      var ab = app.doc.artboards[app.doc.activeArtboard];
+      var cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round(ab.w * scale));
+      cv.height = Math.max(1, Math.round(ab.h * scale));
+      var ctx = cv.getContext('2d');
+      var fake = {
+        doc: app.doc, dpr: 1, exporting: true, exportBg: withBg,
+        view: { scale: scale, tx: -ab.x * scale, ty: -ab.y * scale },
+        prefs: { grid: false, guides: false, outline: false },
+        canvas: cv, sel: [], selPts: [], invalidate: function () { }
+      };
+      Rn.scene(ctx, fake);
+      cv.toBlob(function (blob) {
+        download(app.doc.name.replace(/\.[a-z.]+$/i, '') + '.png', blob);
+        U.toast('PNG 내보내기 완료 (' + cv.width + '×' + cv.height + ')');
+      }, 'image/png');
+    });
   };
 
   /* ---------------- SVG 가져오기 (기본 도형/패스) ---------------- */

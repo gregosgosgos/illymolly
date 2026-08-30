@@ -12,7 +12,7 @@
     it.fill = U.deepCopy(app.fill || Col.solid('#cccccc'));
     var s = Model.defaultStroke();
     s.width = app.strokeWidth || 1;
-    s.cap = app.strokeCap || 'butt'; s.join = app.strokeJoin || 'miter';
+    s.cap = app.strokeCap || 'butt'; s.join = app.strokeJoin || 'miter'; s.align = app.strokeAlign || 'center';
     s.dash = (app.strokeDash || []).slice();
     if (app.stroke && app.stroke.type !== 'none') {
       if (app.stroke.type === 'solid') { s.type = 'solid'; s.color = app.stroke.color; s.alpha = app.stroke.alpha; }
@@ -88,15 +88,14 @@
       onUp: function (app, e) {
         if (!st) return;
         if (!st.moved) {
-          /* 클릭만 = 기본 크기 */
+          /* 클릭만 = Illustrator 처럼 크기 입력 대화상자 */
           var d = st.start;
-          var it = (kind === 'polygon' || kind === 'star')
-            ? makeShape(app, kind, d.x, d.y, 50, 50, { n: st.n, ratio: st.ratio })
-            : makeShape(app, kind, d.x, d.y, 100, kind === 'line' ? 0 : 100, { r: st.r });
-          if (kind === 'line') { it = makeShape(app, kind, d.x, d.y, 100, 0, {}); }
-          place(app, it);
-          app.history.commit();
-        } else app.history.commit();
+          app.history.abort();
+          st = null;
+          AI.dialogs.shapeOptions(app, kind, d);
+          return;
+        }
+        app.history.commit();
         st = null;
         app.invalidate();
         AI.ui && AI.ui.syncSelection && AI.ui.syncSelection(app);

@@ -209,10 +209,19 @@
   };
 
   /* ---------------- 레이어 / 문서 ---------------- */
-  Model.newLayer = function (name) {
+  /* Illustrator 기본 레이어 색상 순서 */
+  Model.LAYER_COLORS = [
+    '#4ca6de', '#e04a3f', '#64b564', '#e8a33d', '#9b7fd4',
+    '#3fb8af', '#d96ba0', '#8d8d8d', '#c0a02c', '#5b78d8'
+  ];
+  var layerSeq = 0;
+  Model.newLayer = function (name, index) {
+    var i = index == null ? layerSeq++ : index;
     return {
       id: U.uid('L'), type: 'layer', name: name || '레이어 1',
-      visible: true, locked: false, color: '#2d8ceb', children: []
+      visible: true, locked: false,
+      color: Model.LAYER_COLORS[i % Model.LAYER_COLORS.length],
+      children: []
     };
   };
 

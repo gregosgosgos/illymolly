@@ -33,10 +33,10 @@
     });
   }
 
-  function num(el, get, set, label) {
+  function num(el, get, set, label, isLength) {
     U.on(el, 'change', function () {
       if (syncing) return;
-      var v = U.parseNum(el.value, get());
+      var v = isLength ? U.parseLen(el.value, get(), app.prefs.unit || 'pt') : U.parseNum(el.value, get());
       app.history.begin(label || '값 변경', app.doc);
       set(v);
       app.history.commit();
@@ -73,18 +73,18 @@
     var op = document.getElementById('ctl-opacity');
     num(op, function () { return 100; }, function (v) { E.setOpacity(app, U.clamp(v, 0, 100) / 100); }, '불투명도');
 
-    num(document.getElementById('ctl-x'), function () { return 0; }, function (v) { E.setBounds(app, v, null, null, null); }, '위치');
-    num(document.getElementById('ctl-y'), function () { return 0; }, function (v) { E.setBounds(app, null, v, null, null); }, '위치');
+    num(document.getElementById('ctl-x'), function () { return 0; }, function (v) { E.setBounds(app, v, null, null, null); }, '위치', true);
+    num(document.getElementById('ctl-y'), function () { return 0; }, function (v) { E.setBounds(app, null, v, null, null); }, '위치', true);
     num(document.getElementById('ctl-w'), function () { return 0; }, function (v) {
       var b = Rn.selectionBounds(app, true);
       var h = app.lockRatio ? R.h(b) * (v / (R.w(b) || 1)) : null;
       E.setBounds(app, null, null, v, h);
-    }, '크기');
+    }, '크기', true);
     num(document.getElementById('ctl-h'), function () { return 0; }, function (v) {
       var b = Rn.selectionBounds(app, true);
       var w = app.lockRatio ? R.w(b) * (v / (R.h(b) || 1)) : null;
       E.setBounds(app, null, null, w, v);
-    }, '크기');
+    }, '크기', true);
     num(document.getElementById('ctl-a'), function () { return 0; }, function (v) {
       if (app.sel.length === 1) {
         var it = app.sel[0];
@@ -95,6 +95,31 @@
 
     var lock = document.getElementById('ctl-lockratio');
     U.on(lock, 'click', function () { app.lockRatio = !app.lockRatio; lock.classList.toggle('on', app.lockRatio); });
+
+    ['first', 'prev', 'next', 'last'].forEach(function (k) {
+      var b = document.getElementById('ab-' + k);
+      if (b) U.on(b, 'click', function () { C.run(k + 'Artboard'); });
+    });
+    /* 눈금자 우클릭 = 단위 메뉴 (Illustrator 동작) */
+    ['ruler-h', 'ruler-v', 'ruler-corner'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      U.on(el, 'contextmenu', function (ev) {
+        ev.preventDefault();
+        var cm = document.getElementById('contextmenu');
+        cm.innerHTML = '';
+        cm.className = 'menu-pop';
+        [['pt', '포인트'], ['px', '픽셀'], ['mm', '밀리미터'], ['cm', '센티미터'], ['in', '인치']].forEach(function (o) {
+          var mi = U.el('div', 'mi');
+          mi.innerHTML = '<span class="chk">' + ((app.prefs.unit || 'pt') === o[0] ? '✓' : '') + '</span><span>' + o[1] + '</span>';
+          U.on(mi, 'click', function () { cm.hidden = true; C.setUnit(app, o[0]); });
+          cm.appendChild(mi);
+        });
+        cm.style.left = ev.clientX + 'px';
+        cm.style.top = ev.clientY + 'px';
+        cm.hidden = false;
+      });
+    });
 
     var z = document.getElementById('st-zoom');
     U.on(z, 'change', function () {
@@ -140,35 +165,58 @@
   function buildTransform() {
     var p = document.getElementById('p-transform');
     p.innerHTML =
+      '<div class="row" style="align-items:flex-start;gap:9px">' +
+      '<div class="refpoint" id="tf-ref" title="기준점 — X/Y 와 크기 조절의 기준">' +
+      [0, 1, 2, 3, 4, 5, 6, 7, 8].map(function (i) { return '<div class="rp' + (i === 0 ? ' on' : '') + '" data-i="' + i + '"></div>'; }).join('') +
+      '</div>' +
+      '<div style="flex:1">' +
       '<div class="grid2">' +
       '<div class="row"><label>X</label><input class="fld" id="tf-x"></div>' +
       '<div class="row"><label>Y</label><input class="fld" id="tf-y"></div>' +
       '<div class="row"><label>W</label><input class="fld" id="tf-w"></div>' +
       '<div class="row"><label>H</label><input class="fld" id="tf-h"></div>' +
+      '</div></div></div>' +
+      '<div class="grid2">' +
       '<div class="row"><label>∠</label><input class="fld" id="tf-a"></div>' +
-      '<div class="row"><label>⌇</label><input class="fld" id="tf-s" value="0"></div>' +
+      '<div class="row"><label title="기울이기">⌇</label><input class="fld" id="tf-s" value="0"></div>' +
       '</div>' +
       '<div class="grid2" style="margin-top:4px">' +
       '<button class="btn" data-cmd="reflectH">가로 반사</button>' +
       '<button class="btn" data-cmd="reflectV">세로 반사</button>' +
       '</div>';
-    num(U.q('#tf-x', p), function () { return 0; }, function (v) { E.setBounds(app, v, null, null, null); }, '위치');
-    num(U.q('#tf-y', p), function () { return 0; }, function (v) { E.setBounds(app, null, v, null, null); }, '위치');
+
+    var ref = U.q('#tf-ref', p);
+    U.on(ref, 'click', function (ev) {
+      if (!ev.target.dataset.i) return;
+      U.qa('.rp', ref).forEach(function (x) { x.classList.remove('on'); });
+      ev.target.classList.add('on');
+      app.refPoint = +ev.target.dataset.i;
+      UI.syncSelection(app);
+    });
+
+    num(U.q('#tf-x', p), function () { return 0; }, function (v) { E.setBounds(app, v, null, null, null); }, '위치', true);
+    num(U.q('#tf-y', p), function () { return 0; }, function (v) { E.setBounds(app, null, v, null, null); }, '위치', true);
     num(U.q('#tf-w', p), function () { return 0; }, function (v) {
       var b = Rn.selectionBounds(app, true);
       E.setBounds(app, null, null, v, app.lockRatio ? R.h(b) * (v / (R.w(b) || 1)) : null);
-    }, '크기');
+    }, '크기', true);
     num(U.q('#tf-h', p), function () { return 0; }, function (v) {
       var b = Rn.selectionBounds(app, true);
       E.setBounds(app, null, null, app.lockRatio ? R.w(b) * (v / (R.h(b) || 1)) : null, v);
-    }, '크기');
+    }, '크기', true);
     num(U.q('#tf-a', p), function () { return 0; }, function (v) {
+      var b = Rn.selectionBounds(app, true);
+      var o = E.refPointOf(b, app.refPoint || 0);
       if (app.sel.length === 1) {
         var cur = M.angle(Model.worldMatrix(app.doc, app.sel[0]));
-        E.rotate(app, v - cur);
-      } else E.rotate(app, v);
+        E.rotate(app, v - cur, o.x, o.y);
+      } else E.rotate(app, v, o.x, o.y);
     }, '회전');
-    num(U.q('#tf-s', p), function () { return 0; }, function (v) { E.shear(app, v, 0); }, '기울이기');
+    num(U.q('#tf-s', p), function () { return 0; }, function (v) {
+      var b = Rn.selectionBounds(app, true);
+      var o = E.refPointOf(b, app.refPoint || 0);
+      E.shear(app, v, 0, o.x, o.y);
+    }, '기울이기');
     U.qa('[data-cmd]', p).forEach(function (b) { U.on(b, 'click', function () { C.run(b.dataset.cmd); }); });
   }
 
@@ -571,8 +619,13 @@
       '<button class="mini-btn" data-join="round">◜</button>' +
       '<button class="mini-btn" data-join="bevel">◺</button>' +
       '</div>' +
+      '<div class="row"><label style="min-width:30px">정렬</label>' +
+      '<button class="mini-btn" data-salign="center" title="획을 가운데 정렬" style="flex:1">가운데</button>' +
+      '<button class="mini-btn" data-salign="inside" title="획을 안쪽 정렬" style="flex:1">안쪽</button>' +
+      '<button class="mini-btn" data-salign="outside" title="획을 바깥쪽 정렬" style="flex:1">바깥쪽</button>' +
+      '</div>' +
       '<div class="row"><label style="min-width:30px">점선</label><input class="fld" id="sk-dash" placeholder="예: 4 2"></div>' +
-      '<div class="hint">점선은 공백으로 구분해 입력 (비우면 실선)</div>';
+      '<div class="hint">점선은 공백으로 구분해 입력 (비우면 실선).<br>안쪽·바깥쪽 정렬은 닫힌 패스에만 적용됩니다.</div>';
 
     num(U.q('#sk-w', p), function () { return 1; }, function (v) {
       app.strokeWidth = v;
@@ -591,6 +644,14 @@
         app.strokeJoin = b.dataset.join;
         app.history.begin('획 모퉁이', app.doc);
         E.applyStrokeProp(app, 'join', b.dataset.join);
+        app.history.commit(); app.invalidate(); UI.syncStyle(app);
+      });
+    });
+    U.qa('[data-salign]', p).forEach(function (b) {
+      U.on(b, 'click', function () {
+        app.strokeAlign = b.dataset.salign;
+        app.history.begin('획 정렬', app.doc);
+        E.applyStrokeProp(app, 'align', b.dataset.salign);
         app.history.commit(); app.invalidate(); UI.syncStyle(app);
       });
     });
@@ -803,14 +864,72 @@
   };
 
   UI.updateZoom = function (a) {
+    ['first', 'prev', 'next', 'last'].forEach(function (k) {
+      var b = document.getElementById('ab-' + k);
+      if (b) U.on(b, 'click', function () { C.run(k + 'Artboard'); });
+    });
+    /* 눈금자 우클릭 = 단위 메뉴 (Illustrator 동작) */
+    ['ruler-h', 'ruler-v', 'ruler-corner'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      U.on(el, 'contextmenu', function (ev) {
+        ev.preventDefault();
+        var cm = document.getElementById('contextmenu');
+        cm.innerHTML = '';
+        cm.className = 'menu-pop';
+        [['pt', '포인트'], ['px', '픽셀'], ['mm', '밀리미터'], ['cm', '센티미터'], ['in', '인치']].forEach(function (o) {
+          var mi = U.el('div', 'mi');
+          mi.innerHTML = '<span class="chk">' + ((app.prefs.unit || 'pt') === o[0] ? '✓' : '') + '</span><span>' + o[1] + '</span>';
+          U.on(mi, 'click', function () { cm.hidden = true; C.setUnit(app, o[0]); });
+          cm.appendChild(mi);
+        });
+        cm.style.left = ev.clientX + 'px';
+        cm.style.top = ev.clientY + 'px';
+        cm.hidden = false;
+      });
+    });
+
     var z = document.getElementById('st-zoom');
     if (z && document.activeElement !== z) z.value = U.round(a.view.scale * 100, 2) + '%';
+  };
+
+  UI.syncIsolation = function (a) {
+    var bar = document.getElementById('iso-bar');
+    if (!bar) return;
+    var iso = a.isolation || [];
+    bar.hidden = iso.length === 0;
+    if (!iso.length) return;
+    var crumbs = U.q('.iso-crumbs', bar);
+    crumbs.innerHTML = '';
+    var loc = Model.locate(a.doc, iso[0]);
+    var parts = [(loc && loc.layer ? loc.layer.name : '레이어 1')].concat(iso.map(function (g) { return g.name || '그룹'; }));
+    parts.forEach(function (name, i) {
+      if (i) crumbs.appendChild(U.el('span', 'sepc', '›'));
+      var c = U.el('span', 'crumb' + (i === parts.length - 1 ? ' cur' : ''), name);
+      U.on(c, 'click', function () {
+        a.isolation = iso.slice(0, i);       /* i=0 이면 완전히 빠져나감 */
+        if (a.isolation.length) AI.sel.set(a, [a.isolation[a.isolation.length - 1]]);
+        else AI.sel.clear(a);
+        a.invalidate();
+        UI.syncAll(a);
+      });
+      crumbs.appendChild(c);
+    });
+    var back = U.q('.iso-back', bar);
+    back.onclick = function () { C.run('exitIsolation'); UI.syncAll(a); };
   };
 
   UI.syncStatus = function (a) {
     var ab = a.doc.artboards[a.doc.activeArtboard];
     var el = document.getElementById('st-artboard');
-    if (el && ab) el.textContent = ab.name;
+    var n = a.doc.artboards.length;
+    if (el && ab) el.textContent = ab.name + (n > 1 ? ' (' + (a.doc.activeArtboard + 1) + '/' + n + ')' : '');
+    var i = a.doc.activeArtboard;
+    var dis = { first: i === 0, prev: i === 0, next: i >= n - 1, last: i >= n - 1 };
+    Object.keys(dis).forEach(function (k) {
+      var b = document.getElementById('ab-' + k);
+      if (b) b.disabled = dis[k];
+    });
     document.getElementById('doc-title').textContent = a.doc.name + (a.dirty ? ' *' : '');
   };
 
@@ -868,6 +987,8 @@
     var join = (a.sel.length && a.sel[0].stroke) ? a.sel[0].stroke.join : a.strokeJoin;
     U.qa('[data-cap]').forEach(function (b) { b.classList.toggle('on', b.dataset.cap === cap); });
     U.qa('[data-join]').forEach(function (b) { b.classList.toggle('on', b.dataset.join === join); });
+    var salign = (a.sel.length && a.sel[0].stroke) ? (a.sel[0].stroke.align || 'center') : (a.strokeAlign || 'center');
+    U.qa('[data-salign]').forEach(function (b) { b.classList.toggle('on', b.dataset.salign === salign); });
     var dashEl = document.getElementById('sk-dash');
     if (dashEl && document.activeElement !== dashEl) {
       var d = (a.sel.length && a.sel[0].stroke) ? a.sel[0].stroke.dash : a.strokeDash;
@@ -887,8 +1008,10 @@
     var b = n ? Rn.selectionBounds(a, true) : null;
     var vals = { x: '', y: '', w: '', h: '', a: '' };
     if (b && !R.isEmpty(b)) {
-      vals.x = U.fmt(b.x); vals.y = U.fmt(b.y);
-      vals.w = U.fmt(R.w(b)); vals.h = U.fmt(R.h(b));
+      var un = a.prefs.unit || 'pt';
+      var rp = E.refPointOf(b, a.refPoint || 0);
+      vals.x = U.fmtUnit(rp.x, un); vals.y = U.fmtUnit(rp.y, un);
+      vals.w = U.fmtUnit(R.w(b), un); vals.h = U.fmtUnit(R.h(b), un);
       vals.a = n === 1 ? U.fmt(M.angle(Model.worldMatrix(a.doc, a.sel[0]))) : '0';
     }
     ['x', 'y', 'w', 'h', 'a'].forEach(function (k) {
@@ -902,6 +1025,8 @@
     });
     var bl = document.getElementById('pr-blend');
     if (bl && n) bl.value = a.sel[0].blend || 'normal';
+    var rf = document.getElementById('tf-ref');
+    if (rf) U.qa('.rp', rf).forEach(function (x, i) { x.classList.toggle('on', i === (a.refPoint || 0)); });
     syncing = false;
     UI.syncStyle(a);
   };
@@ -913,6 +1038,7 @@
     UI.syncGradient(a);
     UI.syncStatus(a);
     UI.updateZoom(a);
+    UI.syncIsolation(a);
     UI.buildLayers(a);
   };
 })(window.AI);

@@ -25,7 +25,7 @@
     app.tool = id;
     var t = T.list[id];
     if (t.activate) t.activate(app);
-    app.canvas.style.cursor = t.cursor || 'default';
+    AI.cursors.set(app, AI.cursors.forTool(id) || t.cursor || 'default');
     /* 숨은 도구를 골라도 툴바 슬롯이 항상 현재 도구를 보여주도록 */
     if (T.syncSlotFor && T.buildToolbar) { T.syncSlotFor(app, id); T.buildToolbar(app); }
     AI.ui && AI.ui.syncTool && AI.ui.syncTool(app);
