@@ -624,11 +624,9 @@
       while (it && it.type === 'group' && it.children.length) it = it.children[it.children.length - 1];
       if (it) target = a.fillFocus ? it.fill : it.stroke;
     }
-    if (!target || (target.type !== 'linear' && target.type !== 'radial')) {
-      target = a.fillFocus ? a.fill : a.stroke;
-    }
-    if ((!target || (target.type !== 'linear' && target.type !== 'radial')) && create) return null;
-    return (target && (target.type === 'linear' || target.type === 'radial')) ? target : null;
+    if (!Col.isGradient(target)) target = a.fillFocus ? a.fill : a.stroke;
+    if (!Col.isGradient(target) && create) return null;
+    return Col.isGradient(target) ? target : null;
   }
 
   function applyGradient(label, mutate) {
@@ -649,11 +647,42 @@
     UI.syncStyle(app);
   }
 
+  /* 선형·방사형 <-> 자유형 오가기.
+     자유형은 정지점 대신 위치를 가진 색 점을 쓰므로 서로 옮겨 담는다. */
+  function toFreeform(g) {
+    if (g.type === 'freeform') return;
+    var it = app.sel.filter(function (o) { return o.type !== 'group'; })[0];
+    var b = it ? Rn.localBounds(it) : { x: 0, y: 0, x2: 100, y2: 100 };
+    var w = (b.x2 - b.x) || 100, h = (b.y2 - b.y) || 100;
+    var src = (g.stops && g.stops.length) ? g.stops.slice().sort(function (a, c) { return a.t - c.t; })
+      : [{ t: 0, color: '#ffffff' }, { t: 1, color: '#000000' }];
+    /* 정지점을 도형 안에 대각선으로 늘어놓는다 */
+    g.stops = src.map(function (s, i) {
+      var u = src.length < 2 ? 0.5 : i / (src.length - 1);
+      return {
+        x: b.x + w * (0.2 + 0.6 * u), y: b.y + h * (0.2 + 0.6 * u),
+        color: s.color, alpha: s.alpha == null ? 1 : s.alpha, spread: 60
+      };
+    });
+    g.mode = 'points';
+    g.lines = [];
+    delete g.p0; delete g.p1;
+  }
+  function fromFreeform(g, kind) {
+    var n = Math.max(2, g.stops.length);
+    g.stops = g.stops.map(function (s, i) {
+      return { t: i / (n - 1), color: s.color, alpha: s.alpha == null ? 1 : s.alpha };
+    });
+    if (g.stops.length < 2) g.stops.push({ t: 1, color: '#000000', alpha: 1 });
+    delete g.mode; delete g.lines;
+    g.angle = g.angle || 0;
+  }
+
   function buildGradient() {
     var p = document.getElementById('p-gradient');
     p.innerHTML =
       '<div class="row">' +
-      '<select class="fld" id="gr-type" style="flex:1"><option value="linear">선형</option><option value="radial">방사형</option></select>' +
+      '<select class="fld" id="gr-type" style="flex:1"><option value="linear">선형</option><option value="radial">방사형</option><option value="freeform">자유형</option></select>' +
       '<label title="각도">∠</label><input class="fld" id="gr-angle" style="width:48px" value="0">' +
       '<button class="mini-btn" id="gr-rev" title="정지점 반전">' + UI.icon('reverse', 13) + '</button>' +
       '</div>' +
@@ -664,9 +693,36 @@
       '<label>불투명</label><input class="fld" id="gr-alpha" style="width:46px" value="100">' +
       '<button class="mini-btn danger" id="gr-del" title="정지점 삭제">' + UI.icon('trash', 13) + '</button>' +
       '</div>' +
-      '<div class="hint">막대를 클릭하면 정지점 추가, 드래그하면 이동합니다. G 도구로 캔버스에서 방향을 그릴 수 있습니다.</div>';
+      '<div class="row" id="gr-spread-row" style="margin-top:var(--gap-s);display:none">' +
+      '<label>모드</label><select class="fld" id="gr-mode" style="width:74px"><option value="points">점</option><option value="lines">선</option></select>' +
+      '<label>번짐</label><input class="fld" id="gr-spread" style="width:52px" value="50"><span class="unit">%</span>' +
+      '</div>' +
+      '<div class="hint">막대를 클릭하면 정지점 추가, 드래그하면 이동합니다. G 도구로 캔버스에서 방향을 그릴 수 있습니다.<br>자유형은 도형 위의 색 점을 끌어 옮기고, 빈 곳을 두 번 누르면 점이 늘어납니다.</div>';
 
-    U.on(U.q('#gr-type', p), 'change', function () { var v = this.value; applyGradient('그레이디언트 유형', function (g) { g.type = v; }); });
+    U.on(U.q('#gr-mode', p), 'change', function () {
+      var v = this.value;
+      applyGradient('자유형 모드', function (g) {
+        g.mode = v;
+        if (v === 'lines' && (!g.lines || !g.lines.length)) {
+          g.lines = [g.stops.map(function (_, i) { return i; })];
+        }
+      });
+    });
+    num(U.q('#gr-spread', p), function () { return 50; }, function (v) {
+      applyGradient('번짐', function (g) {
+        var st = g.stops[gradStop];
+        if (st) st.spread = U.clamp(v, 1, 200);
+      });
+    }, '번짐');
+
+    U.on(U.q('#gr-type', p), 'change', function () {
+      var v = this.value;
+      applyGradient('그레이디언트 유형', function (g) {
+        if (v === 'freeform') toFreeform(g);
+        else if (g.type === 'freeform') fromFreeform(g, v);
+        g.type = v;
+      });
+    });
     num(U.q('#gr-angle', p), function () { return 0; }, function (v) { applyGradient('그레이디언트 각도', function (g) { g.angle = v; }); }, '각도');
     U.on(U.q('#gr-rev', p), 'click', function () {
       applyGradient('정지점 반전', function (g) {
@@ -778,6 +834,34 @@
       return;
     }
     gradStop = U.clamp(gradStop, 0, g.stops.length - 1);
+    var freeform = g.type === 'freeform';
+    setEnabled(p, '#gr-angle', !freeform);
+    setEnabled(p, '#gr-rev', !freeform);
+    setEnabled(p, '#gr-pos', !freeform);
+    var spreadRow = U.q('#gr-spread-row', p);
+    if (spreadRow) spreadRow.style.display = freeform ? '' : 'none';
+    if (freeform) {
+      /* 색 점을 늘어놓아 미리 보여 준다 (막대는 위치 개념이 없다) */
+      fillEl.style.background = 'linear-gradient(to right,' +
+        g.stops.map(function (s) { return Col.toCss(s.color, s.alpha); }).join(',') + ')';
+      stopsEl.innerHTML = '';
+      g.stops.forEach(function (s, i) {
+        var d = U.el('div', 'gstop' + (i === gradStop ? ' sel' : ''));
+        d.style.left = (g.stops.length < 2 ? 50 : (i / (g.stops.length - 1)) * 100) + '%';
+        d.style.setProperty('--c', s.color);
+        stopsEl.appendChild(d);
+      });
+      var ty0 = U.q('#gr-type', p); if (ty0) ty0.value = 'freeform';
+      var st0 = g.stops[gradStop] || g.stops[0] || { color: '#ffffff' };
+      var cb0 = U.q('#gr-color i', p); if (cb0) cb0.style.background = st0.color;
+      var al0 = U.q('#gr-alpha', p);
+      if (al0 && document.activeElement !== al0) al0.value = U.fmt((st0.alpha == null ? 1 : st0.alpha) * 100);
+      var sp0 = U.q('#gr-spread', p);
+      if (sp0 && document.activeElement !== sp0) sp0.value = U.fmt(st0.spread == null ? 50 : st0.spread);
+      var md = U.q('#gr-mode', p); if (md) md.value = g.mode || 'points';
+      syncing = false;
+      return;
+    }
     fillEl.style.background = 'linear-gradient(to right,' + g.stops.slice().sort(function (x, y) { return x.t - y.t; })
       .map(function (s) { return Col.toCss(s.color, s.alpha) + ' ' + U.round(s.t * 100, 2) + '%'; }).join(',') + ')';
     stopsEl.innerHTML = '';

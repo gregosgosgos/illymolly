@@ -58,6 +58,21 @@
         if (v.r != null) g.r = v.r;
         return g;
       }
+      /* 자유형 그레이디언트 — 색 점 목록 (좌표는 오브젝트 로컬) */
+      if (v.type === 'freeform') {
+        var ff = Col.freeform((v.stops || []).map(function (s) {
+          return {
+            x: +s.x || 0, y: +s.y || 0,
+            color: normalizeHex(s.color) || '#000000',
+            alpha: s.alpha == null ? 1 : s.alpha,
+            spread: s.spread == null ? 50 : s.spread
+          };
+        }));
+        if (v.mode) ff.mode = v.mode;
+        if (v.lines) ff.lines = v.lines;
+        if (!ff.stops.length) throw err('BAD_COLOR', '자유형 그레이디언트에는 색 점이 하나 이상 필요합니다');
+        return ff;
+      }
       if (v.color) return Col.solid(normalizeHex(v.color) || '#000000', v.alpha);
     }
     throw err('BAD_COLOR', '색상 형식을 알 수 없습니다: ' + JSON.stringify(v));
@@ -874,6 +889,10 @@
   function paintLabel(p2) {
     if (!p2 || p2.type === 'none') return '없음';
     if (p2.type === 'solid') return p2.color;
+    if (p2.type === 'freeform') {
+      return p2.stops.map(function (s) { return s.color; }).join('·') +
+        '(자유형 ' + (p2.mode === 'lines' ? '선' : '점') + ' ' + p2.stops.length + '개)';
+    }
     return p2.stops.map(function (s) { return s.color; }).join('→') + '(' + (p2.type === 'radial' ? '방사형' : '선형') + ')';
   }
 

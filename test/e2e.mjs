@@ -2214,6 +2214,130 @@ await check('라이브 다각형 — 변의 수 위젯을 끌면 변이 늘어�
   return `변 6 → ${up.n} (앵커 ${up.pts}) · 실행 취소로 6 복원`;
 });
 
+/* ---------------- 자유형 그레이디언트 ---------------- */
+await check('자유형 그레이디언트 — 색 점이 제 자리를 지키며 섞인다', async () => {
+  const r = await ev(() => {
+    const app = AI.app;
+    while (illy.documents().length > 1) AI.docs.close(app, illy.documents().length - 1, true);
+    app.setDoc(AI.model.newDoc(200, 200));
+    app.history.reset(app.doc, '새 문서');
+    const id = illy.rect({ x: 0, y: 0, width: 200, height: 200, fill: {
+      type: 'freeform', stops: [
+        { x: 40, y: 40, color: '#ff0000', spread: 60 },
+        { x: 160, y: 40, color: '#00ff00', spread: 60 },
+        { x: 100, y: 160, color: '#0000ff', spread: 60 }
+      ]
+    } });
+    return { id, type: illy.get(id).fill.type, n: illy.get(id).fill.stops.length };
+  });
+  if (r.type !== 'freeform' || r.n !== 3) throw new Error('칠=' + JSON.stringify(r));
+
+  /* 각 색 점 자리에는 그 색이, 가운데에는 섞인 색이 찍혀야 한다 */
+  const px = await ev(() => {
+    const url = illy.toPNG({ scale: 1, background: false });
+    return new Promise(res => {
+      const im = new Image();
+      im.onload = () => {
+        const cv = document.createElement('canvas');
+        cv.width = im.width; cv.height = im.height;
+        const c = cv.getContext('2d'); c.drawImage(im, 0, 0);
+        const at = (x, y) => { const d = c.getImageData(x, y, 1, 1).data; return [d[0], d[1], d[2]]; };
+        return res({ red: at(40, 40), green: at(160, 40), blue: at(100, 160), mid: at(100, 80) });
+      };
+      im.src = url;
+    });
+  });
+  const near = (a, b) => Math.abs(a[0] - b[0]) < 40 && Math.abs(a[1] - b[1]) < 40 && Math.abs(a[2] - b[2]) < 40;
+  if (!near(px.red, [255, 0, 0])) throw new Error('빨강 점=' + px.red);
+  if (!near(px.green, [0, 255, 0])) throw new Error('초록 점=' + px.green);
+  if (!near(px.blue, [0, 0, 255])) throw new Error('파랑 점=' + px.blue);
+  /* 가운데는 어느 원색과도 달라야 (= 섞여야) 한다 */
+  if (near(px.mid, [255, 0, 0]) || near(px.mid, [0, 255, 0]) || near(px.mid, [0, 0, 255])) {
+    throw new Error('가운데가 안 섞임=' + px.mid);
+  }
+
+  /* 점을 더한 뒤 순서를 바꿔도 결과가 같다 (거리 가중이라 순서에 안 흔들린다) */
+  const order = await page.evaluate((id) => {
+    const before = illy.toPNG({ scale: 1, background: false });
+    const f = AI.model.find(AI.app.doc, id).fill;
+    f.stops.reverse();
+    AI.app.invalidate();
+    return before === illy.toPNG({ scale: 1, background: false });
+  }, r.id);
+  if (!order) throw new Error('점 순서에 따라 결과가 달라짐');
+
+  /* SVG 로는 구운 그림을 도형으로 잘라 심는다 */
+  const svg = await ev(() => AI.io.toSVG(AI.app));
+  if (svg.indexOf('<image') < 0 || svg.indexOf('ffclip') < 0) throw new Error('SVG 출력에 그림/클립 없음');
+  return `세 점 색 유지 · 가운데 ${px.mid.join(',')} 로 섞임 · 순서 무관 · SVG 클립 이미지`;
+});
+
+await check('자유형 그레이디언트 — 패널 전환 · 캔버스에서 점 끌기', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(300, 300));
+    app.history.reset(app.doc, '새 문서');
+    illy.rect({ x: 50, y: 50, width: 200, height: 200, fill: '#3366cc' });
+    illy.select(illy.find({ type: 'path' }));
+    app.fillFocus = true;            /* 칠 쪽에 초점 (앞 테스트가 획을 만졌을 수 있다) */
+    AI.viewT.fitArtboard(app);
+    AI.ui.showPanel('gradient');
+  });
+  await refreshBox();
+  /* 패널에서 선형 → 자유형 */
+  await page.selectOption('#gr-type', 'linear');
+  await page.waitForTimeout(60);
+  await page.selectOption('#gr-type', 'freeform');
+  await page.waitForTimeout(80);
+  const on = await ev(() => {
+    const f = AI.app.sel[0].fill;
+    return {
+      type: f.type, n: f.stops.length,
+      spreadRow: document.getElementById('gr-spread-row').style.display !== 'none',
+      angleOff: document.getElementById('gr-angle').hasAttribute('disabled')
+    };
+  });
+  if (on.type !== 'freeform') throw new Error('자유형 전환 실패=' + on.type);
+  if (on.n < 2) throw new Error('색 점 수=' + on.n);
+  if (!on.spreadRow || !on.angleOff) throw new Error('패널 표시=' + JSON.stringify(on));
+
+  /* G 도구로 색 점을 끌어 옮긴다 */
+  await ev(() => AI.tools.setTool(AI.app, 'gradient'));
+  const p0 = await ev(() => {
+    const it = AI.app.sel[0];
+    const wm = AI.mat.mul(AI.viewT.matrix(AI.app), AI.model.worldMatrix(AI.app.doc, it));
+    const s = it.fill.stops[0];
+    const q = AI.mat.apply(wm, s.x, s.y);
+    const t = AI.mat.apply(wm, s.x + 40, s.y + 30);
+    return { from: q, to: t, x0: Math.round(s.x), y0: Math.round(s.y) };
+  });
+  await drag({ x: box.x + p0.from.x, y: box.y + p0.from.y }, { x: box.x + p0.to.x, y: box.y + p0.to.y });
+  await page.waitForTimeout(60);
+  const moved = await ev(() => {
+    const s = AI.app.sel[0].fill.stops[0];
+    return { x: Math.round(s.x), y: Math.round(s.y), label: AI.app.history.undoLabel() };
+  });
+  if (Math.abs(moved.x - (p0.x0 + 40)) > 3 || Math.abs(moved.y - (p0.y0 + 30)) > 3) {
+    throw new Error('점 이동=' + JSON.stringify(moved) + ' 기대 ' + (p0.x0 + 40) + ',' + (p0.y0 + 30));
+  }
+  if (moved.label !== '색 점 이동') throw new Error('실행 취소 이름=' + moved.label);
+
+  /* 빈 곳을 두 번 누르면 점이 늘어난다 */
+  const added = await ev(() => AI.app.sel[0].fill.stops.length);
+  const mid = await ev(() => {
+    const it = AI.app.sel[0];
+    const wm = AI.mat.mul(AI.viewT.matrix(AI.app), AI.model.worldMatrix(AI.app.doc, it));
+    const q = AI.mat.apply(wm, 200, 200);
+    return { x: q.x, y: q.y };
+  });
+  await page.mouse.dblclick(box.x + mid.x, box.y + mid.y);
+  await page.waitForTimeout(80);
+  const after = await ev(() => AI.app.sel[0].fill.stops.length);
+  if (after !== added + 1) throw new Error('점 추가 ' + added + ' → ' + after);
+  await ev(() => AI.tools.setTool(AI.app, 'select'));
+  return `선형→자유형 (점 ${on.n}개) · 끌어서 이동 · 두 번 눌러 ${after}개로 추가`;
+});
+
 /* ---------------- 아트 브러시 · 패턴 브러시 ---------------- */
 await check('아트 브러시 — 아트웍이 패스를 따라 휘어진다', async () => {
   const r = await ev(() => {

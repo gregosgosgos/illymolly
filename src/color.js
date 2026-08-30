@@ -60,6 +60,15 @@
       cx: 0.5, cy: 0.5, r: 0.5 /* radial: 바운딩박스 정규화 좌표 */
     };
   };
+  /* 자유형 그레이디언트 — 색 점을 임의 위치에 찍어 부드럽게 섞는다.
+     점은 아이템 로컬 좌표, spread 는 번지는 반경(바운딩 대각선 대비 %). */
+  C.freeform = function (pts) {
+    return { type: 'freeform', mode: 'points', stops: pts || [], lines: [] };
+  };
+  C.isGradient = function (p) {
+    return !!(p && (p.type === 'linear' || p.type === 'radial' || p.type === 'freeform'));
+  };
+
   C.isPaint = function (p) { return p && p.type && p.type !== 'none'; };
   C.paintPreviewCss = function (p) {
     if (!p || p.type === 'none') return 'linear-gradient(45deg,transparent 45%,#f00 45%,#f00 55%,transparent 55%),#fff';

@@ -336,6 +336,7 @@
     if (!paint || paint.type === 'none') return null;
     if (paint.type === 'solid') return Col.toCss(paint.color, paint.alpha);
     if (paint.type === 'pattern') return patternStyle(ctx, paint, m);
+    if (paint.type === 'freeform') return freeformStyle(ctx, paint, viewBounds, m);
     var b = viewBounds;
     if (R.isEmpty(b)) return Col.toCss(paint.stops[0].color, paint.stops[0].alpha);
     var g;
@@ -369,6 +370,115 @@
       g.addColorStop(U.clamp(s.t, 0, 1), Col.toCss(s.color, s.alpha));
     });
     return g;
+  }
+
+  /* ---------------- 자유형 그레이디언트 ----------------
+     색 점마다 "가까울수록 세게" 인 가중치를 주어 모든 색을 섞는다 (거리 역가중).
+     쌓아 올리는 방식과 달리 순서에 상관없이 각 점이 제 자리를 지키므로
+     일러스트레이터의 자유형 그레이디언트와 결과가 같다.
+
+     결과는 오브젝트 로컬 좌표계의 작은 캔버스 한 장이다. 화면에는 CanvasPattern
+     의 변환으로 늘려 붙이고, SVG 로는 같은 캔버스를 PNG 로 심는다.            */
+  var ffCache = [];
+  var FF_MAX = 220;          /* 굽는 해상도 상한 — 부드러운 그림이라 이 정도면 충분 */
+
+  function ffKey(paint, box) {
+    return JSON.stringify(paint) + '|' +
+      [box.x, box.y, box.x2, box.y2].map(function (v) { return U.round(v, 2); }).join(',');
+  }
+
+  /* 로컬 좌표 상자 box 를 덮는 캔버스를 굽는다 */
+  Rn.freeformCanvas = function (paint, box) {
+    var stops = paint && paint.stops;
+    if (!stops || !stops.length || R.isEmpty(box)) return null;
+    var key = ffKey(paint, box);
+    for (var c0 = 0; c0 < ffCache.length; c0++) if (ffCache[c0].key === key) return ffCache[c0].cv;
+
+    var bw = R.w(box) || 1, bh = R.h(box) || 1;
+    var k = Math.min(1, FF_MAX / Math.max(bw, bh));
+    var W = Math.max(2, Math.round(bw * k)), H = Math.max(2, Math.round(bh * k));
+    var cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    var ctx2 = cv.getContext('2d');
+    var img = ctx2.createImageData(W, H);
+    var data = img.data;
+    var diag = Math.hypot(bw, bh) || 1;
+
+    /* 색 점 + (선 모드면) 선 위에 잘게 뿌린 점들을 광원 목록으로 모은다 */
+    var src = [];
+    stops.forEach(function (st) {
+      var rgb = Col.hexToRgb(st.color);
+      src.push({
+        x: st.x, y: st.y, r: rgb.r, g: rgb.g, b: rgb.b,
+        a: st.alpha == null ? 1 : st.alpha,
+        rad: Math.max(1, diag * U.clamp(st.spread == null ? 50 : st.spread, 1, 200) / 100)
+      });
+    });
+    if (paint.mode === 'lines' && paint.lines) {
+      paint.lines.forEach(function (line) {
+        for (var i = 0; i + 1 < line.length; i++) {
+          var A = stops[line[i]], B = stops[line[i + 1]];
+          if (!A || !B) continue;
+          var ca = Col.hexToRgb(A.color), cb = Col.hexToRgb(B.color);
+          var steps = Math.max(2, Math.ceil(U.dist(A.x, A.y, B.x, B.y) / (diag / 40)));
+          for (var t = 1; t < steps; t++) {
+            var u = t / steps;
+            src.push({
+              x: A.x + (B.x - A.x) * u, y: A.y + (B.y - A.y) * u,
+              r: ca.r + (cb.r - ca.r) * u, g: ca.g + (cb.g - ca.g) * u, b: ca.b + (cb.b - ca.b) * u,
+              a: (A.alpha == null ? 1 : A.alpha) + ((B.alpha == null ? 1 : B.alpha) - (A.alpha == null ? 1 : A.alpha)) * u,
+              rad: Math.max(1, diag * U.clamp(((A.spread == null ? 50 : A.spread) +
+                ((B.spread == null ? 50 : B.spread) - (A.spread == null ? 50 : A.spread)) * u), 1, 200) / 100)
+            });
+          }
+        }
+      });
+    }
+
+    var n = src.length, px = 0;
+    for (var yy = 0; yy < H; yy++) {
+      var ly = box.y + (yy + 0.5) / H * bh;
+      for (var xx = 0; xx < W; xx++) {
+        var lx = box.x + (xx + 0.5) / W * bw;
+        var sr = 0, sg = 0, sb = 0, sa = 0, sw = 0;
+        for (var i2 = 0; i2 < n; i2++) {
+          var o = src[i2];
+          var dx = lx - o.x, dy = ly - o.y;
+          var dn = Math.sqrt(dx * dx + dy * dy) / o.rad;
+          /* 가까울수록 급격히 커지는 가중치 — 각 점이 제 색을 지킨다 */
+          var wgt = 1 / (dn * dn * dn * dn + 1e-4);
+          sr += o.r * wgt; sg += o.g * wgt; sb += o.b * wgt; sa += o.a * wgt; sw += wgt;
+        }
+        if (sw < 1e-9) sw = 1;
+        data[px++] = U.clamp(sr / sw, 0, 255);
+        data[px++] = U.clamp(sg / sw, 0, 255);
+        data[px++] = U.clamp(sb / sw, 0, 255);
+        data[px++] = U.clamp((sa / sw) * 255, 0, 255);
+      }
+    }
+    ctx2.putImageData(img, 0, 0);
+    ffCache.push({ key: key, cv: cv });
+    if (ffCache.length > 16) ffCache.shift();
+    return cv;
+  };
+
+  function freeformStyle(ctx, paint, vb, m) {
+    var stops = paint.stops || [];
+    if (!stops.length) return null;
+    /* 굽는 상자는 오브젝트 로컬 바운딩 — 화면 배율이 바뀌어도 다시 굽지 않는다 */
+    var box = Rn.__ffBox;
+    if (!box || R.isEmpty(box)) return Col.toCss(stops[0].color, stops[0].alpha);
+    var cv = Rn.freeformCanvas(paint, box);
+    if (!cv) return Col.toCss(stops[0].color, stops[0].alpha);
+    var pat = ctx.createPattern(cv, 'no-repeat');
+    if (!pat) return Col.toCss(stops[0].color, stops[0].alpha);
+    if (pat.setTransform) {
+      var sx = R.w(box) / cv.width, sy = R.h(box) / cv.height;
+      var full = M.mulAll(m || M.ident(), M.translate(box.x, box.y), M.scale(sx, sy));
+      try { pat.setTransform(new DOMMatrix([full[0], full[1], full[2], full[3], full[4], full[5]])); }
+      catch (err) { /* 구형 브라우저 — 위치가 어긋날 수 있으나 색은 나온다 */ }
+    }
+    return pat;
   }
 
   /* 패턴 칠 — 타일 캔버스를 화면 배율에 맞춰 굽고 CanvasPattern 으로 만든다 */
@@ -679,6 +789,8 @@
       return;
     }
     var vb = viewBoundsOf(it, m);
+    /* 자유형 그레이디언트는 오브젝트 로컬 좌표에서 굽는다 */
+    Rn.__ffBox = G.pathBounds(it, null);
     var stack = AI.appearance.list(it);
     for (var i = 0; i < stack.length; i++) {
       var e = stack[i];
@@ -945,6 +1057,7 @@
 
   function drawText(ctx, app, it, m) {
     var t = it.text, mt = Rn.measureText(it);
+    Rn.__ffBox = Rn.localBounds(it);
     if (t.path) { drawTextOnPath(ctx, app, it, m, mt); return; }
     ctx.save();
     ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]);

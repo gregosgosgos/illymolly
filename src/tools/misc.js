@@ -80,7 +80,29 @@
   function gradTarget(app) {
     for (var i = 0; i < app.sel.length; i++) {
       var it = app.sel[i];
-      if (it.type !== 'group' && it.fill && (it.fill.type === 'linear' || it.fill.type === 'radial')) return it;
+      if (it.type !== 'group' && Col.isGradient(it.fill)) return it;
+    }
+    return null;
+  }
+  /* 자유형 그레이디언트 — 색 점을 화면 좌표로 */
+  function ffTarget(app) {
+    var it = gradTarget(app);
+    return (it && it.fill.type === 'freeform') ? it : null;
+  }
+  function ffPoints(app, it) {
+    var wm = M.mul(AI.viewT.matrix(app), Model.worldMatrix(app.doc, it));
+    return {
+      wm: wm,
+      pts: (it.fill.stops || []).map(function (sp, i) {
+        var q = M.apply(wm, sp.x, sp.y);
+        return { x: q.x, y: q.y, i: i, sp: sp };
+      })
+    };
+  }
+  function ffHit(app, it, x, y) {
+    var g = ffPoints(app, it);
+    for (var i = g.pts.length - 1; i >= 0; i--) {
+      if (U.dist(g.pts[i].x, g.pts[i].y, x, y) <= 8) return { g: g, hit: g.pts[i] };
     }
     return null;
   }
@@ -111,6 +133,33 @@
     onDown: function (app, e) {
       if (!app.sel.length) { U.toast('오브젝트를 선택하세요'); return; }
       var it = gradTarget(app);
+      /* 자유형 — 색 점을 잡아 끌거나, Alt 로 지운다 */
+      var ffIt = ffTarget(app);
+      if (ffIt) {
+        var fh = ffHit(app, ffIt, e.x, e.y);
+        if (fh) {
+          if (e.alt) {
+            if (ffIt.fill.stops.length <= 1) { U.toast('색 점은 최소 1개 필요합니다'); return; }
+            app.history.begin('색 점 삭제', app.doc);
+            ffIt.fill.stops.splice(fh.hit.i, 1);
+            (ffIt.fill.lines || []).forEach(function (ln, li) {
+              ffIt.fill.lines[li] = ln.filter(function (k) { return k !== fh.hit.i; })
+                .map(function (k) { return k > fh.hit.i ? k - 1 : k; });
+            });
+            AI.appearance.pushDown(ffIt);
+            app.history.commit();
+            app.invalidate();
+            AI.ui.syncAll(app);
+            return;
+          }
+          app.history.begin('색 점 이동', app.doc);
+          st = { mode: 'ffpt', it: ffIt, g: fh.g, si: fh.hit.i };
+          return;
+        }
+        /* 빈 곳을 끌면 아무 일도 하지 않는다 (더블클릭으로 점 추가) */
+        st = { mode: 'none' };
+        return;
+      }
       /* 주석자 손잡이를 잡았는지 먼저 확인한다 */
       if (it) {
         var g = gradEnds(app, it);
@@ -167,6 +216,12 @@
           }
           setEnds(st.it, st.g.p0, p1);
         }
+      } else if (st.mode === 'ffpt') {
+        var invF = M.invert(st.g.wm);
+        var lpF = M.apply(invF, e.x, e.y);
+        var sp = st.it.fill.stops[st.si];
+        if (sp) { sp.x = lpF.x; sp.y = lpF.y; }
+        AI.appearance.pushDown(st.it);
       } else if (st.mode === 'stop') {
         var t = projectT(st.g, e.x, e.y);
         st.it.fill.stops[st.si].t = U.clamp(t, 0, 1);
@@ -184,6 +239,24 @@
       AI.ui && AI.ui.syncAll && AI.ui.syncAll(app);
     },
     onDblClick: function (app, e) {
+      /* 자유형 — 도형 위 빈 곳을 두 번 누르면 그 자리에 색 점을 더한다 */
+      var ffIt = ffTarget(app);
+      if (ffIt) {
+        if (ffHit(app, ffIt, e.x, e.y)) return;
+        var wmF = M.mul(AI.viewT.matrix(app), Model.worldMatrix(app.doc, ffIt));
+        var lp = M.apply(M.invert(wmF), e.x, e.y);
+        app.history.begin('색 점 추가', app.doc);
+        var last = ffIt.fill.stops[ffIt.fill.stops.length - 1] || { color: '#ffffff', spread: 60 };
+        ffIt.fill.stops.push({
+          x: lp.x, y: lp.y, color: last.color, alpha: 1,
+          spread: last.spread == null ? 60 : last.spread
+        });
+        AI.appearance.pushDown(ffIt);
+        app.history.commit();
+        app.invalidate();
+        AI.ui.syncAll(app);
+        return;
+      }
       /* 막대를 더블클릭하면 그 위치에 정지점을 추가한다 */
       var it = gradTarget(app);
       if (!it) return;
@@ -201,6 +274,31 @@
     drawUI: function (ctx, app) {
       var it = gradTarget(app);
       if (!it) return;
+      /* 자유형 — 색 점을 동그라미로 띄운다 (선 모드면 이은 선도) */
+      if (it.fill.type === 'freeform') {
+        var f = ffPoints(app, it);
+        ctx.save();
+        if (it.fill.mode === 'lines') {
+          (it.fill.lines || []).forEach(function (ln) {
+            ctx.beginPath();
+            ln.forEach(function (k, j) {
+              var q = f.pts[k]; if (!q) return;
+              if (j === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y);
+            });
+            ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 3; ctx.stroke();
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.stroke();
+          });
+        }
+        f.pts.forEach(function (q) {
+          ctx.fillStyle = Col.toCss(q.sp.color, q.sp.alpha);
+          ctx.beginPath(); ctx.arc(q.x, q.y, 5, 0, 6.2832); ctx.fill();
+          ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
+          ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.arc(q.x, q.y, 6.4, 0, 6.2832); ctx.stroke();
+        });
+        ctx.restore();
+        return;
+      }
       var g = gradEnds(app, it);
       ctx.save();
       ctx.strokeStyle = '#000'; ctx.lineWidth = 3;

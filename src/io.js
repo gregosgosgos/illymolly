@@ -132,6 +132,12 @@
         '<g transform="scale(' + U.round(k, 4) + ')">' + itemSvg(IO.__doc, pd.item, defs) + '</g></pattern>');
       return { attr: 'url(#' + pid + ')', op: paint.alpha == null ? 1 : paint.alpha };
     }
+    /* 자유형은 위 분기에서 그림으로 심는다. 여기까지 온 경우(문자 · 모양 스택 등)는
+       대표색으로 근사한다 — SVG 에 대응하는 칠이 없다. */
+    if (paint.type === 'freeform') {
+      var f0 = paint.stops && paint.stops[0];
+      return { attr: (f0 && f0.color) || '#cccccc', op: (f0 && f0.alpha == null) ? 1 : ((f0 && f0.alpha) || 1) };
+    }
     var id = 'grad' + (++gradSeq);
     var stops = paint.stops.slice().sort(function (a, b) { return a.t - b.t; }).map(function (s) {
       return '<stop offset="' + U.round(s.t * 100, 2) + '%" stop-color="' + s.color + '" stop-opacity="' + (s.alpha == null ? 1 : s.alpha) + '"/>';
@@ -234,6 +240,23 @@
     }
     var b = Rn.localBounds(it);
     var style = styleFor(it, it.fill, it.stroke, defs, b);
+
+    /* 자유형 그레이디언트 — SVG 에 대응하는 칠이 없다. 화면에 그릴 때와 똑같이
+       구운 그림을 도형으로 잘라 심는다 (일러스트레이터도 이 칠은 래스터로 나간다). */
+    if (it.type === 'path' && it.fill && it.fill.type === 'freeform' && it.fill.stops.length && U.hasDOM) {
+      var ffBox = G.pathBounds(it, null);
+      var ffCv = Rn.freeformCanvas(it.fill, ffBox);
+      if (ffCv) {
+        var fid = 'ffclip' + (++gradSeq);
+        defs.push('<clipPath id="' + fid + '"><path d="' + G.toSvgD(it, null) + '"/></clipPath>');
+        var strokeOnly = styleFor(it, AI.color.none(), it.stroke, defs, b);
+        return '<g' + tr + op + '><image clip-path="url(#' + fid + ')" x="' + U.round(ffBox.x, 3) +
+          '" y="' + U.round(ffBox.y, 3) + '" width="' + U.round(R.w(ffBox), 3) +
+          '" height="' + U.round(R.h(ffBox), 3) + '" preserveAspectRatio="none" href="' +
+          ffCv.toDataURL('image/png') + '"/>' +
+          '<path d="' + G.toSvgD(it, null) + '"' + strokeOnly + '/></g>';
+      }
+    }
 
     /* 가변 폭 획: 칠 패스 + 윤곽 리본 패스로 나눠 내보낸다 */
     if (it.type === 'path' && it.stroke && it.stroke.type !== 'none' &&
