@@ -483,7 +483,7 @@
   def('fxGlow', '외부 광선...', null, function (a) { fxDialog(a, 'glow'); }, { enabled: hasSel });
   /* --- 왜곡 및 변형 (벡터 효과) --- */
   function geoDialog(a, type) {
-    if (!hasPathSel(a)) { U.toast('왜곡 및 변형은 패스에만 적용됩니다'); return; }
+    if (!hasPathSel(a)) { U.toast('이 효과는 패스에만 적용됩니다'); return; }
     fxDialog(a, type);
   }
   def('fxZigzag', '지그재그...', null, function (a) { geoDialog(a, 'zigzag'); }, { enabled: hasPathSel });
@@ -492,6 +492,10 @@
   def('fxTwist', '비틀기...', null, function (a) { geoDialog(a, 'twist'); }, { enabled: hasPathSel });
   def('fxTransform', '변형...', null, function (a) { geoDialog(a, 'transformFx'); }, { enabled: hasPathSel });
   def('fxFreeDistort', '자유 왜곡...', null, function (a) { geoDialog(a, 'freeDistort'); }, { enabled: hasPathSel });
+
+  /* --- 3D --- */
+  def('fx3dExtrude', '돌출과 경사...', null, function (a) { geoDialog(a, 'extrude'); }, { enabled: hasPathSel });
+  def('fx3dRotate', '회전...', null, function (a) { geoDialog(a, 'rotate3d'); }, { enabled: hasPathSel });
 
   def('fxLast', '마지막 효과 적용', 'Ctrl+Shift+E', hist('효과 적용', function (a) {
     if (!a.sel.length) return false;
@@ -512,6 +516,28 @@
     if (!any) { U.toast('적용된 효과가 없습니다'); return false; }
     U.toast('효과 지움');
   }), { enabled: hasSel });
+  /* 3D 를 실제 면 오브젝트로 굳힌다 — 면 하나가 패스 하나가 된다 */
+  function bake3D(a, it) {
+    var faces = AI.threed.expand(it);
+    if (!faces || !faces.length) return null;
+    var made = faces.map(function (f, i) {
+      var pth = Model.newPath(f.rings.map(function (r) {
+        return { closed: true, pts: r.map(function (p) { return { x: p.x, y: p.y }; }) };
+      }));
+      pth.name = '면 ' + (i + 1);
+      pth.fill = Col.solid(f.color);
+      pth.stroke = Model.defaultStroke();
+      pth.m = M.ident();
+      return pth;
+    });
+    var g = Model.newGroup(made);
+    g.name = it.name + ' (3D 확장)';
+    g.m = it.m.slice();
+    g.opacity = it.opacity;
+    g.blend = it.blend;
+    return g;
+  }
+
   /* 왜곡 및 변형(기하 효과)을 실제 패스로 굳힌다 — 결과가 여럿이면 사본마다 하나씩 */
   function bakeGeo(it) {
     var res = AI.distort.expand(it);
@@ -532,6 +558,15 @@
   def('expandAppearance', '모양 확장', null, hist('모양 확장', function (a) {
     var made = [], expanded = 0, rasterLeft = 0;
     a.sel.slice().forEach(function (it) {
+      /* 3D 는 색이 다른 면들로 펼쳐지므로 먼저 처리한다 */
+      var g3 = AI.threed.has(it) ? bake3D(a, it) : null;
+      if (g3) {
+        var loc3 = Model.locate(a.doc, it);
+        if (loc3) loc3.list.splice(loc3.index, 1, g3); else Model.activeLayer(a.doc).children.push(g3);
+        made.push(g3);
+        expanded++;
+        return;
+      }
       var baked = bakeGeo(it);
       var units = baked || [it];
       var repl = [];
@@ -841,9 +876,12 @@
     {
       title: '효과', items: [
         'fxLast', 'fxLastDialog', '-',
-        'fxZigzag', 'fxRoughen', 'fxPuckerBloat', 'fxTwist', 'fxTransform', 'fxFreeDistort', '-',
-        'fxBlur', '-',
-        'fxShadow', 'fxGlow', '-',
+        { label: '3D', items: ['fx3dExtrude', 'fx3dRotate'] },
+        { label: '왜곡 및 변형', items: ['fxZigzag', 'fxRoughen', 'fxPuckerBloat', 'fxTwist', 'fxTransform', 'fxFreeDistort'] },
+        '-',
+        { label: '흐림 효과', items: ['fxBlur'] },
+        { label: '스타일화', items: ['fxShadow', 'fxGlow'] },
+        '-',
         'expandAppearance', 'fxClear'
       ]
     },

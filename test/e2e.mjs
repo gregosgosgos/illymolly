@@ -2214,6 +2214,130 @@ await check('라이브 다각형 — 변의 수 위젯을 끌면 변이 늘어�
   return `변 6 → ${up.n} (앵커 ${up.pts}) · 실행 취소로 6 복원`;
 });
 
+/* ---------------- 효과 > 3D ---------------- */
+await check('효과 > 3D 돌출과 경사 — 면마다 다르게 음영이 든다', async () => {
+  const r = await ev(() => {
+    const app = AI.app;
+    while (illy.documents().length > 1) AI.docs.close(app, illy.documents().length - 1, true);
+    app.setDoc(AI.model.newDoc(400, 400));
+    app.history.reset(app.doc, '새 문서');
+    const id = illy.rect({ x: 100, y: 100, width: 120, height: 120, fill: '#3366cc' });
+    const flat = illy.get(id).geometricBounds;
+    illy.applyEffect({ type: 'extrude', depth: 60, ax: -18, ay: -26, az: 8 });
+    const it = AI.app.doc.layers[0].children[0];
+    const td = AI.threed.result(it);
+    const b3 = illy.get(id).geometricBounds;
+    return {
+      id,
+      flatW: Math.round(flat.w),
+      faces: td.faces.length,
+      colors: [...new Set(td.faces.map(f => f.color))].length,
+      /* 가장 앞(마지막에 그리는) 면이 마구리여야 한다 */
+      frontIsCap: !!td.faces[td.faces.length - 1].cap,
+      grewW: Math.round(b3.w) > Math.round(flat.w),
+      grewH: Math.round(b3.h) > Math.round(flat.h),
+      srcPts: it.subs[0].pts.length,       /* 원본은 그대로 (비파괴) */
+      label: AI.effects.label(it.effects[0])
+    };
+  });
+  if (r.faces < 3) throw new Error('면 수=' + r.faces);
+  if (r.colors < 3) throw new Error('음영이 갈리지 않음 — 색 ' + r.colors + '가지');
+  if (!r.frontIsCap) throw new Error('마구리가 맨 앞에 오지 않음');
+  if (!r.grewW || !r.grewH) throw new Error('돌출로 바운딩이 안 커짐');
+  if (r.srcPts !== 4) throw new Error('원본 패스가 바뀜=' + r.srcPts);
+
+  /* 화면에도 실제로 세 면이 서로 다른 색으로 찍히는지 픽셀로 확인 */
+  const px = await ev(() => {
+    const url = illy.toPNG({ scale: 1, background: true });
+    return new Promise(res => {
+      const im = new Image();
+      im.onload = () => {
+        const cv = document.createElement('canvas');
+        cv.width = im.width; cv.height = im.height;
+        const c = cv.getContext('2d');
+        c.drawImage(im, 0, 0);
+        const seen = new Set();
+        for (let y = 90; y < 235; y += 3) {
+          for (let x = 90; x < 230; x += 3) {
+            const d = c.getImageData(x, y, 1, 1).data;
+            if (d[0] === 255 && d[1] === 255 && d[2] === 255) continue;
+            seen.add(d[0] + ',' + d[1] + ',' + d[2]);
+          }
+        }
+        return res(seen.size);
+      };
+      im.src = url;
+    });
+  });
+  if (px < 3) throw new Error('화면에 찍힌 색 = ' + px + '가지');
+
+  /* SVG · PDF 로도 면이 그대로 나간다 */
+  const out = await ev(() => {
+    const svg = AI.io.toSVG(AI.app);
+    return {
+      paths: (svg.match(/<path /g) || []).length,
+      fills: [...new Set(svg.match(/fill="#[0-9a-f]{6}"/g) || [])].length,
+      pdf: AI.pdf.toPDF(AI.app).length
+    };
+  });
+  if (out.paths < 3 || out.fills < 3) throw new Error('SVG=' + JSON.stringify(out));
+  if (out.pdf < 500) throw new Error('PDF 크기=' + out.pdf);
+
+  /* 모양 확장 → 면마다 실제 패스가 된다 */
+  const exp = await ev(() => {
+    illy.select(illy.find({ type: 'path' }));
+    AI.commands.run('expandAppearance');
+    const g = AI.app.doc.layers[0].children[0];
+    return { type: g.type, n: g.type === 'group' ? g.children.length : 0, fx: !!g.effects };
+  });
+  if (exp.type !== 'group' || exp.n !== r.faces) throw new Error('확장=' + JSON.stringify(exp));
+  if (exp.fx) throw new Error('확장 후에도 효과가 남음');
+  await ev(() => AI.commands.run('undo'));
+  return `면 ${r.faces}개 · 색 ${r.colors}가지 · 화면 ${px}가지 · SVG ${out.paths}패스 · 확장 ${exp.n}개`;
+});
+
+await check('효과 > 3D 회전 · 대화상자의 위치 사전 설정', async () => {
+  const rot = await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 400));
+    app.history.reset(app.doc, '새 문서');
+    const id = illy.rect({ x: 100, y: 100, width: 120, height: 120, fill: '#cc6633' });
+    illy.applyEffect({ type: 'rotate3d', ax: 0, ay: -60, az: 0 });
+    const b = illy.get(id).geometricBounds;
+    const td = AI.threed.result(AI.app.doc.layers[0].children[0]);
+    return { w: Math.round(b.w), h: Math.round(b.h), faces: td.faces.length };
+  });
+  /* Y 로 60° 돌리면 가로만 절반(cos60°)으로 줄어든다 */
+  if (rot.w !== 60 || rot.h !== 120) throw new Error('회전 결과=' + rot.w + 'x' + rot.h);
+  if (rot.faces !== 1) throw new Error('깊이 0 인데 면이 여러 장=' + rot.faces);
+
+  /* 대화상자: 위치 사전 설정을 고르면 회전각이 따라 들어간다 */
+  await ev(() => { illy.clearEffects({}); AI.commands.run('fx3dExtrude'); });
+  await page.waitForSelector('.dlg');
+  await page.selectOption('#dlgf-preset', 'top');
+  await page.waitForTimeout(80);
+  const angles = await page.evaluate(() => [
+    document.getElementById('dlgf-ax').value,
+    document.getElementById('dlgf-ay').value,
+    document.getElementById('dlgf-az').value
+  ].join(','));
+  if (angles !== '-90,0,0') throw new Error('사전 설정 "윗면"=' + angles);
+  await page.fill('#dlgf-depth', '80');
+  await page.press('#dlgf-depth', 'Tab');
+  await page.waitForTimeout(80);
+  const preview = await ev(() => AI.threed.result(AI.app.sel[0]).faces.length);
+  await page.click('.dlg-btn:has-text("확인")');
+  await page.waitForTimeout(80);
+  const done = await ev(() => {
+    const e = AI.app.sel[0].effects[0];
+    return { type: e.type, depth: e.depth, ax: e.ax, rows: document.querySelectorAll('#fx-list .list-row').length };
+  });
+  if (done.type !== 'extrude' || done.depth !== 80 || done.ax !== -90) throw new Error('확인=' + JSON.stringify(done));
+  if (done.rows !== 1) throw new Error('효과 패널 행=' + done.rows);
+  if (preview < 1) throw new Error('미리 보기 면=' + preview);
+  return `회전 ${rot.w}x${rot.h} · 사전 설정 윗면 ${angles} · 깊이 80 적용`;
+});
+
 /* ---------------- 실행 취소 메모리 ---------------- */
 await check('실행 취소가 바뀌지 않은 가지를 나눠 쓴다 (메모리 절감)', async () => {
   const r = await ev(() => {

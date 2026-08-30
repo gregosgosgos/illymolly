@@ -1257,7 +1257,12 @@
     var p = document.getElementById('p-effects');
     if (!p) return;
     p.innerHTML =
-      '<div class="sec">왜곡 및 변형</div>' +
+      '<div class="sec">3D</div>' +
+      '<div class="grid2">' +
+      UI.btn({ icon: 'fx3dExtrude', label: '돌출과 경사', title: '평면을 두께 있는 입체로', cmd: 'fx3dExtrude' }) +
+      UI.btn({ icon: 'fx3dRotate', label: '3D 회전', title: '평면을 3차원으로 돌리기', cmd: 'fx3dRotate' }) +
+      '</div>' +
+      '<div class="sec" style="margin-top:var(--gap-s)">왜곡 및 변형</div>' +
       '<div class="grid4">' +
       UI.btn({ icon: 'fxZigzag', title: '지그재그', cmd: 'fxZigzag' }) +
       UI.btn({ icon: 'fxRoughen', title: '거칠게 하기', cmd: 'fxRoughen' }) +

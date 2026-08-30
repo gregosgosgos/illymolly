@@ -245,6 +245,9 @@
   /* ---------------- 아이템 바운딩 (로컬) ---------------- */
   /* 기하 효과(왜곡 및 변형)가 걸려 있으면 변형된 결과들의 합집합이 바운딩이다 */
   Rn.pathBoundsFx = function (it, m) {
+    /* 3D 는 이미 투영된 면이 결과이므로 그 면들의 합집합이 바운딩이다 */
+    var td = AI.threed.result(it);
+    if (td) return Rn.xformBounds(td.bounds, m || M.ident());
     var px = AI.distort.proxies(it);
     if (!px) return G.pathBounds(it, m);
     var r = R.empty();
@@ -666,6 +669,9 @@
   }
 
   function drawPath(ctx, app, it, m) {
+    /* 3D — 앞면 · 뒷면 · 옆면을 먼 것부터 칠한다 */
+    var td = AI.threed.result(it);
+    if (td) { AI.threed.draw(ctx, it, m, td); return; }
     /* 왜곡 및 변형 — 변형된 기하마다 원본과 똑같은 겹으로 다시 그린다 */
     var px = AI.distort.proxies(it);
     if (px) {

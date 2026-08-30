@@ -1725,13 +1725,23 @@
     anchor: p('number', '기준점 0~8 (transformFx)'),
     reflectX: p('boolean', 'X 반사 (transformFx)'),
     reflectY: p('boolean', 'Y 반사 (transformFx)'),
-    corners: p('number[]', '네 모퉁이 이동량 % [tlx,tly,trx,try,brx,bry,blx,bly] (freeDistort)')
+    corners: p('number[]', '네 모퉁이 이동량 % [tlx,tly,trx,try,brx,bry,blx,bly] (freeDistort)'),
+    /* 3D */
+    depth: p('number', '돌출 깊이 pt (extrude)'),
+    ax: p('number', 'X 회전 ° (3D)'), ay: p('number', 'Y 회전 ° (3D)'), az: p('number', 'Z 회전 ° (3D)'),
+    perspective: p('number', '원근 ° 0~160 (3D)'),
+    cap: p('boolean', '마구리 막기 (extrude)'),
+    shade: p('string', '표면 음영 (3D)', { enum: ['none', 'diffuse', 'plastic'] }),
+    light: p('number', '조명 강도 % (3D)'),
+    ambient: p('number', '주변광 % (3D)')
   };
   var FX_KEYS = ['radius', 'dx', 'dy', 'blur', 'alpha', 'size', 'ridges', 'detail',
     'smooth', 'amount', 'angle', 'scaleX', 'scaleY', 'moveX', 'moveY', 'copies',
-    'anchor', 'reflectX', 'reflectY'];
+    'anchor', 'reflectX', 'reflectY',
+    'depth', 'ax', 'ay', 'az', 'perspective', 'cap', 'shade', 'light', 'ambient'];
   var FX_ENUM = ['blur', 'shadow', 'glow',
-    'zigzag', 'roughen', 'puckerBloat', 'twist', 'transformFx', 'freeDistort'];
+    'zigzag', 'roughen', 'puckerBloat', 'twist', 'transformFx', 'freeDistort',
+    'extrude', 'rotate3d'];
   op('applyEffect', {
     undoable: true, group: '효과', desc: '비파괴 효과를 적용합니다. 같은 종류가 이미 있으면 값을 갱신합니다.',
     params: (function () {

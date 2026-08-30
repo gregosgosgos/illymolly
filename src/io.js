@@ -192,6 +192,20 @@
         : itemSvg(doc, maskless(it), defs);
       return '<g' + tr + op + ' mask="url(#' + mid + ')">' + body2 + '</g>';
     }
+    /* 3D — 투영된 면을 먼 것부터 폴리곤으로 내보낸다 */
+    if (it.type === 'path') {
+      var td = AI.threed.result(it);
+      if (td) {
+        var tb = td.faces.map(function (f) {
+          var d = f.rings.map(function (r) {
+            return 'M' + r.map(function (p) { return U.round(p.x, 3) + ' ' + U.round(p.y, 3); }).join(' L') + 'Z';
+          }).join(' ');
+          return '<path d="' + d + '" fill="' + f.color + '" fill-rule="evenodd" stroke="' + f.color +
+            '" stroke-width="0.6"/>';
+        }).join('');
+        return '<g' + tr + op + '>' + tb + '</g>';
+      }
+    }
     /* 왜곡 및 변형 — 변형된 기하마다 같은 스타일로 한 벌씩 내보낸다 */
     var gpx = (it.type === 'path') ? AI.distort.proxies(it) : null;
     if (gpx) {

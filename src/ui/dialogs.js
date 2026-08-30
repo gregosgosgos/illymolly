@@ -619,6 +619,18 @@
         { id: 'anchor', label: '기준점', type: 'ref', value: e.anchor == null ? 4 : e.anchor }
       ];
     },
+    /* ---- 3D ---- */
+    extrude: function (e) {
+      return THREE_POS(e).concat([
+        { type: 'sep' },
+        { id: 'depth', label: '돌출 깊이', type: 'num', value: e.depth, unit: 'pt' },
+        { id: 'cap', label: '마구리 (앞뒤 막기)', type: 'check', value: e.cap !== false },
+        { type: 'sep' }
+      ]).concat(THREE_SURF(e));
+    },
+    rotate3d: function (e) {
+      return THREE_POS(e).concat([{ type: 'sep' }]).concat(THREE_SURF(e));
+    },
     freeDistort: function (e) {
       return [
         { id: 'tlx', label: '왼쪽 위 X', type: 'num', value: e.tl[0], unit: '%' },
@@ -633,6 +645,37 @@
       ];
     }
   };
+  /* 3D 대화상자의 공통 부분 — 위치(회전각·원근)와 표면(음영) */
+  function THREE_POS(e) {
+    return [
+      { id: 'preset', label: '위치', type: 'select', width: 150, value: 'custom', options: [
+        ['custom', '사용자 정의 회전'],
+        ['front', '앞면'], ['off', '오프축 앞면'],
+        ['isoTop', '등축 위'], ['isoLeft', '등축 왼쪽'], ['isoRight', '등축 오른쪽'],
+        ['top', '윗면'], ['left', '왼쪽면'], ['right', '오른쪽면']
+      ] },
+      { id: 'ax', label: 'X 회전', type: 'num', value: e.ax, unit: '°' },
+      { id: 'ay', label: 'Y 회전', type: 'num', value: e.ay, unit: '°' },
+      { id: 'az', label: 'Z 회전', type: 'num', value: e.az, unit: '°' },
+      { id: 'perspective', label: '원근', type: 'num', value: e.perspective, unit: '°' }
+    ];
+  }
+  function THREE_SURF(e) {
+    return [
+      { id: 'shade', label: '표면', type: 'select', width: 150, value: e.shade || 'plastic',
+        options: [['none', '음영 없음'], ['diffuse', '확산 음영'], ['plastic', '플라스틱 음영']] },
+      { id: 'light', label: '조명 강도', type: 'num', value: e.light, unit: '%' },
+      { id: 'ambient', label: '주변광', type: 'num', value: e.ambient, unit: '%' }
+    ];
+  }
+  /* 일러스트레이터의 위치 사전 설정 (X, Y, Z) */
+  var THREE_PRESETS = {
+    front: [0, 0, 0], off: [-18, -26, 8],
+    isoTop: [-35.26, -45, 0], isoLeft: [-35.26, -45, 0], isoRight: [35.26, 45, 0],
+    top: [-90, 0, 0], left: [0, -90, 0], right: [0, 90, 0]
+  };
+  Dlg.THREE_PRESETS = THREE_PRESETS;
+
   var FX_BUILD = {
     blur: function (v) { return { type: 'blur', radius: Math.max(0, v.radius) }; },
     shadow: function (v) {
@@ -675,6 +718,22 @@
         type: 'freeDistort',
         tl: [v.tlx, v.tly], tr: [v.trx, v.try], br: [v.brx, v.bry], bl: [v.blx, v.bly]
       };
+    },
+    extrude: function (v) {
+      return {
+        type: 'extrude', depth: Math.max(0, v.depth),
+        ax: v.ax, ay: v.ay, az: v.az,
+        perspective: U.clamp(v.perspective, 0, 160), cap: v.cap !== false,
+        shade: v.shade, light: U.clamp(v.light, 0, 150), ambient: U.clamp(v.ambient, 0, 100)
+      };
+    },
+    rotate3d: function (v) {
+      return {
+        type: 'rotate3d', depth: 0,
+        ax: v.ax, ay: v.ay, az: v.az,
+        perspective: U.clamp(v.perspective, 0, 160), cap: true,
+        shade: v.shade, light: U.clamp(v.light, 0, 150), ambient: U.clamp(v.ambient, 0, 100)
+      };
     }
   };
 
@@ -715,7 +774,14 @@
         { type: 'sep' },
         { id: 'preview', label: '미리 보기', type: 'check', value: true }
       ]),
-      onChange: function (v) {
+      onChange: function (v, changed, api) {
+        if (changed === 'preset' && THREE_PRESETS[v.preset]) {
+          var pz = THREE_PRESETS[v.preset];
+          api.set('ax', pz[0]); api.set('ay', pz[1]); api.set('az', pz[2]);
+          v = api.values();
+        } else if (changed === 'ax' || changed === 'ay' || changed === 'az') {
+          api.set('preset', 'custom');
+        }
         restore();
         if (v.preview !== false) apply(v);
         app.invalidate();

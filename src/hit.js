@@ -46,6 +46,12 @@
       return p.x >= b.x - 1 && p.x <= b.x2 + 1 && p.y >= b.y - 1 && p.y <= b.y2 + 1;
     }
     if (it.type !== 'path') return false;
+    /* 3D — 투영된 면 중 하나라도 맞으면 맞은 것 */
+    var td = AI.threed.result(it);
+    if (td) {
+      var lp = M.apply(M.invert(m), sx, sy);
+      return AI.threed.hitTest(td, lp.x, lp.y);
+    }
     /* 왜곡 및 변형 — 변형된 기하 중 하나라도 맞으면 맞은 것 */
     var px = AI.distort.proxies(it);
     if (px) {

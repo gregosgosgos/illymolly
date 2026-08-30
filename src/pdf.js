@@ -124,6 +124,29 @@
     if (it.type === 'text') { drawText(w, it, wm, a); return; }
     if (it.type !== 'path') return;
 
+    /* 3D — 투영된 면을 먼 것부터 칠한다 */
+    var td = AI.threed.result(it);
+    if (td) {
+      td.faces.forEach(function (f) {
+        w.w('q');
+        setAlpha(w, a);
+        w.w(rgb(f.color) + ' rg');
+        f.rings.forEach(function (ring) {
+          if (ring.length < 2) return;
+          var p0 = M.apply(wm, ring[0].x, ring[0].y);
+          w.w(n(p0.x) + ' ' + n(p0.y) + ' m');
+          for (var i = 1; i < ring.length; i++) {
+            var q = M.apply(wm, ring[i].x, ring[i].y);
+            w.w(n(q.x) + ' ' + n(q.y) + ' l');
+          }
+          w.w('h');
+        });
+        w.w('f*');
+        w.w('Q');
+      });
+      return;
+    }
+
     /* 왜곡 및 변형 — 변형된 기하마다 같은 겹으로 한 벌씩 */
     var gpx = AI.distort.proxies(it);
     if (gpx) {

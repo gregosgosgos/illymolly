@@ -35,7 +35,9 @@
 
   /* 효과 정의는 래스터(FX.DEFS)와 기하(AI.distort.DEFS) 두 곳에 나뉘어 있다 */
   FX.def = function (type) {
-    return FX.DEFS[type] || (AI.distort && AI.distort.DEFS[type]) || null;
+    return FX.DEFS[type] ||
+      (AI.distort && AI.distort.DEFS[type]) ||
+      (AI.threed && AI.threed.DEFS[type]) || null;
   };
   FX.create = function (type) {
     var d = FX.def(type);
@@ -50,7 +52,9 @@
 
   /* 기하 효과(왜곡 및 변형)는 래스터 필터가 아니라 패스 자체를 바꾼다.
      아래 함수들은 래스터 효과만 다루므로 기하 효과는 건너뛴다. */
-  function isGeo(e) { return !!(AI.distort && AI.distort.isGeo(e.type)); }
+  function isGeo(e) {
+    return !!((AI.distort && AI.distort.isGeo(e.type)) || (AI.threed && AI.threed.isThreeD(e.type)));
+  }
   FX.raster = function (it) { return FX.list(it).filter(function (e) { return !isGeo(e); }); };
   FX.has = function (it) { return FX.raster(it).length > 0; };
   FX.hasAny = function (it) { return !!(it && it.effects && it.effects.length); };
