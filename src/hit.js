@@ -34,6 +34,12 @@
 
   /* 아이템(화면 좌표) 히트 — m 은 이미 합성된 (view × world) 행렬 */
   H.testItemM = function (app, it, sx, sy, m) {
+    if (it.type === 'symbol') {
+      /* 심볼은 정의 아트웍에 그대로 위임한다 */
+      var def = AI.assets.findSymbol(app.doc, it.symbolId);
+      if (!def) return false;
+      return H.testItemM(app, def.item, sx, sy, M.mul(m, def.item.m));
+    }
     if (it.type === 'text' || it.type === 'image') {
       var b = Rn.localBounds(it);
       var p = M.apply(M.invert(m), sx, sy);

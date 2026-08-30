@@ -239,6 +239,7 @@
       layers: [Model.newLayer('레이어 1')],
       activeLayer: 0,
       guides: [],        /* {axis:'h'|'v', pos:number} */
+      rulerOrigin: { x: 0, y: 0 },   /* 눈금자 0 위치 (문서 좌표의 반대 부호) */
       bg: '#ffffff'
     };
   };

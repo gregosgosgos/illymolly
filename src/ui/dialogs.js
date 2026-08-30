@@ -784,4 +784,167 @@
       }
     });
   };
+
+  /* ---------- 아트웍 재색상화 ---------- */
+  Dlg.recolor = function (app) {
+    if (!app.sel.length) { U.toast('오브젝트를 먼저 선택하세요'); return; }
+    var palette = E.collectColors(app);
+    if (!palette.length) { U.toast('색이 있는 오브젝트를 선택하세요'); return; }
+    palette = palette.slice(0, 12);
+    var snap = app.sel.map(function (it) { return U.deepCopy(it); });
+    function restore() {
+      app.sel.forEach(function (it, i) {
+        var src = snap[i];
+        Object.keys(src).forEach(function (k) {
+          if (k === 'id' || k === 'm') return;
+          it[k] = U.deepCopy(src[k]);
+        });
+      });
+    }
+    var fields = palette.map(function (c, i) {
+      return { id: 'c' + i, label: c.color + ' (' + c.count + ')', type: 'color', value: c.color };
+    });
+    fields.push({ type: 'sep' });
+    fields.push({ id: 'hue', label: '색조 회전', type: 'num', value: 0, unit: '°', step: 5 });
+    fields.push({ id: 'sat', label: '채도', type: 'num', value: 0, unit: '%', step: 5 });
+    fields.push({ id: 'light', label: '밝기', type: 'num', value: 0, unit: '%', step: 5 });
+    fields.push({ type: 'sep' });
+    fields.push({ id: 'preview', label: '미리 보기', type: 'check', value: true });
+
+    function mapOf(v) {
+      var map = {};
+      palette.forEach(function (c, i) {
+        var nv = String(v['c' + i] || c.color).toLowerCase();
+        if (nv !== c.color) map[c.color] = nv;
+      });
+      return map;
+    }
+    function adjOf(v) { return { hue: v.hue || 0, sat: v.sat || 0, light: v.light || 0 }; }
+
+    D.open({
+      title: '아트웍 재색상화',
+      fields: fields,
+      buttons: [{ id: 'random', label: '무작위' }, { id: 'cancel', label: '취소' }, { id: 'ok', label: '확인', primary: true }],
+      onChange: function (v) {
+        restore();
+        if (v.preview !== false) E.recolor(app, mapOf(v), adjOf(v));
+        app.invalidate();
+      },
+      onDone: function (v, btn) {
+        restore();
+        if (btn === 'random') {
+          /* 색조만 무작위로 돌려 변주를 만든다 */
+          var rmap = {};
+          palette.forEach(function (c) {
+            var rgb = AI.color.hexToRgb(c.color);
+            var hsb = AI.color.rgbToHsb(rgb.r, rgb.g, rgb.b);
+            var o = AI.color.hsbToRgb((hsb.h + Math.random() * 360) % 360, hsb.s, hsb.b);
+            rmap[c.color] = AI.color.rgbToHex(o.r, o.g, o.b);
+          });
+          app.history.begin('재색상화', app.doc);
+          E.recolor(app, rmap, {});
+          app.history.commit();
+        } else {
+          app.history.begin('재색상화', app.doc);
+          if (!E.recolor(app, mapOf(v), adjOf(v))) app.history.abort();
+          else app.history.commit();
+        }
+        app.invalidate();
+        AI.ui.syncAll(app);
+      },
+      onCancel: function () { restore(); app.invalidate(); AI.ui.syncAll(app); }
+    });
+  };
+
+  /* ---------- 패턴 옵션 ---------- */
+  Dlg.patternOptions = function (app) {
+    AI.assets.ensure(app.doc);
+    var cur = null;
+    app.sel.forEach(function (it) {
+      if (!cur && it.fill && it.fill.type === 'pattern') cur = it.fill;
+      if (!cur && it.stroke && it.stroke.type === 'pattern') cur = it.stroke;
+    });
+    if (!cur) { U.toast('패턴으로 칠한 오브젝트를 선택하세요'); return; }
+    var snap = { scale: cur.scale, angle: cur.angle };
+    D.open({
+      title: '패턴 옵션',
+      fields: [
+        { id: 'scale', label: '비율', type: 'num', value: cur.scale == null ? 100 : cur.scale, unit: '%', step: 5 },
+        { id: 'angle', label: '각도', type: 'num', value: cur.angle || 0, unit: '°', step: 5 },
+        { type: 'sep' },
+        { id: 'preview', label: '미리 보기', type: 'check', value: true }
+      ],
+      onChange: function (v) {
+        if (v.preview === false) { cur.scale = snap.scale; cur.angle = snap.angle; }
+        else { cur.scale = U.clamp(v.scale, 1, 1000); cur.angle = v.angle; }
+        app.invalidate();
+      },
+      onDone: function (v) {
+        cur.scale = snap.scale; cur.angle = snap.angle;
+        app.history.begin('패턴 옵션', app.doc);
+        cur.scale = U.clamp(v.scale, 1, 1000);
+        cur.angle = v.angle;
+        app.history.commit();
+        app.invalidate();
+        AI.ui.syncAll(app);
+      },
+      onCancel: function () { cur.scale = snap.scale; cur.angle = snap.angle; app.invalidate(); }
+    });
+  };
+
+  /* ---------- 브러시 정의 (서예 · 산포) ---------- */
+  Dlg.brushOptions = function (app) {
+    D.open({
+      title: '브러시 옵션',
+      fields: [
+        { id: 'kind', label: '종류', type: 'radio', value: 'calligraphic',
+          options: [['calligraphic', '서예'], ['scatter', '산포'], ['none', '없음']] },
+        { type: 'sep' },
+        { id: 'angle', label: '펜촉 각도', type: 'num', value: (app.brushOpts && app.brushOpts.angle) || 30, unit: '°', step: 5 },
+        { id: 'roundness', label: '납작함', type: 'num', value: (app.brushOpts && app.brushOpts.roundness) || 20, unit: '%', step: 5 },
+        { type: 'sep' },
+        { id: 'spacing', label: '산포 간격', type: 'num', value: (app.brushOpts && app.brushOpts.spacing) || 30, unit: 'pt' },
+        { id: 'sizeJitter', label: '크기 변화', type: 'num', value: (app.brushOpts && app.brushOpts.sizeJitter) || 20, unit: '%' },
+        { id: 'rotationJitter', label: '회전 변화', type: 'num', value: (app.brushOpts && app.brushOpts.rotationJitter) || 15, unit: '°' },
+        { id: 'offsetJitter', label: '간격 변화', type: 'num', value: (app.brushOpts && app.brushOpts.offsetJitter) || 6, unit: 'pt' },
+        { id: 'follow', label: '패스 방향 따라 회전', type: 'check', value: true },
+        { type: 'sep' },
+        { id: 'info', label: '산포는 맨 앞 오브젝트를 뿌릴 아트웍으로 씁니다', type: 'info' }
+      ],
+      onDone: function (v) {
+        app.brushOpts = {
+          angle: v.angle, roundness: v.roundness, spacing: v.spacing,
+          sizeJitter: v.sizeJitter, rotationJitter: v.rotationJitter, offsetJitter: v.offsetJitter
+        };
+        if (v.kind === 'calligraphic' || v.kind === 'none') {
+          app.history.begin('브러시', app.doc);
+          app.sel.forEach(function (it) {
+            (function rec(o) {
+              if (o.type === 'group') { o.children.forEach(rec); return; }
+              if (!o.stroke) return;
+              if (v.kind === 'none') delete o.stroke.brush;
+              else o.stroke.brush = { type: 'calligraphic', angle: v.angle, roundness: v.roundness };
+              AI.appearance.pushDown(o);
+            })(it);
+          });
+          app.history.commit();
+          U.toast(v.kind === 'none' ? '브러시 제거' : '서예 브러시 적용');
+        } else {
+          if (app.sel.length < 2) { U.toast('뿌릴 아트웍과 경로를 함께 선택하세요 (맨 앞이 아트웍)'); return; }
+          var ordered = [];
+          Model.walk(app.doc, function (it) { if (app.sel.indexOf(it) >= 0) ordered.push(it); });
+          var art = ordered[ordered.length - 1];
+          app.history.begin('산포 브러시', app.doc);
+          AI.sel.set(app, ordered.slice(0, -1));
+          var ok = E.scatterAlongPath(app, art, {
+            spacing: v.spacing, sizeJitter: v.sizeJitter,
+            rotationJitter: v.rotationJitter, offsetJitter: v.offsetJitter, follow: v.follow
+          });
+          if (ok === false) app.history.abort(); else app.history.commit();
+        }
+        app.invalidate();
+        AI.ui.syncAll(app);
+      }
+    });
+  };
 })(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

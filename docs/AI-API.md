@@ -126,16 +126,66 @@ illy.rotate({ angle: 90 })        // 선택자 없는 인자 객체
 | 수정 | `set` `remove` `duplicate` `arrange` `group` `ungroup` |
 | 변형 | `move` `setBounds` `rotate` `scale` `reflect` `transformEach` |
 | 정렬 | `align` `distribute` |
-| 패스 | `pathfinder` `clipMask` |
-| 스타일 | `setArrowheads` |
+| 패스 | `pathfinder` `clipMask` `offsetPath` `simplify` `opacityMask` `blend` |
+| 앵커 | `anchors` `setAnchor` `addAnchor` `removeAnchor` `setSubpathClosed` |
+| 모양 | `appearance` `addFill` `addStroke` `setAppearanceLayer` `removeAppearanceLayer` `expandAppearance` |
+| 스타일 | `setArrowheads` `recolor` `colors` |
 | 효과 | `applyEffect` `clearEffects` `effects` |
+| 자산 | `assets` `defineSymbol` `placeSymbol` `breakSymbolLink` `definePattern` `applyPattern` |
 | 이미지 | `cropImage` `imageTrace` *(브라우저 전용)* |
 | 레이어 | `addLayer` `setLayer` `mergeLayers` `releaseToLayers` `collectInLayer` |
 | 대지 | `addArtboard` `setArtboard` `removeArtboard` `gotoArtboard` `fitArtboard` `rearrangeArtboards` |
 | 안내선 | `addGuide` `guides` `clearGuides` `releaseGuides` |
 | 히스토리 | `undo` `redo` `history` |
-| 출력 | `toSVG` `toJSON` `loadJSON` `toPNG` |
+| 출력 | `toSVG` `toJSON` `loadJSON` `toPDF` `toPNG` |
 | GUI | `setTool` `zoom` *(브라우저 전용)* |
+
+### 앵커 단위 편집
+
+도형을 통째로 다시 그리지 않고 **고칠** 수 있습니다. 좌표는 모두 문서(월드) 좌표입니다.
+
+```js
+const a = illy.anchors('로고');            // { id, subpaths:[{index, closed, points:[{index,x,y,inX,…}]}] }
+illy.setAnchor({ query: '로고', index: 2, x: 200, y: 180 });   // 방향선도 함께 따라옵니다
+illy.setAnchor({ query: '로고', index: 1, corner: true });      // 방향선을 없애 코너로
+illy.addAnchor({ query: '로고', segment: 0, t: 0.5 });          // 세그먼트 중간에 앵커 삽입
+illy.removeAnchor({ query: '로고', index: 3 });
+illy.setSubpathClosed({ query: '로고', closed: true });
+```
+
+### 모양 스택 (칠 · 획 여러 겹)
+
+배열 index `0` 이 맨 아래(먼저 그려지는) 겹입니다.
+`fill`/`stroke` 는 항상 **맨 아래 칠 / 맨 위 획**을 비추므로,
+`set` · `colors` · 패스파인더처럼 대표 칠·획만 보는 연산이 그대로 동작합니다.
+
+```js
+illy.addStroke({ query: id, color: '#000', width: 6 });
+illy.addStroke({ query: id, color: '#fff', width: 2 });   // 위에 얇은 흰 획
+illy.appearance(id);        // [{ id, custom:true, layers:[{kind:'fill',…},…] }]
+illy.setAppearanceLayer({ query: id, index: 2, color: '#f00' });
+illy.expandAppearance(id);  // 각 겹을 실제 오브젝트로 (그룹 id 반환)
+```
+
+### 심볼 · 패턴
+
+```js
+const sym = illy.defineSymbol({ query: '별', name: '별' });   // 원본은 인스턴스가 됩니다
+illy.placeSymbol({ symbol: '별', x: 100, y: 200 });
+illy.breakSymbolLink({ query: '*' });
+
+illy.definePattern({ query: '점', name: '점무늬' });
+illy.applyPattern({ query: '배경', pattern: '점무늬', scale: 150, angle: 30 });
+illy.assets();   // { symbols:[…], patterns:[…] }
+```
+
+### 색
+
+```js
+illy.colors({ query: '*' });                                  // [{color, count}] 많이 쓰인 순
+illy.recolor({ query: '*', map: { '#ff0000': '#0055ff' } });   // 색 치환
+illy.recolor({ query: '*', hue: 180, saturation: -20 });        // 색조 회전 · 채도 조정
+```
 
 ### 효과 (비파괴)
 
@@ -217,6 +267,10 @@ illy.run('addRect', { x:0, y:0, width:10, colour:'red' });
 | `PF_EMPTY` | 패스파인더 결과가 비어 있음 |
 | `NO_CANVAS` | Node 에서 `toPNG` 호출 (→ `toSVG` 사용) |
 | `NO_DOM` | Node 에서 `imageTrace` 호출 (브라우저 전용) |
+| `NOT_PATH` `NO_SUBPATH` `NO_ANCHOR` `NO_SEGMENT` | 앵커 편집 대상이 잘못됨 |
+| `NO_SYMBOL` `NO_PATTERN` | 이름·id 로 자산을 찾지 못함 |
+| `OFFSET_EMPTY` `BLEND_FAILED` `MASK_FAILED` | 결과가 비어 있음 |
+| `LAST_LAYER` `NOTHING_TO_EXPAND` | 모양 스택 편집 제약 |
 | `NO_IMAGE` `IMAGE_LOADING` `TRACE_EMPTY` | 이미지 추적 대상/상태 문제 |
 | `CROP_FAILED` | `cropImage` 에 이미지와 자를 도형이 함께 있지 않음 |
 | `LAST_ARTBOARD` | 마지막 대지를 삭제하려 함 |
@@ -299,6 +353,10 @@ if (ids.length) {
 - `toPNG` · `setTool` · `zoom` · `imageTrace` 는 브라우저 전용입니다
   (`NO_CANVAS` / `GUI_ONLY` / `NO_DOM`).
 - 효과는 `blur` · `shadow` · `glow` 세 가지이며, 벡터로 확장되지 않는 래스터 효과입니다.
+- `toPDF` 는 latin1 바이트 문자열을 돌려줍니다. Node 에서는
+  `Buffer.from(pdf, 'latin1')`, 브라우저에서는 `AI.pdf.toBytes(pdf)` 로 저장하세요.
+  한글은 표준 14 글꼴에 없어 `?` 로 대체되므로 먼저 `윤곽선 만들기`를 쓰세요.
+- 모양 스택이 기본 구성(칠 1 + 획 1)으로 돌아오면 `custom` 이 다시 `false` 가 됩니다.
 - Node 에는 캔버스가 없어 **텍스트 바운딩이 근사치**입니다
   (전각 1.0em · 그 외 0.52em). 정확한 계측이 필요하면 브라우저에서 실행하세요.
 - postMessage 브리지는 기본적으로 모든 오리진을 허용합니다.

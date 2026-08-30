@@ -115,9 +115,20 @@
 
   /* ---------------- SVG 내보내기 ---------------- */
   var gradSeq = 0;
-  function paintSvg(paint, defs, bounds) {
+  function paintSvg(paint, defs, bounds, doc) {
     if (!paint || paint.type === 'none') return { attr: 'none', op: 1 };
     if (paint.type === 'solid') return { attr: paint.color, op: paint.alpha == null ? 1 : paint.alpha };
+    if (paint.type === 'pattern') {
+      var pd = AI.assets.findPattern(doc || IO.__doc, paint.patternId);
+      if (!pd) return { attr: '#cccccc', op: 1 };
+      var pid = 'pat' + (++gradSeq);
+      var k = (paint.scale == null ? 100 : paint.scale) / 100;
+      defs.push('<pattern id="' + pid + '" patternUnits="userSpaceOnUse" width="' + U.round(pd.w * k, 3) +
+        '" height="' + U.round(pd.h * k, 3) + '"' +
+        (paint.angle ? ' patternTransform="rotate(' + U.round(paint.angle, 3) + ')"' : '') + '>' +
+        '<g transform="scale(' + U.round(k, 4) + ')">' + itemSvg(IO.__doc, pd.item, defs) + '</g></pattern>');
+      return { attr: 'url(#' + pid + ')', op: paint.alpha == null ? 1 : paint.alpha };
+    }
     var id = 'grad' + (++gradSeq);
     var stops = paint.stops.slice().sort(function (a, b) { return a.t - b.t; }).map(function (s) {
       return '<stop offset="' + U.round(s.t * 100, 2) + '%" stop-color="' + s.color + '" stop-opacity="' + (s.alpha == null ? 1 : s.alpha) + '"/>';
@@ -170,6 +181,11 @@
         ? it.children.map(function (c) { return itemSvg(doc, c, defs); }).join('')
         : itemSvg(doc, maskless(it), defs);
       return '<g' + tr + op + ' mask="url(#' + mid + ')">' + body2 + '</g>';
+    }
+    if (it.type === 'symbol') {
+      var sdef = AI.assets.findSymbol(doc, it.symbolId);
+      if (!sdef) return '';
+      return '<g' + tr + op + '>' + itemSvg(doc, sdef.item, defs) + '</g>';
     }
     if (it.type === 'group') {
       var inner = it.children.map(function (c) { return itemSvg(doc, c, defs); }).join('');
@@ -329,6 +345,7 @@
 
   IO.toSVG = function (app) {
     gradSeq = 0;
+    IO.__doc = app.doc;
     var ab = app.doc.artboards[app.doc.activeArtboard];
     var defs = [];
     var body = app.doc.layers.filter(function (l) { return l.visible; })
@@ -344,6 +361,15 @@
     var svg = IO.toSVG(app);
     download(app.doc.name.replace(/\.[a-z.]+$/i, '') + '.svg', new Blob([svg], { type: 'image/svg+xml' }));
     U.toast('SVG 내보내기 완료');
+  };
+
+  IO.exportPDF = function (app) {
+    if (!AI.pdf) { U.toast('PDF 모듈이 없습니다'); return; }
+    var str = AI.pdf.toPDF(app);
+    var bytes = AI.pdf.toBytes(str);
+    download(app.doc.name.replace(/\.[a-z.]+$/i, '') + '.pdf', new Blob([bytes], { type: 'application/pdf' }));
+    U.toast('PDF 내보내기 완료' +
+      (AI.pdf.lastDroppedText ? ' — 한글 등 비ASCII 글자 ' + AI.pdf.lastDroppedText + '자는 ?로 대체되었습니다 (윤곽선 만들기 권장)' : ''));
   };
 
   IO.exportPNG = function (app) {

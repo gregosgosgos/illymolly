@@ -436,6 +436,188 @@ check('패스파인더 오리기는 맨 앞 오브젝트를 틀로만 쓴다', (
   return '겹친 50×50 · 칠 #ff0000 (틀은 사라짐)';
 });
 
+/* ---------- 모양 스택 · 패스 편집 · 자산 (2차 업그레이드) ---------- */
+check('모양 스택 — 칠/획 여러 겹 · 대표 칠/획 동기화 · 확장', () => {
+  const illy = fresh({ width: 300, height: 300 });
+  const id = illy.addRect({ x: 20, y: 20, width: 100, height: 100, fill: '#3366cc' });
+  eq(illy.appearance(id)[0].custom, false, '처음엔 기본 모양');
+  illy.addStroke({ query: id, color: '#ff0000', width: 6 });
+  illy.addStroke({ query: id, color: '#00ff00', width: 2 });
+  illy.addFill({ query: id, color: '#ffff00' });
+  const layers = illy.appearance(id)[0].layers;
+  eq(layers.map(l => l.kind).join(','), 'fill,fill,stroke,stroke', '겹 구성');
+  /* 대표 칠 = 맨 아래 칠, 대표 획 = 맨 위 획 */
+  const info = illy.get(id);
+  eq(info.fill.color, '#3366cc', '대표 칠');
+  eq(info.stroke.color, '#00ff00', '대표 획');
+  /* 미리보기 경계는 가장 두꺼운 획을 반영한다 */
+  eq(info.bounds.w, 106, '가장 두꺼운 획(6pt)의 절반씩');
+  illy.setAppearanceLayer({ query: id, index: 1, color: '#ff00ff' });
+  eq(illy.appearance(id)[0].layers[1].fill.color, '#ff00ff', '겹 수정');
+  const g = illy.expandAppearance(id);
+  const kids = illy.get(g[0]).children;
+  eq(kids.length, 4, '확장 결과 = 겹 수');
+  return '칠2+획2 · 대표 동기화 · 경계 106 · 확장 4개';
+});
+
+check('앵커 단위 편집 — 조회 · 이동 · 추가 · 삭제 · 닫기', () => {
+  const illy = fresh({ width: 400, height: 400 });
+  const id = illy.addRect({ x: 50, y: 50, width: 100, height: 100 });
+  const a0 = illy.anchors(id).subpaths[0];
+  eq(a0.points.length, 4, '앵커 수');
+  eq(a0.points.map(p => `${p.x},${p.y}`).join(' '), '50,50 150,50 150,150 50,150', '문서 좌표');
+  illy.setAnchor({ query: id, index: 2, x: 200, y: 200 });
+  eq(illy.get(id).geometricBounds.w, 150, '이동 반영');
+  illy.setAnchor({ query: id, index: 1, inX: 120, inY: 30, outX: 180, outY: 30 });
+  const p1 = illy.anchors(id).subpaths[0].points[1];
+  eq(`${p1.inX},${p1.inY},${p1.outX},${p1.outY}`, '120,30,180,30', '방향선');
+  /* 앵커를 옮기면 방향선도 함께 따라온다 */
+  illy.setAnchor({ query: id, index: 1, x: 160, y: 50 });
+  const p1b = illy.anchors(id).subpaths[0].points[1];
+  eq(`${p1b.inX},${p1b.inY},${p1b.outX}`, '130,30,190', '방향선이 앵커를 따라감');
+  illy.addAnchor({ query: id, segment: 0, t: 0.5 });
+  eq(illy.anchors(id).subpaths[0].points.length, 5, '앵커 추가');
+  illy.removeAnchor({ query: id, index: 1 });
+  eq(illy.anchors(id).subpaths[0].points.length, 4, '앵커 삭제');
+  illy.setSubpathClosed({ query: id, closed: false });
+  eq(illy.anchors(id).subpaths[0].closed, false, '열기');
+  const bad = illy.batch([{ op: 'setAnchor', args: { query: id, index: 99, x: 0 } }]);
+  if (bad.ok) throw new Error('없는 앵커가 통과함');
+  return `4→5→4 앵커 · 방향선 동행 · ${bad.error.code}`;
+});
+
+check('심볼 — 정의 · 배치 · 정의 수정이 모든 인스턴스에 반영 · 링크 끊기', () => {
+  const illy = fresh({ width: 400, height: 400 });
+  const s1 = illy.addStar({ cx: 60, cy: 60, radius: 30, innerRadius: 12, points: 5, fill: '#ffcc00' });
+  const symId = illy.defineSymbol({ query: s1, name: '별' });
+  eq(illy.assets().symbols.length, 1, '심볼 등록');
+  const i2 = illy.placeSymbol({ symbol: '별', x: 200, y: 200 });
+  eq(illy.get(i2).type, 'symbol', '인스턴스 타입');
+  const w1 = illy.get(i2).geometricBounds.w;
+  if (!(w1 > 40)) throw new Error('인스턴스 크기 ' + w1);
+  const broken = illy.breakSymbolLink({ query: i2 });
+  eq(illy.get(broken[0]).type, 'path', '링크 끊기 후 실제 패스');
+  const noSym = illy.batch([{ op: 'placeSymbol', args: { symbol: '없는심볼', x: 0, y: 0 } }]);
+  if (noSym.ok || noSym.error.code !== 'NO_SYMBOL') throw new Error('오류 코드 ' + (noSym.error && noSym.error.code));
+  return `심볼 1개 · 인스턴스 폭 ${Math.round(w1)} · 링크 끊기 · ${noSym.error.code}`;
+});
+
+check('패턴 — 정의 · 적용 · SVG <pattern> 출력', () => {
+  const illy = fresh({ width: 300, height: 300 });
+  const dot = illy.addEllipse({ x: 0, y: 0, width: 10, height: 10, fill: '#ff0000' });
+  const pid = illy.definePattern({ query: dot, name: '점' });
+  eq(illy.assets().patterns[0].name, '점', '패턴 등록');
+  const r = illy.addRect({ x: 20, y: 20, width: 200, height: 200 });
+  illy.applyPattern({ query: r, pattern: '점', scale: 150, angle: 30 });
+  const svg = illy.toSVG();
+  if (!/<pattern id="pat/.test(svg)) throw new Error('SVG pattern 정의 없음');
+  if (!/url\(#pat/.test(svg)) throw new Error('SVG pattern 참조 없음');
+  if (!/patternTransform="rotate\(30\)"/.test(svg)) throw new Error('각도 누락');
+  return '패턴 정의 · 150% 30° 적용 · SVG pattern 출력';
+});
+
+check('블렌드 — 중간 단계의 색과 크기가 보간된다', () => {
+  const illy = fresh({ width: 500, height: 300 });
+  illy.addEllipse({ x: 20, y: 100, width: 60, height: 60, fill: '#ff0000', name: 'A' });
+  illy.addEllipse({ x: 380, y: 80, width: 100, height: 100, fill: '#0000ff', name: 'B' });
+  const gid = illy.blend({ query: { type: 'path' }, steps: 4 });
+  const kids = illy.get(gid).children;
+  eq(kids.length, 6, '원본 2 + 단계 4');
+  const mids = kids.slice(1, 5).map(k => illy.get(k));
+  /* 빨강 -> 파랑 사이라 r 은 줄고 b 는 늘어야 한다 */
+  const reds = mids.map(m => parseInt(m.fill.color.slice(1, 3), 16));
+  const blues = mids.map(m => parseInt(m.fill.color.slice(5, 7), 16));
+  for (let i = 1; i < reds.length; i++) {
+    if (reds[i] >= reds[i - 1]) throw new Error('빨강이 줄지 않음 ' + reds);
+    if (blues[i] <= blues[i - 1]) throw new Error('파랑이 늘지 않음 ' + blues);
+  }
+  const widths = mids.map(m => Math.round(m.geometricBounds.w));
+  for (let i = 1; i < widths.length; i++) if (widths[i] <= widths[i - 1]) throw new Error('크기 보간 실패 ' + widths);
+  return `단계 4 · 색 ${mids[0].fill.color}→${mids[3].fill.color} · 폭 ${widths.join('<')}`;
+});
+
+check('불투명도 마스크 — 그룹으로 묶이고 SVG mask 로 나간다', () => {
+  const illy = fresh({ width: 300, height: 300 });
+  illy.addRect({ x: 20, y: 20, width: 200, height: 100, fill: '#ff0000' });
+  illy.addRect({ x: 20, y: 20, width: 200, height: 100, fill: { type: 'linear', stops: [[0, '#ffffff'], [1, '#000000']] } });
+  const gid = illy.opacityMask({ query: { type: 'path' } });
+  eq(illy.get(gid).type, 'group', '마스크 그룹');
+  const svg = illy.toSVG();
+  if (!/<mask id="omask/.test(svg) || !/mask="url\(#omask/.test(svg)) throw new Error('SVG mask 누락');
+  return '마스크 그룹 · SVG <mask> 출력';
+});
+
+check('재색상화 — 치환표와 색조 회전', () => {
+  const illy = fresh({ width: 300, height: 300 });
+  illy.addRect({ x: 0, y: 0, width: 50, height: 50, fill: '#ff0000' });
+  illy.addRect({ x: 60, y: 0, width: 50, height: 50, fill: '#00ff00' });
+  const cols = illy.colors({ query: { type: 'path' } }).map(c => c.color);
+  if (cols.indexOf('#ff0000') < 0 || cols.indexOf('#00ff00') < 0) throw new Error('색 수집 ' + cols);
+  illy.recolor({ query: { type: 'path' }, map: { '#ff0000': '#0000ff' } });
+  const after = illy.colors({ query: { type: 'path' } }).map(c => c.color).sort();
+  eq(after.join(','), '#0000ff,#00ff00', '치환');
+  illy.recolor({ query: { type: 'path' }, hue: 180 });
+  const rot = illy.colors({ query: { type: 'path' } }).map(c => c.color).sort();
+  eq(rot.join(','), '#ff00ff,#ffff00', '색조 180° 회전');
+  return '치환 · 색조 회전 ' + rot.join(' ');
+});
+
+check('PDF — 구조가 유효하고 xref 오프셋이 정확', () => {
+  const illy = fresh({ width: 300, height: 200 });
+  illy.addRect({ x: 20, y: 20, width: 120, height: 80, fill: '#ff3366', stroke: '#000000', strokeWidth: 3, opacity: 0.6 });
+  illy.addText({ x: 30, y: 160, text: 'Hello PDF', size: 24 });
+  const pdf = illy.toPDF();
+  if (!/^%PDF-1\.4/.test(pdf)) throw new Error('헤더 없음');
+  if (!/%%EOF\n$/.test(pdf)) throw new Error('EOF 없음');
+  const m = pdf.match(/startxref\n(\d+)/);
+  if (!m) throw new Error('startxref 없음');
+  eq(pdf.slice(+m[1], +m[1] + 4), 'xref', 'startxref 위치');
+  const objOffsets = [...pdf.matchAll(/^(\d+) 0 obj/gm)].map(x => x.index);
+  const xrefOffsets = [...pdf.matchAll(/^(\d{10}) 00000 n $/gm)].map(x => +x[1]);
+  eq(JSON.stringify(objOffsets), JSON.stringify(xrefOffsets), 'xref 오프셋');
+  if (!/\/ExtGState/.test(pdf)) throw new Error('불투명도(ExtGState) 없음');
+  if (!/BaseFont \/Helvetica/.test(pdf)) throw new Error('글꼴 없음');
+  return `${pdf.length}B · 객체 ${objOffsets.length}개 · xref 일치 · 투명도 · 글꼴`;
+});
+
+check('패스 이동 · 단순화가 API 로 동작', () => {
+  const illy = fresh({ width: 400, height: 400 });
+  const id = illy.addRect({ x: 100, y: 100, width: 100, height: 100, fill: '#333' });
+  const out = illy.offsetPath({ query: id, offset: 20, replace: true });
+  const b = illy.get(out[0]).geometricBounds;
+  eq([b.x, b.y, b.w, b.h].join(','), '80,80,140,140', '바깥 오프셋');
+  const inn = illy.offsetPath({ query: out[0], offset: -30, replace: true });
+  const b2 = illy.get(inn[0]).geometricBounds;
+  eq([Math.round(b2.w), Math.round(b2.h)].join(','), '80,80', '안쪽 오프셋');
+  let d = '';
+  for (let i = 0; i < 120; i++) {
+    const a = i / 120 * Math.PI * 2;
+    d += (i ? 'L' : 'M') + (200 + Math.cos(a) * 100).toFixed(2) + ' ' + (200 + Math.sin(a) * 100).toFixed(2) + ' ';
+  }
+  const circ = illy.addPath({ d: d + 'Z', fill: '#333' });
+  const r = illy.simplify({ query: circ, precision: 80 });
+  if (!(r.anchorsAfter < r.anchorsBefore / 2)) throw new Error('단순화 부족 ' + JSON.stringify(r));
+  const bb = illy.get(circ).geometricBounds;
+  if (Math.abs(bb.w - 200) > 4) throw new Error('단순화가 모양을 망침 ' + bb.w);
+  return `오프셋 ±20/-30 · 단순화 ${r.anchorsBefore}→${r.anchorsAfter} (모양 유지)`;
+});
+
+check('describe() 가 새 속성을 모두 담는다', () => {
+  const illy = fresh({ width: 300, height: 300 });
+  const id = illy.addRect({ x: 20, y: 20, width: 100, height: 100, fill: '#f00' });
+  illy.applyEffect({ query: id, type: 'shadow', dx: 4, dy: 4 });
+  illy.addStroke({ query: id, color: '#00f', width: 4 });
+  illy.addStroke({ query: id, color: '#0f0', width: 1 });   /* 획 2겹 = 기본 모양이 아님 */
+  const line = illy.addLine({ x1: 0, y1: 200, x2: 200, y2: 200, stroke: '#000', strokeWidth: 2 });
+  illy.setArrowheads({ query: line, end: 'arrow' });
+  illy.addGuide({ axis: 'v', position: 150 });
+  const d = illy.describe();
+  ['효과', '모양', '화살표', '안내선'].forEach(k => {
+    if (d.indexOf(k) < 0) throw new Error("describe 에 '" + k + "' 가 없음:\n" + d);
+  });
+  return d.split('\n')[0];
+});
+
 /* ---------- 결과 ---------- */
 console.log('\n=== 자동화 API (Node 헤드리스) ===');
 let fail = 0;

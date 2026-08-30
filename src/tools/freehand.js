@@ -9,9 +9,17 @@
   var st = null;
 
   /* 폴리라인을 폭 w 의 리본 폴리곤으로 */
-  function ribbon(pts, w) {
+  /* srcPts 를 주면 그 필압(p)을 따라 폭이 변하는 리본을 만든다 */
+  function ribbon(pts, w, srcPts) {
     var r = w / 2, left = [], right = [], i;
     var simple = G.simplify(pts, 0.6);
+    var pressures = null;
+    if (srcPts && srcPts.some(function (q) { return q.p != null && Math.abs(q.p - 1) > 0.02; })) {
+      pressures = simple.map(function (_, k) {
+        var q = srcPts[Math.min(srcPts.length - 1, Math.round(k * (srcPts.length - 1) / Math.max(1, simple.length - 1)))];
+        return q && q.p != null ? U.clamp(q.p, 0.08, 2) : 1;
+      });
+    }
     if (simple.length < 2) {
       var c = simple[0] || pts[0], ring = [];
       for (i = 0; i < 16; i++) ring.push({ x: c.x + Math.cos(i / 16 * 6.2832) * r, y: c.y + Math.sin(i / 16 * 6.2832) * r });
@@ -21,7 +29,8 @@
       var p = simple[i];
       var a = simple[Math.max(0, i - 1)], b = simple[Math.min(simple.length - 1, i + 1)];
       var dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy) || 1;
-      var nx = -dy / l * r, ny = dx / l * r;
+      var rr = pressures ? r * pressures[i] : r;
+      var nx = -dy / l * rr, ny = dx / l * rr;
       left.push({ x: p.x + nx, y: p.y + ny });
       right.push({ x: p.x - nx, y: p.y - ny });
     }
@@ -61,7 +70,7 @@
         if (!st || !e.down) return;
         var last = st.pts[st.pts.length - 1];
         if (U.dist(last.x, last.y, e.x, e.y) < 2) return;
-        st.pts.push({ x: e.x, y: e.y });
+        st.pts.push({ x: e.x, y: e.y, p: app.pressure == null ? 1 : app.pressure });
         rebuild(app, e);
       },
       onUp: function (app, e) {
@@ -75,13 +84,27 @@
       }
     });
 
+    /* 필압 배열 -> widthProfile (전부 1 이면 만들지 않는다) */
+    function pressureProfile(pts) {
+      if (!pts || pts.length < 3) return null;
+      var varying = pts.some(function (p) { return p.p != null && Math.abs(p.p - 1) > 0.02; });
+      if (!varying) return null;
+      var n = Math.min(24, pts.length);
+      var prof = [];
+      for (var i = 0; i < n; i++) {
+        var k = Math.round(i * (pts.length - 1) / (n - 1));
+        prof.push({ t: i / (n - 1), w: U.clamp(pts[k].p == null ? 1 : pts[k].p, 0.05, 2) });
+      }
+      return prof;
+    }
+
     function rebuild(app, e, final) {
       var dp = docPts(app, st.pts);
       if (st.item) { var loc = Model.locate(app.doc, st.item); if (loc) loc.list.splice(loc.index, 1); }
       var it;
       if (opts.blob) {
         var w = (app.brushWidth || 8);
-        var ring = ribbon(dp, w);
+        var ring = ribbon(dp, w, st.pts);
         it = Model.newPath([{ closed: true, pts: ring.map(function (p) { return { x: p.x, y: p.y }; }) }]);
         it.name = '물방울 브러시';
         it.fill = U.deepCopy(app.fill && app.fill.type !== 'none' ? app.fill : Col.solid('#000000'));
@@ -94,7 +117,12 @@
         if (opts.pencil || opts.brush) {
           it.fill = Col.none();
           if (it.stroke.type === 'none') { it.stroke.type = 'solid'; it.stroke.color = '#000000'; }
-          if (opts.brush) { it.stroke.width = app.brushWidth || 3; it.stroke.cap = 'round'; it.stroke.join = 'round'; }
+          if (opts.brush) {
+            it.stroke.width = app.brushWidth || 3; it.stroke.cap = 'round'; it.stroke.join = 'round';
+            /* 스타일러스 필압이 잡히면 그대로 가변 폭 프로파일로 굳힌다 */
+            var prof = pressureProfile(st.pts);
+            if (prof) it.stroke.widthProfile = prof;
+          }
         }
       }
       Model.activeLayer(app.doc).children.push(it);

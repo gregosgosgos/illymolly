@@ -71,9 +71,13 @@
   /* 기존 fill/stroke 를 스택으로 물질화한다 (편집 시작 시 1회) */
   function materialize(it) {
     if (AP.isCustom(it)) return it.appearance;
-    var arr = [];
-    arr.push({ kind: 'fill', paint: U.deepCopy(it.fill || Col.none()) });
-    arr.push({ kind: 'stroke', stroke: U.deepCopy(it.stroke || Model.defaultStroke()) });
+    /* 실제로 그려지는 겹만 담는다 — '없음' 획이 유령 행으로 남지 않게 */
+    var arr = AP.list(it).map(function (e) {
+      return e.kind === 'fill'
+        ? { kind: 'fill', paint: U.deepCopy(e.paint) }
+        : { kind: 'stroke', stroke: U.deepCopy(e.stroke) };
+    });
+    if (!arr.length) arr.push({ kind: 'fill', paint: U.deepCopy(it.fill || Col.none()) });
     it.appearance = arr;
     return arr;
   }
@@ -90,8 +94,9 @@
     }
     it.fill = bottomFill ? bottomFill.paint : Col.none();
     it.stroke = topStroke ? topStroke.stroke : Model.defaultStroke();
-    /* 기본 2겹(칠 1 + 획 1)으로 되돌아왔으면 스택을 없애 문서를 가볍게 유지 */
-    if (arr.length === 2 && arr[0].kind === 'fill' && arr[1].kind === 'stroke') delete it.appearance;
+    /* 기본 구성(칠 1 [+ 획 1])으로 되돌아왔으면 스택을 없애 문서를 가볍게 유지 */
+    if (arr.length === 1 && arr[0].kind === 'fill') delete it.appearance;
+    else if (arr.length === 2 && arr[0].kind === 'fill' && arr[1].kind === 'stroke') delete it.appearance;
   };
 
   /* 대표 칠/획이 밖에서 바뀌었을 때 스택에 반영 (색상 패널 · 스포이드 등) */

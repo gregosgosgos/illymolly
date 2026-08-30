@@ -8,17 +8,42 @@
 
   V.ZOOMS = [0.0313, 0.0625, 0.125, 0.1667, 0.25, 0.3333, 0.5, 0.6667, 1, 1.5, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64];
 
+  /* 화면 회전(v.rot, 라디안)까지 포함한 뷰 행렬.
+     회전이 0 이면 예전과 완전히 같은 값이라 기존 경로에 부담이 없다. */
   V.matrix = function (app) {
     var v = app.view;
-    return [v.scale, 0, 0, v.scale, v.tx, v.ty];
+    if (!v.rot) return [v.scale, 0, 0, v.scale, v.tx, v.ty];
+    var c = Math.cos(v.rot) * v.scale, s2 = Math.sin(v.rot) * v.scale;
+    return [c, s2, -s2, c, v.tx, v.ty];
   };
   V.toScreen = function (app, x, y) {
     var v = app.view;
-    return { x: x * v.scale + v.tx, y: y * v.scale + v.ty };
+    if (!v.rot) return { x: x * v.scale + v.tx, y: y * v.scale + v.ty };
+    return M.apply(V.matrix(app), x, y);
   };
   V.toDoc = function (app, x, y) {
     var v = app.view;
-    return { x: (x - v.tx) / v.scale, y: (y - v.ty) / v.scale };
+    if (!v.rot) return { x: (x - v.tx) / v.scale, y: (y - v.ty) / v.scale };
+    return M.apply(M.invert(V.matrix(app)), x, y);
+  };
+
+  /* 화면 회전 — 두 손가락 비틀기 / 보기 메뉴에서 쓴다 */
+  V.rotateView = function (app, delta, cx, cy) {
+    var el = app.canvas;
+    if (cx == null) { cx = el.clientWidth / 2; cy = el.clientHeight / 2; }
+    var before = V.toDoc(app, cx, cy);
+    app.view.rot = (app.view.rot || 0) + delta;
+    var after = V.toScreen(app, before.x, before.y);
+    app.view.tx += cx - after.x;
+    app.view.ty += cy - after.y;
+    app.invalidate();
+  };
+  V.resetRotation = function (app) {
+    if (!app.view.rot) return;
+    var el = app.canvas;
+    V.rotateView(app, -app.view.rot, el.clientWidth / 2, el.clientHeight / 2);
+    app.view.rot = 0;
+    app.invalidate();
   };
 
   V.setZoom = function (app, scale, cx, cy) {
@@ -73,6 +98,8 @@
   V.drawRulers = function (app) {
     var rh = document.getElementById('ruler-h'), rv = document.getElementById('ruler-v');
     if (!rh || !rv || document.body.classList.contains('no-rulers')) return;
+    /* 화면을 돌린 상태에서는 가로/세로 눈금이 문서 축과 맞지 않는다 */
+    var rotated = !!app.view.rot;
     var dpr = app.dpr;
     [rh, rv].forEach(function (c) {
       var w = c.clientWidth, h = c.clientHeight;
@@ -95,8 +122,12 @@
       ctx.fillStyle = '#2b2b2b'; ctx.fillRect(0, 0, c.clientWidth, c.clientHeight);
       ctx.strokeStyle = '#666'; ctx.fillStyle = '#c0c0c0';
       ctx.font = '9px sans-serif'; ctx.textBaseline = 'top';
+      if (rotated) { ctx.fillStyle = '#3a3a3a'; ctx.fillRect(0, 0, c.clientWidth, c.clientHeight); return; }
       var len = horiz ? c.clientWidth : c.clientHeight;
-      var origin = horiz ? app.view.tx : app.view.ty;
+      /* 눈금자 원점(코너에서 끌어 옮긴 위치)만큼 눈금 값을 밀어 준다 */
+      var ro = app.doc.rulerOrigin || { x: 0, y: 0 };
+      var shift = horiz ? ro.x : ro.y;
+      var origin = (horiz ? app.view.tx : app.view.ty) + shift * s;
       var start = Math.floor((-origin / s) / sub) * sub;
       var end = start + (len / s) + sub;
       ctx.beginPath();

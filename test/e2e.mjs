@@ -1301,6 +1301,394 @@ await check('새 연산이 API 로도 노출된다', async () => {
   return `${r.count}개 연산 · shadow · 개별변형 ${r.bounds} · 대지 ${r.artboard}`;
 });
 
+/* ---------------- 2차 업그레이드: 모양 · 도구 · 자산 ---------------- */
+
+await check('모양 패널 — 겹 추가 · 순서 · 겹 단위 색 적용', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 400));
+    AI.viewT.setZoom(app, 1); app.view.tx = 0; app.view.ty = 0;
+    const r = AI.model.newRect(50, 50, 200, 200, 0);
+    r.fill = AI.color.solid('#3366cc');
+    r.stroke = AI.color.none();
+    app.doc.layers[0].children.push(r);
+    AI.sel.set(app, [r]);
+    AI.ui.syncAll(app);
+  });
+  await page.click('#p-appearance [data-apcmd="addStroke"]');
+  await page.waitForTimeout(60);
+  await page.click('#p-appearance [data-apcmd="addStroke"]');
+  await page.waitForTimeout(60);
+  const rows = await ev(() => document.querySelectorAll('#p-appearance .ap-row').length);
+  /* 위쪽 행 = 스택의 끝 */
+  await page.click('#p-appearance .ap-row');
+  await page.waitForTimeout(60);
+  const picked = await ev(() => AI.app.apIndex);
+  await ev(() => { AI.app.history.begin('t', AI.app.doc); AI.edit.applyPaint(AI.app, AI.color.solid('#ff0000'), 'stroke'); AI.app.history.commit(); });
+  const r2 = await ev(() => {
+    const it = AI.app.sel[0];
+    const L = AI.appearance.list(it);
+    return { n: L.length, kinds: L.map(e => e.kind).join(','), top: L[L.length - 1].stroke.color, custom: AI.appearance.isCustom(it) };
+  });
+  /* 순서 바꾸기 */
+  await page.click('#p-appearance [data-apcmd="down"]');
+  await page.waitForTimeout(60);
+  const after = await ev(() => AI.appearance.list(AI.app.sel[0]).map(e => e.kind).join(','));
+  if (rows !== 3) throw new Error('행 수=' + rows);
+  if (picked !== 2) throw new Error('고른 겹=' + picked);
+  if (r2.kinds !== 'fill,stroke,stroke') throw new Error('구성=' + r2.kinds);
+  if (r2.top !== '#ff0000') throw new Error('겹 색=' + r2.top);
+  if (after !== 'fill,stroke,stroke') throw new Error('순서 후=' + after);
+  return `겹 ${r2.kinds} · 맨 위 획만 빨강 · 순서 이동`;
+});
+
+await check('도형 구성 도구 — 영역 합치기 · Alt 로 지우기', async () => {
+  const setup = async () => ev(() => {
+    const app = AI.app, Mo = AI.model, Col = AI.color;
+    app.setDoc(Mo.newDoc(400, 400));
+    AI.viewT.setZoom(app, 1); app.view.tx = 0; app.view.ty = 0;
+    const a = Mo.newRect(50, 50, 150, 150, 0); a.fill = Col.solid('#ff0000'); a.stroke = Col.none();
+    const b = Mo.newRect(150, 50, 150, 150, 0); b.fill = Col.solid('#0000ff'); b.stroke = Col.none();
+    app.doc.layers[0].children.push(a, b);
+    AI.sel.set(app, [a, b]);
+    AI.tools.setTool(app, 'shapebuilder', true);
+    app.invalidate();
+  });
+  await setup();
+  const faces = await ev(() => { AI.tools.current(AI.app).onDown(AI.app, { x: -999, y: -999, alt: false, down: true }); return 1; });
+  /* 왼쪽 영역 → 겹침 영역 으로 드래그해 둘을 합친다 */
+  await drag({ x: box.x + 90, y: box.y + 120 }, { x: box.x + 175, y: box.y + 120 });
+  await page.waitForTimeout(120);
+  const merged = await ev(() => {
+    const kids = AI.app.doc.layers[0].children;
+    return { n: kids.length, areas: kids.map(k => Math.round(Math.abs(AI.pathfinder.area(AI.geom.flattenItem(k, 0.2, AI.model.worldMatrix(AI.app.doc, k))[0].pts)))) };
+  });
+  /* Alt 드래그로 영역 삭제 */
+  await setup();
+  await drag({ x: box.x + 175, y: box.y + 120 }, { x: box.x + 180, y: box.y + 125 }, ['Alt']);
+  await page.waitForTimeout(120);
+  const deleted = await ev(() => AI.app.doc.layers[0].children.length);
+  await ev(() => AI.tools.setTool(AI.app, 'select', true));
+  /* 합치기: 왼쪽(7500) + 겹침(7500) = 15000 이 한 조각, 나머지 오른쪽 7500 */
+  if (merged.n !== 2) throw new Error('합친 뒤 개수=' + merged.n + ' ' + merged.areas);
+  if (merged.areas.indexOf(15000) < 0) throw new Error('합쳐진 면적=' + merged.areas);
+  if (deleted !== 2) throw new Error('삭제 뒤 개수=' + deleted);
+  return `합치기 ${merged.areas.join('+')} · Alt 삭제 후 ${deleted}조각`;
+});
+
+await check('폭 도구 — 획 두께가 지점마다 달라진다', async () => {
+  await ev(() => {
+    const app = AI.app, Mo = AI.model, Col = AI.color;
+    app.setDoc(Mo.newDoc(400, 400));
+    AI.viewT.setZoom(app, 1); app.view.tx = 0; app.view.ty = 0;
+    const l = Mo.newLine(50, 200, 350, 200);
+    l.fill = Col.none();
+    l.stroke = Mo.mkStroke('#000000', 10);
+    app.doc.layers[0].children.push(l);
+    AI.sel.set(app, [l]);
+    AI.tools.setTool(app, 'width', true);
+  });
+  await drag({ x: box.x + 200, y: box.y + 200 }, { x: box.x + 200, y: box.y + 230 });
+  await page.waitForTimeout(80);
+  const r = await ev(() => {
+    const st = AI.app.sel[0].stroke;
+    return {
+      prof: st.widthProfile ? st.widthProfile.length : 0,
+      mid: st.widthProfile ? AI.render.profileAt(st.widthProfile, 0.5) : 1,
+      end: st.widthProfile ? AI.render.profileAt(st.widthProfile, 0) : 1,
+      svg: AI.io.toSVG(AI.app)
+    };
+  });
+  await ev(() => AI.tools.setTool(AI.app, 'select', true));
+  if (r.prof < 3) throw new Error('프로파일 지점=' + r.prof);
+  if (!(r.mid > 3)) throw new Error('가운데 배율=' + r.mid);
+  if (Math.abs(r.end - 1) > 0.05) throw new Error('끝 배율=' + r.end);
+  /* SVG 는 리본(채운 패스)으로 나간다 */
+  if (!/<g[^>]*><path[^>]*\/><path[^>]*fill="#000000"/.test(r.svg)) throw new Error('SVG 리본 없음');
+  return `지점 ${r.prof}개 · 가운데 ${r.mid.toFixed(1)}배 · SVG 리본`;
+});
+
+await check('그레이디언트 주석자 — 손잡이 드래그로 각도·길이', async () => {
+  await ev(() => {
+    const app = AI.app, Mo = AI.model, Col = AI.color;
+    app.setDoc(Mo.newDoc(400, 400));
+    AI.viewT.setZoom(app, 1); app.view.tx = 0; app.view.ty = 0;
+    const r = Mo.newRect(50, 50, 200, 200, 0);
+    r.fill = Col.gradient('linear', '#ffffff', '#000000');
+    r.stroke = Col.none();
+    app.doc.layers[0].children.push(r);
+    AI.sel.set(app, [r]);
+    AI.tools.setTool(app, 'width', true);
+    AI.tools.setTool(app, 'gradient', true);
+    app.invalidate();
+  });
+  await page.waitForTimeout(60);
+  /* 캔버스를 가로질러 그으면 시작·끝점이 그대로 기록된다 */
+  await drag({ x: box.x + 60, y: box.y + 60 }, { x: box.x + 240, y: box.y + 240 });
+  await page.waitForTimeout(80);
+  const g = await ev(() => {
+    const f = AI.app.sel[0].fill;
+    return { p0: f.p0 && [Math.round(f.p0.x), Math.round(f.p0.y)].join(','), p1: f.p1 && [Math.round(f.p1.x), Math.round(f.p1.y)].join(','), angle: Math.round(f.angle) };
+  });
+  /* 끝점 손잡이를 잡아 옮긴다 */
+  await drag({ x: box.x + 240, y: box.y + 240 }, { x: box.x + 240, y: box.y + 60 });
+  await page.waitForTimeout(80);
+  const g2 = await ev(() => {
+    const f = AI.app.sel[0].fill;
+    return { p1: [Math.round(f.p1.x), Math.round(f.p1.y)].join(','), svg: AI.io.toSVG(AI.app) };
+  });
+  await ev(() => AI.tools.setTool(AI.app, 'select', true));
+  /* p0/p1 은 아이템 로컬 좌표 — 사각형이 (50,50)에 있으므로 화면 60,60 은 로컬 10,10 */
+  if (g.p0 !== '10,10' || g.p1 !== '190,190') throw new Error('드래그 기하=' + JSON.stringify(g));
+  if (g.angle !== 45) throw new Error('각도=' + g.angle);
+  if (g2.p1 !== '190,10') throw new Error('손잡이 이동=' + g2.p1);
+  if (!/gradientUnits="userSpaceOnUse"/.test(g2.svg)) throw new Error('SVG 기하 누락');
+  return `로컬 p0 ${g.p0} → p1 ${g.p1} (45°) · 손잡이로 ${g2.p1} · SVG userSpaceOnUse`;
+});
+
+await check('영역 문자 — 도형 안으로 흐르고 넘치면 표시', async () => {
+  const r = await ev(() => {
+    const app = AI.app, Mo = AI.model, Rn = AI.render;
+    app.setDoc(Mo.newDoc(500, 400));
+    const L = app.doc.layers[0];
+    const t = Mo.newText(20, 20, '가나다라마바사아자차카타파하 The quick brown fox jumps over the lazy dog 자동 줄바꿈 확인');
+    t.text.size = 16;
+    t.text.area = { w: 200, h: 120 };
+    L.children.push(t);
+    const box1 = Rn.layoutText(t);
+
+    const circleText = Mo.newText(260, 20, '동그란 도형 안으로 글이 흘러 들어갑니다 '.repeat(4));
+    circleText.text.size = 13;
+    circleText.text.area = { w: 200, h: 200 };
+    const c = Mo.newEllipse(0, 0, 200, 200);
+    circleText.text.areaShape = JSON.parse(JSON.stringify(c.subs));
+    L.children.push(circleText);
+    const shaped = Rn.layoutText(circleText);
+
+    const over = Mo.newText(20, 250, 'x'.repeat(500));
+    over.text.size = 14;
+    over.text.area = { w: 120, h: 40 };
+    L.children.push(over);
+    const ov = Rn.layoutText(over);
+
+    Rn.scene(app.canvas.getContext('2d'), app);
+    const svg = AI.io.toSVG(app);
+    /* 원 안에서는 줄마다 시작 x 가 달라야 한다 */
+    const xs = shaped.xs.map(v => Math.round(v));
+    return {
+      boxLines: box1.lines.length, boxOverflow: box1.overflow,
+      shapedLines: shaped.lines.length, distinctXs: new Set(xs).size,
+      overflow: ov.overflow,
+      tspans: (svg.match(/<tspan/g) || []).length,
+      bounds: (function () { const b = Rn.localBounds(circleText); return [b.x, b.y, b.x2, b.y2].join(','); })()
+    };
+  });
+  if (r.boxLines < 3) throw new Error('상자 줄 수=' + r.boxLines);
+  if (r.boxOverflow) throw new Error('상자가 넘치면 안 됨');
+  if (r.shapedLines < 5) throw new Error('도형 줄 수=' + r.shapedLines);
+  if (r.distinctXs < 3) throw new Error('도형 안 x 오프셋이 일정함=' + r.distinctXs);
+  if (!r.overflow) throw new Error('넘침 감지 실패');
+  if (r.bounds !== '0,0,200,200') throw new Error('영역 경계=' + r.bounds);
+  return `상자 ${r.boxLines}줄 · 원 ${r.shapedLines}줄(x ${r.distinctXs}종) · 넘침 · tspan ${r.tspans}`;
+});
+
+await check('텍스트 윤곽선 만들기 (Ctrl+Shift+O)', async () => {
+  const r = await ev(() => {
+    const app = AI.app, Mo = AI.model, Rn = AI.render;
+    app.setDoc(Mo.newDoc(400, 300));
+    const t = Mo.newText(40, 150, 'AO');
+    t.text.size = 90; t.text.family = 'sans-serif';
+    app.doc.layers[0].children.push(t);
+    AI.sel.set(app, [t]);
+    const before = Rn.worldBounds(app.doc, t, true);
+    AI.commands.run('createOutlines');
+    const made = app.sel[0];
+    const after = made ? Rn.worldBounds(app.doc, made, true) : null;
+    return {
+      type: made && made.type,
+      subs: made && made.subs ? made.subs.length : 0,
+      before: [Math.round(before.x), Math.round(before.x2 - before.x)].join(','),
+      after: after ? [Math.round(after.x), Math.round(after.x2 - after.x)].join(',') : null,
+      texts: app.doc.layers[0].children.filter(c => c.type === 'text').length
+    };
+  });
+  if (r.type !== 'path') throw new Error('타입=' + r.type);
+  /* A 는 바깥+구멍, O 는 바깥+구멍 = 4개 이상 */
+  if (r.subs < 4) throw new Error('서브패스=' + r.subs);
+  if (r.texts !== 0) throw new Error('텍스트가 남음');
+  const [bx, bw] = r.before.split(',').map(Number);
+  const [ax, aw] = r.after.split(',').map(Number);
+  if (Math.abs(aw - bw) > bw * 0.15) throw new Error(`폭이 크게 달라짐 ${bw} -> ${aw}`);
+  return `path · 서브패스 ${r.subs}개 · 폭 ${bw}→${aw}`;
+});
+
+await check('심볼 — 정의를 고치면 모든 인스턴스가 바뀐다', async () => {
+  const r = await ev(() => {
+    const app = AI.app, Mo = AI.model, Rn = AI.render, Col = AI.color;
+    app.setDoc(Mo.newDoc(400, 200));
+    AI.viewT.setZoom(app, 1); app.view.tx = 0; app.view.ty = 0;
+    const s = Mo.newRect(20, 20, 60, 60, 0);
+    s.fill = Col.solid('#ffcc00'); s.stroke = Col.none();
+    app.doc.layers[0].children.push(s);
+    AI.sel.set(app, [s]);
+    AI.commands.run('newSymbol');
+    const def = app.doc.symbols[0];
+    AI.assets.placeSymbol(app, def.id, 200, 20);
+    const ctx = app.canvas.getContext('2d');
+    Rn.scene(ctx, app);
+    const px = (x, y) => { const d = ctx.getImageData(Math.round(x*app.dpr), Math.round(y*app.dpr),1,1).data; return d[0]+','+d[1]+','+d[2]; };
+    const before = [px(50, 50), px(230, 50)];
+    def.item.fill = Col.solid('#00ccff');
+    Rn.scene(ctx, app);
+    const after = [px(50, 50), px(230, 50)];
+    const svg = AI.io.toSVG(app);
+    return {
+      instances: app.doc.layers[0].children.filter(c => c.type === 'symbol').length,
+      before, after, svgLen: svg.length,
+      svgHasBoth: (svg.match(/00ccff/g) || []).length >= 2
+    };
+  });
+  if (r.instances !== 2) throw new Error('인스턴스=' + r.instances);
+  if (r.before[0] !== r.before[1]) throw new Error('두 인스턴스가 다름 ' + r.before);
+  if (r.after[0] === r.before[0]) throw new Error('정의 수정이 반영 안 됨');
+  if (r.after[0] !== r.after[1]) throw new Error('한쪽만 반영됨 ' + r.after);
+  if (!r.svgHasBoth) throw new Error('SVG 에 두 인스턴스가 없음');
+  return `인스턴스 2개 · ${r.before[0]} → ${r.after[0]} 동시 반영`;
+});
+
+await check('패턴 칠 — 실제로 타일이 그려진다', async () => {
+  const r = await ev(() => {
+    const app = AI.app, Mo = AI.model, Rn = AI.render, Col = AI.color;
+    app.setDoc(Mo.newDoc(300, 300));
+    AI.viewT.setZoom(app, 1); app.view.tx = 0; app.view.ty = 0;
+    const L = app.doc.layers[0];
+    const dot = Mo.newRect(0, 0, 20, 20, 0);
+    dot.fill = Col.solid('#ff0000'); dot.stroke = Col.none();
+    const hole = Mo.newRect(10, 10, 10, 10, 0);
+    hole.fill = Col.solid('#0000ff'); hole.stroke = Col.none();
+    L.children.push(dot, hole);
+    AI.sel.set(app, [dot, hole]);
+    AI.commands.run('newPattern');
+    L.children.length = 0;
+    const big = Mo.newRect(0, 0, 200, 200, 0);
+    big.stroke = Col.none();
+    L.children.push(big);
+    AI.sel.set(app, [big]);
+    AI.edit.applyPaint(app, AI.assets.patternPaint(app.doc.patterns[0]), 'fill');
+    const ctx = app.canvas.getContext('2d');
+    Rn.scene(ctx, app);
+    const px = (x, y) => { const d = ctx.getImageData(Math.round(x*app.dpr), Math.round(y*app.dpr),1,1).data; return d[0]+','+d[1]+','+d[2]; };
+    return { red: px(3, 3), blue: px(15, 15), red2: px(23, 3), blue2: px(35, 35) };
+  });
+  if (!/^2[0-9][0-9],/.test(r.red)) throw new Error('타일 빨강 없음 ' + r.red);
+  if (r.blue !== '0,0,255') throw new Error('타일 파랑 없음 ' + r.blue);
+  if (r.red2 !== r.red || r.blue2 !== r.blue) throw new Error('타일 반복 안 됨 ' + JSON.stringify(r));
+  return `타일 반복 확인 (빨강 ${r.red} / 파랑 ${r.blue})`;
+});
+
+await check('화면 회전 — 두 손가락 비틀기와 같은 변환', async () => {
+  const r = await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 400));
+    AI.viewT.setZoom(app, 1); app.view.tx = 0; app.view.ty = 0;
+    const cx = app.canvas.clientWidth / 2, cy = app.canvas.clientHeight / 2;
+    const p0 = AI.viewT.toScreen(app, 100, 0);
+    /* 화면 중심을 축으로 돌리면 초기화했을 때 정확히 제자리로 돌아온다 */
+    AI.viewT.rotateView(app, Math.PI / 2, cx, cy);
+    const p1 = AI.viewT.toScreen(app, 100, 0);
+    const d = AI.viewT.toDoc(app, p1.x, p1.y);   /* 왕복 변환 */
+    AI.viewT.resetRotation(app);
+    const p2 = AI.viewT.toScreen(app, 100, 0);
+    return {
+      before: [Math.round(p0.x), Math.round(p0.y)].join(','),
+      rotated: [Math.round(p1.x), Math.round(p1.y)].join(','),
+      roundTrip: [Math.round(d.x), Math.round(d.y)].join(','),
+      reset: [Math.round(p2.x), Math.round(p2.y)].join(','),
+      rot: AI.app.view.rot
+    };
+  });
+  if (r.before !== '100,0') throw new Error('회전 전=' + r.before);
+  /* 중심을 축으로 90° 돌면 (100,0) 은 중심 기준으로 90° 돈 자리에 온다 */
+  if (r.rotated === r.before) throw new Error('회전이 반영되지 않음');
+  if (r.roundTrip !== '100,0') throw new Error('왕복=' + r.roundTrip);
+  if (r.reset !== '100,0' || r.rot !== 0) throw new Error('초기화=' + r.reset + ' rot=' + r.rot);
+  return `(100,0) → 90° → ${r.rotated} → 초기화 ${r.reset} (왕복 ${r.roundTrip})`;
+});
+
+await check('PDF 내보내기 — 유효한 벡터 PDF', async () => {
+  const r = await page.evaluate(async (src) => {
+    const app = AI.app, Mo = AI.model, Col = AI.color;
+    app.setDoc(Mo.newDoc(300, 200));
+    const L = app.doc.layers[0];
+    const rect = Mo.newRect(20, 20, 120, 80, 8);
+    rect.fill = Col.solid('#ff3366'); rect.stroke = Mo.mkStroke('#000000', 3);
+    rect.opacity = 0.7;
+    const t = Mo.newText(30, 170, 'Hello PDF');
+    t.text.size = 24; t.fill = Col.solid('#003366');
+    const im = Mo.newImage(src, 180, 30, 80, 60);
+    L.children.push(rect, t, im);
+    await new Promise(res => { const x = AI.render.getImage(src, res); if (x.complete) res(); });
+    const str = AI.pdf.toPDF(app);
+    const bytes = AI.pdf.toBytes(str);
+    return {
+      len: bytes.length,
+      header: str.slice(0, 8),
+      hasImage: /\/Subtype \/Image/.test(str),
+      hasDCT: /DCTDecode/.test(str),
+      hasAlpha: /\/ExtGState/.test(str),
+      hasFont: /BaseFont \/Helvetica/.test(str),
+      xrefOK: (function () {
+        const m = str.match(/startxref\n(\d+)/);
+        if (!m) return false;
+        if (str.slice(+m[1], +m[1] + 4) !== 'xref') return false;
+        const objs = [...str.matchAll(/^(\d+) 0 obj/gm)].map(x => x.index);
+        const xr = [...str.matchAll(/^(\d{10}) 00000 n $/gm)].map(x => +x[1]);
+        return JSON.stringify(objs) === JSON.stringify(xr) && objs.length > 4;
+      })()
+    };
+  }, PNG1x1);
+  if (r.header !== '%PDF-1.4') throw new Error('헤더=' + r.header);
+  if (!r.xrefOK) throw new Error('xref 불일치');
+  if (!r.hasImage || !r.hasDCT) throw new Error('이미지 누락');
+  if (!r.hasAlpha) throw new Error('투명도 누락');
+  if (!r.hasFont) throw new Error('글꼴 누락');
+  return `${r.len}B · 이미지(DCT) · 투명도 · 글꼴 · xref 일치`;
+});
+
+await check('눈금자 원점 드래그 · 하위 레이어 · 레이어 부분 병합', async () => {
+  const r = await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 400));
+    /* 눈금자 원점 */
+    app.doc.rulerOrigin = { x: -100, y: -50 };
+    AI.viewT.drawRulers(app);
+    /* 하위 레이어 (isLayer 그룹) */
+    const g = AI.model.newGroup([]);
+    g.isLayer = true; g.name = '하위 레이어 1'; g.color = '#ff8800';
+    app.doc.layers[0].children.push(g);
+    AI.ui.buildLayers(app);
+    const subRow = [...document.querySelectorAll('#p-layers .lyr')].some(r2 => r2.textContent.indexOf('하위 레이어 1') >= 0);
+    /* 부분 병합: 3개 중 위 2개만 */
+    app.doc.layers.push(AI.model.newLayer('L2', 1), AI.model.newLayer('L3', 2));
+    app.doc.layers[1].children.push(AI.model.newRect(0, 0, 10, 10, 0));
+    app.doc.layers[2].children.push(AI.model.newRect(20, 0, 10, 10, 0));
+    app.selLayers = [1, 2];
+    AI.commands.run('mergeLayers');
+    return {
+      origin: [app.doc.rulerOrigin.x, app.doc.rulerOrigin.y].join(','),
+      subRow,
+      layers: app.doc.layers.length,
+      mergedItems: app.doc.layers[1].children.length,
+      names: app.doc.layers.map(l => l.name).join(',')
+    };
+  });
+  if (r.origin !== '-100,-50') throw new Error('원점=' + r.origin);
+  if (!r.subRow) throw new Error('하위 레이어 행 없음');
+  if (r.layers !== 2) throw new Error('병합 후 레이어=' + r.layers + ' (' + r.names + ')');
+  if (r.mergedItems !== 2) throw new Error('병합 항목=' + r.mergedItems);
+  return `원점 ${r.origin} · 하위 레이어 표시 · 3→${r.layers}레이어(항목 ${r.mergedItems})`;
+});
+
 /* ---------------- 결과 ---------------- */
 console.log('\n=== Illymolly E2E ===');
 for (const [n, s, d] of results) console.log(`${s === 'OK' ? '✔' : '✘'} ${n}${d ? ' — ' + d : ''}`);

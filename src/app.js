@@ -154,7 +154,8 @@
       var d = AI.viewT.toDoc(app, e.x, e.y);
       var co = document.getElementById('st-coords');
       var un = app.prefs.unit || 'pt';
-      if (co) co.textContent = U.fmtUnit(d.x, un) + ' , ' + U.fmtUnit(d.y, un) + ' ' + un;
+      var ro = app.doc.rulerOrigin || { x: 0, y: 0 };
+      if (co) co.textContent = U.fmtUnit(d.x + ro.x, un) + ' , ' + U.fmtUnit(d.y + ro.y, un) + ' ' + un;
     }
     if (down && app.touchInput && PRECISE.indexOf(app.tool) >= 0) app.loupe = { x: e.x, y: e.y };
   }
@@ -213,6 +214,14 @@
   };
 
   function bindCanvas() {
+    /* 펜 태블릿(Wacom 등) 필압 — 마우스 이벤트보다 먼저 도착한다 */
+    U.on(canvas, 'pointerdown', function (ev) {
+      app.pressure = (ev.pointerType === 'pen' && ev.pressure > 0) ? ev.pressure : 1;
+    });
+    U.on(canvas, 'pointermove', function (ev) {
+      if (ev.pointerType === 'pen' && ev.pressure > 0) app.pressure = ev.pressure;
+    });
+
     U.on(canvas, 'mousedown', function (ev) {
       if (ev.button === 2 || app.touchInput) return;
       toolDown(evt(ev, true));
@@ -239,6 +248,17 @@
       }
       return out;
     }
+    /* 스타일러스 필압 — Touch.force (iOS) / PointerEvent.pressure.
+       지원하지 않는 기기는 1 로 두어 예전과 같게 동작한다. */
+    function pressureOf(t) {
+      if (!t) return 1;
+      if (typeof t.force === 'number' && t.force > 0) {
+        var max = (typeof t.__maxForce === 'number' && t.__maxForce) || 1;
+        return U.clamp(t.force / max, 0.05, 1);
+      }
+      return 1;
+    }
+
     function centroid(list) {
       var c = { x: 0, y: 0 };
       list.forEach(function (p) { c.x += p.x; c.y += p.y; });
@@ -259,6 +279,7 @@
         touch = { mode: 'tool' };
         var t0 = ev.touches[0];
         snapForDrag();
+        app.pressure = pressureOf(t0);
         toolDown(mk(t0.clientX, t0.clientY, {}, true));
         tapInfo = { n: 1, t: Date.now(), moved: false };
       } else {
@@ -266,7 +287,11 @@
         var wasDrawing = down || (tapInfo && tapInfo.moved);
         if (down) app.cancelDrag(true);
         var c = centroid(list);
-        touch = { mode: 'canvas', c: c, d: spread(list, c), scale: app.view.scale, n: list.length };
+        touch = {
+          mode: 'canvas', c: c, d: spread(list, c), scale: app.view.scale, n: list.length,
+          ang: list.length >= 2 ? Math.atan2(list[1].y - list[0].y, list[1].x - list[0].x) : 0,
+          rotated: 0
+        };
         /* 그리다가 손가락을 얹은 경우는 탭이 아니다 — 취소 위에 실행 취소가 겹치면 안 된다 */
         tapInfo = {
           n: Math.max(tapInfo ? tapInfo.n : 0, list.length),
@@ -283,6 +308,7 @@
       if (!touch) return;
       if (touch.mode === 'tool' && list.length === 1) {
         var t0 = ev.touches[0];
+        app.pressure = pressureOf(t0);
         toolMove(mk(t0.clientX, t0.clientY, {}, false));
         if (tapInfo && U.dist(startPt.x, startPt.y, list[0].x, list[0].y) > 8) tapInfo.moved = true;
       } else if (touch.mode === 'canvas' && list.length >= 2) {
@@ -292,6 +318,16 @@
         if (touch.d > 12 && d > 12) {
           var k = d / touch.d;
           AI.viewT.setZoom(app, app.view.scale * k, c.x, c.y);
+        }
+        /* 두 손가락 비틀기 = 화면 회전. 15° 를 넘겨야 시작해 확대와 섞이지 않는다 */
+        if (list.length >= 2 && app.prefs.rotateGesture !== false) {
+          var ang = Math.atan2(list[1].y - list[0].y, list[1].x - list[0].x);
+          var da = ang - touch.ang;
+          while (da > Math.PI) da -= Math.PI * 2;
+          while (da < -Math.PI) da += Math.PI * 2;
+          touch.rotated += Math.abs(da);
+          if (touch.rotated > 0.26) AI.viewT.rotateView(app, da, c.x, c.y);
+          touch.ang = ang;
         }
         touch.c = c; touch.d = d;
       }
@@ -356,6 +392,39 @@
     U.on(canvas, 'auxclick', function (ev) { if (ev.button === 1) ev.preventDefault(); });
   }
 
+  /* 눈금자 코너에서 드래그 -> 눈금자 원점 이동 (더블클릭하면 초기화) */
+  function bindRulerCorner() {
+    var el = document.getElementById('ruler-corner');
+    if (!el) return;
+    U.on(el, 'mousedown', function (ev) {
+      ev.preventDefault();
+      app.history.begin('눈금자 원점', app.doc);
+      var rect = canvas.getBoundingClientRect();
+      function move(e) {
+        var d = AI.viewT.toDoc(app, e.clientX - rect.left, e.clientY - rect.top);
+        app.doc.rulerOrigin = { x: -d.x, y: -d.y };
+        AI.viewT.drawRulers(app);
+        app.invalidate();
+      }
+      function up() {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        app.history.commit();
+        AI.ui.syncStatus(app);
+      }
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    });
+    U.on(el, 'dblclick', function () {
+      app.history.begin('눈금자 원점 초기화', app.doc);
+      app.doc.rulerOrigin = { x: 0, y: 0 };
+      app.history.commit();
+      AI.viewT.drawRulers(app);
+      app.invalidate();
+      U.toast('눈금자 원점 초기화');
+    });
+  }
+
   /* 눈금자에서 드래그 -> 안내선 */
   function bindRulers() {
     ['ruler-h', 'ruler-v'].forEach(function (id) {
@@ -405,6 +474,7 @@
     AI.keymap.install(app);
     bindCanvas();
     bindRulers();
+    bindRulerCorner();
 
     U.on(window, 'resize', function () { app.resize(); });
     new ResizeObserver(function () { app.resize(); }).observe(document.getElementById('canvas-wrap'));

@@ -171,6 +171,11 @@
   Rn.localBounds = function (it) {
     if (it.type === 'path') return G.pathBounds(it, null);
     if (it.type === 'image') return { x: 0, y: 0, x2: it.w, y2: it.h };
+    if (it.type === 'symbol') {
+      var def = Rn.symbolDef && Rn.symbolDef(it);
+      if (!def) return R.empty();
+      return Rn.xformBounds(Rn.localBounds(def.item), def.item.m);
+    }
     if (it.type === 'text') {
       var m = Rn.measureText(it), t = it.text, x0 = 0;
       if (t.area) return { x: 0, y: 0, x2: t.area.w, y2: t.area.h };
@@ -226,6 +231,7 @@
 
   /* 월드 바운딩 (문서 좌표) — geo=true 면 획 두께 무시 */
   Rn.worldBounds = function (doc, it, geo) {
+    Rn.__doc = doc;                 /* 심볼 정의를 찾을 수 있게 현재 문서를 기억 */
     return Rn.boundsM(it, Model.worldMatrix(doc, it), geo, 1);
   };
 
@@ -239,6 +245,7 @@
   function paintStyle(ctx, paint, viewBounds, m) {
     if (!paint || paint.type === 'none') return null;
     if (paint.type === 'solid') return Col.toCss(paint.color, paint.alpha);
+    if (paint.type === 'pattern') return patternStyle(ctx, paint, m);
     var b = viewBounds;
     if (R.isEmpty(b)) return Col.toCss(paint.stops[0].color, paint.stops[0].alpha);
     var g;
@@ -274,8 +281,27 @@
     return g;
   }
 
+  /* 패턴 칠 — 타일 캔버스를 화면 배율에 맞춰 굽고 CanvasPattern 으로 만든다 */
+  function patternStyle(ctx, paint, m) {
+    var app = Rn.__app;
+    if (!app || !U.hasDOM) return '#cccccc';
+    var def = AI.assets.findPattern(app.doc, paint.patternId);
+    if (!def) return '#cccccc';
+    var sc = ((app.view && app.view.scale) || 1) * ((paint.scale == null ? 100 : paint.scale) / 100);
+    var cv = AI.assets.tileCanvas(app, def, sc);
+    if (!cv) return '#cccccc';
+    var pat = ctx.createPattern(cv, 'repeat');
+    if (!pat) return '#cccccc';
+    if (pat.setTransform && paint.angle) {
+      var a = U.rad(paint.angle);
+      try { pat.setTransform(new DOMMatrix([Math.cos(a), Math.sin(a), -Math.sin(a), Math.cos(a), 0, 0])); } catch (e) { }
+    }
+    return pat;
+  }
+
   /* ---------------- 아트워크 ---------------- */
   Rn.scene = function (ctx, app) {
+    Rn.__app = app; Rn.__doc = app.doc;
     var doc = app.doc, vw = ctx.canvas.width / app.dpr, vh = ctx.canvas.height / app.dpr;
 
     ctx.save();
@@ -535,6 +561,7 @@
     if (it.type === 'path') drawPath(ctx, app, it, m);
     else if (it.type === 'text') drawText(ctx, app, it, m);
     else if (it.type === 'image') drawImage(ctx, app, it, m);
+    else if (it.type === 'symbol') drawSymbol(ctx, app, it, m, a, inIso);
     ctx.restore();
   }
 
@@ -581,6 +608,12 @@
       ctx.lineDashOffset = (s.dashOffset || 0) * app.view.scale;
     }
 
+    /* 서예 브러시 — 진행 방향과 펜촉 각도의 관계로 두께가 변한다 */
+    if (s.brush && s.brush.type === 'calligraphic' && align === 'center') {
+      drawCalligraphic(ctx, app, it, m, s, vb);
+      drawArrows(ctx, app, it, m, s);
+      return;
+    }
     /* 가변 폭 프로파일이 있으면 구간마다 두께를 바꿔 그린다 */
     if (s.widthProfile && s.widthProfile.length > 1 && align === 'center') {
       drawVariableStroke(ctx, app, it, m, s, vb);
@@ -637,6 +670,38 @@
     return prof[prof.length - 1].w;
   };
 
+  /* 서예 브러시: 펜촉을 각도 θ, 납작함 r 인 타원으로 보고
+     진행 방향과 펜촉이 이루는 각으로 두께를 정한다. */
+  function drawCalligraphic(ctx, app, it, m, s, vb) {
+    var sc = app.view.scale;
+    var th = U.rad(s.brush.angle || 0);
+    var round = U.clamp((s.brush.roundness == null ? 20 : s.brush.roundness) / 100, 0.02, 1);
+    ctx.save();
+    ctx.strokeStyle = paintStyle(ctx, s, vb, m);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.setLineDash([]);
+    it.subs.forEach(function (sub) {
+      var pts = G.flattenSub(sub, 0.3 / Math.max(sc, 0.05));
+      if (pts.length < 2) return;
+      if (sub.closed) pts = pts.concat([pts[0]]);
+      for (var i = 1; i < pts.length; i++) {
+        var a = M.apply(m, pts[i - 1].x, pts[i - 1].y);
+        var b = M.apply(m, pts[i].x, pts[i].y);
+        var dir = Math.atan2(b.y - a.y, b.x - a.x);
+        /* 펜촉에 수직으로 그을 때 가장 굵고, 나란할 때 가장 가늘다 */
+        var k = Math.abs(Math.sin(dir - th));
+        var w = s.width * sc * (round + (1 - round) * k);
+        ctx.lineWidth = Math.max(w, 0.08);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      }
+    });
+    ctx.restore();
+  }
+
   function drawVariableStroke(ctx, app, it, m, s, vb) {
     var sc = app.view.scale;
     ctx.save();
@@ -666,6 +731,19 @@
       }
     });
     ctx.restore();
+  }
+
+  /* 심볼 인스턴스 — 정의 아트웍을 인스턴스 변환 위에 그린다 */
+  Rn.symbolDef = function (it) {
+    var doc = Rn.__doc;
+    if (!doc || !doc.symbols) return null;
+    for (var i = 0; i < doc.symbols.length; i++) if (doc.symbols[i].id === it.symbolId) return doc.symbols[i];
+    return null;
+  };
+  function drawSymbol(ctx, app, it, m, a, inIso) {
+    var def = AI.assets.findSymbol(app.doc, it.symbolId);
+    if (!def) return;
+    Rn.item(ctx, app, def.item, m, 1, inIso);
   }
 
   function drawImage(ctx, app, it, m) {

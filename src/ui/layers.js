@@ -29,9 +29,25 @@
     var tools = U.el('div', 'lyr-tools');
     tools.innerHTML =
       '<button class="mini-btn" id="ly-new" title="새 레이어">＋</button>' +
+      '<button class="mini-btn" id="ly-sub" title="새 하위 레이어">＋▸</button>' +
+      '<button class="mini-btn" id="ly-merge" title="선택한 레이어 병합">⊻</button>' +
       '<button class="mini-btn" id="ly-dup" title="선택 항목 복제">⧉</button>' +
       '<button class="mini-btn" id="ly-del" title="삭제">🗑</button>';
     p.appendChild(tools);
+
+    U.on(U.q('#ly-sub', tools), 'click', function () {
+      app.history.begin('새 하위 레이어', app.doc);
+      var host = Model.activeLayer(app.doc);
+      var g = Model.newGroup([]);
+      g.isLayer = true;
+      var pal = Model.LAYER_COLORS;
+      g.color = pal[(app.doc.layers.length + host.children.length) % pal.length];
+      g.name = '하위 레이어 ' + (host.children.filter(function (c) { return c.isLayer; }).length + 1);
+      host.children.push(g);
+      app.history.commit();
+      UI.buildLayers(app);
+    });
+    U.on(U.q('#ly-merge', tools), 'click', function () { C.run('mergeLayers'); });
 
     U.on(U.q('#ly-new', tools), 'click', function () {
       app.history.begin('새 레이어', app.doc);
@@ -54,7 +70,8 @@
   };
 
   function layerRow(app, ly, li) {
-    var row = U.el('div', 'lyr' + (app.doc.activeLayer === li ? ' sel' : ''));
+    var multi = (app.selLayers || []).indexOf(li) >= 0;
+    var row = U.el('div', 'lyr' + (app.doc.activeLayer === li ? ' sel' : '') + (multi ? ' multi' : ''));
     row.draggable = true;
     var anySel = app.sel.some(function (it) { var l = Model.locate(app.doc, it); return l && l.layer === ly; });
     row.innerHTML =
@@ -68,7 +85,23 @@
     U.on(U.q('.eye', row), 'click', function (e) { e.stopPropagation(); ly.visible = !ly.visible; app.invalidate(); UI.buildLayers(app); });
     U.on(U.q('.lock', row), 'click', function (e) { e.stopPropagation(); ly.locked = !ly.locked; UI.buildLayers(app); });
     U.on(U.q('.tw', row), 'click', function (e) { e.stopPropagation(); ly.collapsed = !ly.collapsed; UI.buildLayers(app); });
-    U.on(row, 'click', function () { app.doc.activeLayer = li; UI.buildLayers(app); });
+    U.on(row, 'click', function (e) {
+      /* Ctrl/Shift 클릭으로 여러 레이어를 골라 병합할 수 있다 */
+      app.selLayers = app.selLayers || [];
+      var ctrl = U.isMac ? e.metaKey : e.ctrlKey;
+      if (ctrl) {
+        var k = app.selLayers.indexOf(li);
+        if (k >= 0) app.selLayers.splice(k, 1); else app.selLayers.push(li);
+      } else if (e.shiftKey && app.selLayers.length) {
+        var lo = Math.min(app.selLayers[0], li), hi = Math.max(app.selLayers[0], li);
+        app.selLayers = [];
+        for (var q = lo; q <= hi; q++) app.selLayers.push(q);
+      } else {
+        app.selLayers = [li];
+      }
+      app.doc.activeLayer = li;
+      UI.buildLayers(app);
+    });
     U.on(U.q('.target', row), 'click', function (e) {
       e.stopPropagation();
       app.doc.activeLayer = li;
@@ -89,11 +122,12 @@
     row.style.paddingLeft = pad + 'px';
     var isGroup = it.type === 'group';
     var selected = AI.sel.has(app, it);
-    var col = (layer && layer.color) || '#2d8ceb';
+    var col = it.isLayer ? (it.color || '#2d8ceb') : ((layer && layer.color) || '#2d8ceb');
     row.innerHTML =
       '<span class="eye' + (it.visible ? '' : ' off') + '">👁</span>' +
       '<span class="lock' + (it.locked ? '' : ' off') + '">🔒</span>' +
       (isGroup ? '<span class="tw">' + (it.collapsed ? '▸' : '▾') + '</span>' : '<span class="tw"></span>') +
+      (it.isLayer ? '<span class="lyr-color" style="background:' + col + '"></span>' : '') +
       '<span class="nm">' + esc(itemLabel(it)) + '</span>' +
       '<span class="target" title="이 항목을 타겟으로 선택">' + (selected ? '◉' : '○') + '</span>' +
       '<span class="selsq" style="' + (selected ? 'background:' + col + ';border-color:' + col : '') + '"></span>';
@@ -123,7 +157,7 @@
 
   function itemLabel(it) {
     if (it.type === 'text') return '<' + (it.text.content.split('\n')[0].slice(0, 14) || '텍스트') + '>';
-    if (it.type === 'group') return it.clip ? '클립 그룹' : '그룹';
+    if (it.type === 'group') return it.isLayer ? (it.name || '하위 레이어') : (it.clip ? '클립 그룹' : '그룹');
     if (it.type === 'image') return it.name || '이미지';
     return it.name || '패스';
   }
@@ -175,6 +209,12 @@
     });
   }
 
+  function contains(parent, it) {
+    if (parent === it) return true;
+    if (parent.type !== 'group') return false;
+    return parent.children.some(function (c) { return contains(c, it); });
+  }
+
   function applyDrop(app, src, dst) {
     if (src.kind === 'layer' && dst.kind === 'layer') {
       var l = app.doc.layers.splice(src.index, 1)[0];
@@ -187,6 +227,13 @@
       sl.list.splice(sl.index, 1);
       if (dst.kind === 'layer') {
         app.doc.layers[dst.index].children.push(src.item);
+      } else if (dst.item === src.item) {
+        /* 자기 자신 위에 놓으면 아무것도 하지 않는다 */
+        var back = Model.locate(app.doc, src.item);
+        if (!back) Model.activeLayer(app.doc).children.push(src.item);
+      } else if (dst.item.type === 'group' && !contains(dst.item, src.item)) {
+        /* 그룹(하위 레이어) 위에 놓으면 그 안으로 넣는다 */
+        dst.item.children.push(src.item);
       } else {
         var dl = Model.locate(app.doc, dst.item);
         if (!dl) { Model.activeLayer(app.doc).children.push(src.item); return; }

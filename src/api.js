@@ -525,8 +525,12 @@
       var un = ctx.prefs.unit || 'pt';
       var ab = ctx.doc.artboards[ctx.doc.activeArtboard];
       var lines = [];
+      AI.assets.ensure(ctx.doc);
       lines.push('문서 "' + ctx.doc.name + '" · 대지 ' + ctx.doc.artboards.length + '개 · 활성 대지 ' +
-        U.fmtUnit(ab.w, un) + '×' + U.fmtUnit(ab.h, un) + un + ' · 레이어 ' + ctx.doc.layers.length + '개');
+        U.fmtUnit(ab.w, un) + '×' + U.fmtUnit(ab.h, un) + un + ' · 레이어 ' + ctx.doc.layers.length + '개' +
+        (ctx.doc.guides.length ? ' · 안내선 ' + ctx.doc.guides.length + '개' : '') +
+        (ctx.doc.symbols.length ? ' · 심볼 ' + ctx.doc.symbols.length + '개' : '') +
+        (ctx.doc.patterns.length ? ' · 패턴 ' + ctx.doc.patterns.length + '개' : ''));
       var selIds = ctx.sel.map(function (i) { return i.id; });
       ctx.doc.layers.forEach(function (l) {
         lines.push('[' + l.name + ']' + (l.visible ? '' : ' (숨김)') + (l.locked ? ' (잠금)' : ''));
@@ -538,12 +542,36 @@
               parts.push('x' + U.fmtUnit(b.x, un) + ' y' + U.fmtUnit(b.y, un) +
                 ' w' + U.fmtUnit(R.w(b), un) + ' h' + U.fmtUnit(R.h(b), un));
             }
-            if (it.type !== 'group') {
+            if (it.type !== 'group' && it.type !== 'symbol') {
               parts.push('칠 ' + paintLabel(it.fill));
               if (it.stroke && it.stroke.type !== 'none') parts.push('획 ' + it.stroke.color + ' ' + U.fmt(it.stroke.width) + 'pt');
             }
-            if (it.type === 'text') parts.push('"' + String(it.text.content).replace(/\n/g, '\\n').slice(0, 40) + '"');
+            if (it.type === 'text') {
+              parts.push('"' + String(it.text.content).replace(/\n/g, '\\n').slice(0, 40) + '"');
+              if (it.text.area) parts.push('영역문자 ' + U.fmt(it.text.area.w) + '×' + U.fmt(it.text.area.h) +
+                (Rn.layoutText && Rn.layoutText(it).overflow ? ' (넘침)' : ''));
+            }
+            if (it.type === 'symbol') parts.push('심볼 ' + (symName(ctx.doc, it.symbolId) || it.symbolId));
             if (it.opacity != null && it.opacity < 1) parts.push('불투명 ' + Math.round(it.opacity * 100) + '%');
+            /* 에이전트가 화면을 못 보므로 겉모습을 바꾸는 것은 전부 적어 준다 */
+            if (AI.appearance.isCustom(it)) {
+              parts.push('모양 ' + AI.appearance.list(it).map(function (e2) {
+                return e2.kind === 'fill' ? '칠' : '획';
+              }).join('+'));
+            }
+            if (AI.effects.has(it)) {
+              parts.push('효과 ' + AI.effects.list(it).map(function (e3) { return AI.effects.label(e3); }).join(' / '));
+            }
+            if (it.opacityMask) parts.push('불투명도 마스크' + (it.maskInvert ? '(반전)' : ''));
+            if (it.stroke) {
+              if ((it.stroke.arrowStart && it.stroke.arrowStart !== 'none') ||
+                  (it.stroke.arrowEnd && it.stroke.arrowEnd !== 'none')) {
+                parts.push('화살표 ' + (it.stroke.arrowStart || 'none') + '→' + (it.stroke.arrowEnd || 'none'));
+              }
+              if (it.stroke.widthProfile && it.stroke.widthProfile.length > 1) parts.push('가변폭');
+              if (it.stroke.brush) parts.push('브러시 ' + it.stroke.brush.type);
+            }
+            if (it.crop) parts.push('자름');
             if (!it.visible) parts.push('숨김');
             if (it.locked) parts.push('잠금');
             lines.push(parts.join('  '));
@@ -556,8 +584,13 @@
     }
   });
 
+  function symName(doc, id) {
+    var d = AI.assets.findSymbol(doc, id);
+    return d ? d.name : null;
+  }
   function typeLabel(it) {
-    if (it.type === 'group') return it.clip ? '클립그룹' : '그룹';
+    if (it.type === 'symbol') return '심볼';
+    if (it.type === 'group') return it.isLayer ? '하위레이어' : (it.clip ? '클립그룹' : '그룹');
     if (it.type === 'text') return '텍스트';
     if (it.type === 'image') return '이미지';
     if (it.shape) return { rect: '사각형', ellipse: '타원', polygon: '다각형', star: '별', line: '선분' }[it.shape.kind] || '패스';
@@ -1043,6 +1076,260 @@
     }
   });
 
+  /* ---------- 앵커 단위 패스 편집 ----------
+     에이전트가 도형을 통째로 다시 그리지 않고 "고칠" 수 있게 한다.
+     좌표는 모두 문서(월드) 좌표다 — 아이템의 변환은 내부에서 처리한다. */
+  function pathOf(ctx, q, opName) {
+    var list = need(ctx, q, opName);
+    var it = list[0];
+    if (!it || it.type !== 'path') throw err('NOT_PATH', opName + ': 패스를 지정하세요');
+    return it;
+  }
+  function toLocal(ctx, it, x, y) {
+    var inv = M.invert(Model.worldMatrix(ctx.doc, it));
+    return M.apply(inv, x, y);
+  }
+  function anchorOut(ctx, it) {
+    var wm = Model.worldMatrix(ctx.doc, it);
+    return it.subs.map(function (sub, si) {
+      return {
+        index: si, closed: !!sub.closed,
+        points: sub.pts.map(function (pt, pi) {
+          var w = M.apply(wm, pt.x, pt.y);
+          var o = { index: pi, x: U.round(w.x, 4), y: U.round(w.y, 4) };
+          if (pt.ix != null) { var i2 = M.apply(wm, pt.ix, pt.iy); o.inX = U.round(i2.x, 4); o.inY = U.round(i2.y, 4); }
+          if (pt.ox != null) { var o2 = M.apply(wm, pt.ox, pt.oy); o.outX = U.round(o2.x, 4); o.outY = U.round(o2.y, 4); }
+          return o;
+        })
+      };
+    });
+  }
+
+  op('anchors', {
+    undoable: false, group: '앵커', desc: '패스의 앵커와 방향선을 문서 좌표로 반환합니다.',
+    params: { query: Q },
+    run: function (ctx, a) {
+      var it = pathOf(ctx, a.query, 'anchors');
+      return { id: it.id, subpaths: anchorOut(ctx, it) };
+    }
+  });
+
+  op('setAnchor', {
+    undoable: true, group: '앵커', desc: '앵커 하나의 위치와 방향선을 바꿉니다 (문서 좌표).',
+    params: {
+      query: Q,
+      subpath: p('number', '서브패스 번호', { default: 0 }),
+      index: p('number', '앵커 번호', { required: true }),
+      x: p('number', '앵커 x'), y: p('number', '앵커 y'),
+      inX: p('number', '들어오는 방향선 x'), inY: p('number', '들어오는 방향선 y'),
+      outX: p('number', '나가는 방향선 x'), outY: p('number', '나가는 방향선 y'),
+      corner: p('boolean', '참이면 방향선을 없애 코너로 만듭니다')
+    },
+    run: function (ctx, a) {
+      var it = pathOf(ctx, a.query, 'setAnchor');
+      var sub = it.subs[a.subpath == null ? 0 : Math.round(a.subpath)];
+      if (!sub) throw err('NO_SUBPATH', 'setAnchor: 서브패스 ' + a.subpath + ' 이(가) 없습니다');
+      var pt = sub.pts[Math.round(a.index)];
+      if (!pt) throw err('NO_ANCHOR', 'setAnchor: 앵커 ' + a.index + ' 이(가) 없습니다');
+      if (a.x != null || a.y != null) {
+        var w = M.apply(Model.worldMatrix(ctx.doc, it), pt.x, pt.y);
+        var q = toLocal(ctx, it, a.x == null ? w.x : a.x, a.y == null ? w.y : a.y);
+        var dx = q.x - pt.x, dy = q.y - pt.y;
+        pt.x = q.x; pt.y = q.y;
+        /* 방향선은 앵커를 따라 함께 움직인다 (일러스트레이터와 동일) */
+        if (pt.ix != null) { pt.ix += dx; pt.iy += dy; }
+        if (pt.ox != null) { pt.ox += dx; pt.oy += dy; }
+      }
+      if (a.corner) { delete pt.ix; delete pt.iy; delete pt.ox; delete pt.oy; }
+      if (a.inX != null && a.inY != null) { var i2 = toLocal(ctx, it, a.inX, a.inY); pt.ix = i2.x; pt.iy = i2.y; }
+      if (a.outX != null && a.outY != null) { var o2 = toLocal(ctx, it, a.outX, a.outY); pt.ox = o2.x; pt.oy = o2.y; }
+      it.shape = null;                    /* 손으로 고쳤으므로 라이브 셰이프는 해제 */
+      return { id: it.id, subpaths: anchorOut(ctx, it) };
+    }
+  });
+
+  op('addAnchor', {
+    undoable: true, group: '앵커', desc: '세그먼트 위 t(0~1) 위치에 앵커를 끼워 넣습니다.',
+    params: {
+      query: Q, subpath: p('number', '서브패스 번호', { default: 0 }),
+      segment: p('number', '세그먼트 번호 (앵커 n 과 n+1 사이)', { required: true }),
+      t: p('number', '세그먼트 안의 위치 0~1', { default: 0.5 })
+    },
+    run: function (ctx, a) {
+      var it = pathOf(ctx, a.query, 'addAnchor');
+      var sub = it.subs[a.subpath == null ? 0 : Math.round(a.subpath)];
+      if (!sub) throw err('NO_SUBPATH', 'addAnchor: 서브패스가 없습니다');
+      var segs = G.segments(sub);
+      var si = Math.round(a.segment);
+      if (si < 0 || si >= segs.length) throw err('NO_SEGMENT', 'addAnchor: 세그먼트 ' + a.segment + ' 이(가) 없습니다 (0~' + (segs.length - 1) + ')');
+      G.insertAnchor(sub, si, U.clamp(a.t == null ? 0.5 : a.t, 0, 1));
+      it.shape = null;
+      return { id: it.id, subpaths: anchorOut(ctx, it) };
+    }
+  });
+
+  op('removeAnchor', {
+    undoable: true, group: '앵커', desc: '앵커를 지웁니다.',
+    params: { query: Q, subpath: p('number', '서브패스 번호', { default: 0 }), index: p('number', '앵커 번호', { required: true }) },
+    run: function (ctx, a) {
+      var it = pathOf(ctx, a.query, 'removeAnchor');
+      var sub = it.subs[a.subpath == null ? 0 : Math.round(a.subpath)];
+      if (!sub) throw err('NO_SUBPATH', 'removeAnchor: 서브패스가 없습니다');
+      if (sub.pts.length <= 2) throw err('TOO_FEW', 'removeAnchor: 앵커가 2개 이하면 지울 수 없습니다');
+      if (!sub.pts[Math.round(a.index)]) throw err('NO_ANCHOR', 'removeAnchor: 앵커 ' + a.index + ' 이(가) 없습니다');
+      G.removeAnchor(sub, Math.round(a.index));
+      it.shape = null;
+      return { id: it.id, subpaths: anchorOut(ctx, it) };
+    }
+  });
+
+  op('setSubpathClosed', {
+    undoable: true, group: '앵커', desc: '서브패스를 닫거나 엽니다.',
+    params: { query: Q, subpath: p('number', '서브패스 번호', { default: 0 }), closed: p('boolean', '닫힘 여부', { required: true }) },
+    run: function (ctx, a) {
+      var it = pathOf(ctx, a.query, 'setSubpathClosed');
+      var sub = it.subs[a.subpath == null ? 0 : Math.round(a.subpath)];
+      if (!sub) throw err('NO_SUBPATH', 'setSubpathClosed: 서브패스가 없습니다');
+      sub.closed = !!a.closed;
+      it.shape = null;
+      return { id: it.id, closed: sub.closed };
+    }
+  });
+
+  /* ---------- 심볼 · 패턴 ---------- */
+  op('assets', {
+    undoable: false, group: '자산', desc: '문서의 심볼 · 패턴 목록을 반환합니다.', params: {},
+    run: function (ctx) {
+      AI.assets.ensure(ctx.doc);
+      return {
+        symbols: ctx.doc.symbols.map(function (d) { return { id: d.id, name: d.name }; }),
+        patterns: ctx.doc.patterns.map(function (d) { return { id: d.id, name: d.name, width: d.w, height: d.h }; })
+      };
+    }
+  });
+  op('defineSymbol', {
+    undoable: true, group: '자산', desc: '선택 아트웍을 심볼로 등록하고 원본을 인스턴스로 바꿉니다.',
+    params: { query: Q, name: p('string', '심볼 이름') }, returns: 'string',
+    run: function (ctx, a) {
+      var d;
+      withSel(ctx, a.query, 'defineSymbol', function () { d = AI.assets.defineSymbol(ctx, a.name); });
+      if (!d) throw err('SYMBOL_FAILED', 'defineSymbol: 심볼을 만들 수 없습니다');
+      return d.id;
+    }
+  });
+  op('placeSymbol', {
+    undoable: true, group: '자산', desc: '심볼 인스턴스를 배치합니다.',
+    params: {
+      symbol: p('string', '심볼 id 또는 이름', { required: true }),
+      x: p('number', 'x', { default: 0 }), y: p('number', 'y', { default: 0 })
+    },
+    returns: 'id',
+    run: function (ctx, a) {
+      AI.assets.ensure(ctx.doc);
+      var d = AI.assets.findSymbol(ctx.doc, a.symbol);
+      if (!d) {
+        ctx.doc.symbols.forEach(function (x) { if (!d && x.name === a.symbol) d = x; });
+      }
+      if (!d) throw err('NO_SYMBOL', "placeSymbol: 심볼을 찾을 수 없습니다: '" + a.symbol + "'");
+      var it = AI.assets.placeSymbol(ctx, d.id, a.x || 0, a.y || 0);
+      return it ? it.id : null;
+    }
+  });
+  op('breakSymbolLink', {
+    undoable: true, group: '자산', desc: '심볼 인스턴스를 실제 아트웍으로 바꿉니다.',
+    params: { query: Q }, returns: 'id[]',
+    run: function (ctx, a) {
+      var okRes;
+      withSel(ctx, a.query, 'breakSymbolLink', function () { okRes = AI.assets.breakLink(ctx); });
+      if (okRes === false) throw err('NO_INSTANCE', 'breakSymbolLink: 심볼 인스턴스가 없습니다');
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+  op('definePattern', {
+    undoable: true, group: '자산', desc: '선택 아트웍을 패턴 타일로 등록합니다.',
+    params: { query: Q, name: p('string', '패턴 이름') }, returns: 'string',
+    run: function (ctx, a) {
+      var d;
+      withSel(ctx, a.query, 'definePattern', function () { d = AI.assets.definePattern(ctx, a.name); });
+      if (!d) throw err('PATTERN_FAILED', 'definePattern: 패턴을 만들 수 없습니다');
+      return d.id;
+    }
+  });
+  op('applyPattern', {
+    undoable: true, group: '자산', desc: '등록한 패턴으로 칠하거나 획을 줍니다.',
+    params: {
+      query: Q, pattern: p('string', '패턴 id 또는 이름', { required: true }),
+      target: p('string', '적용 대상', { enum: ['fill', 'stroke'], default: 'fill' }),
+      scale: p('number', '타일 비율 (%)', { default: 100 }),
+      angle: p('number', '타일 각도 (°)', { default: 0 })
+    },
+    returns: 'id[]',
+    run: function (ctx, a) {
+      AI.assets.ensure(ctx.doc);
+      var d = AI.assets.findPattern(ctx.doc, a.pattern);
+      if (!d) ctx.doc.patterns.forEach(function (x) { if (!d && x.name === a.pattern) d = x; });
+      if (!d) throw err('NO_PATTERN', "applyPattern: 패턴을 찾을 수 없습니다: '" + a.pattern + "'");
+      withSel(ctx, a.query, 'applyPattern', function () {
+        E.applyPaint(ctx, AI.assets.patternPaint(d, { scale: a.scale, angle: a.angle }), a.target || 'fill');
+      });
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+
+  /* ---------- 마스크 · 블렌드 ---------- */
+  op('opacityMask', {
+    undoable: true, group: '패스', desc: '맨 앞 오브젝트를 불투명도 마스크로 씁니다 (밝기 = 불투명도).',
+    params: { query: Q, invert: p('boolean', '마스크 반전', { default: false }) }, returns: 'id',
+    run: function (ctx, a) {
+      var okRes;
+      withSel(ctx, a.query, 'opacityMask', function () { okRes = E.makeOpacityMask(ctx); });
+      if (okRes === false) throw err('MASK_FAILED', 'opacityMask: 2개 이상 필요합니다');
+      if (a.invert && ctx.sel[0]) ctx.sel[0].maskInvert = true;
+      return ctx.sel[0] ? ctx.sel[0].id : null;
+    }
+  });
+  op('blend', {
+    undoable: true, group: '패스', desc: '두 오브젝트 사이에 중간 단계를 만듭니다.',
+    params: { query: Q, steps: p('number', '중간 단계 수', { default: 5 }) }, returns: 'id',
+    run: function (ctx, a) {
+      var okRes;
+      withSel(ctx, a.query, 'blend', function () { okRes = E.blend(ctx, a.steps); });
+      if (okRes === false) throw err('BLEND_FAILED', 'blend: 블렌드할 수 없습니다');
+      return ctx.sel[0] ? ctx.sel[0].id : null;
+    }
+  });
+  op('recolor', {
+    undoable: true, group: '스타일', desc: '선택 아트웍의 색을 바꾸거나 색조 · 채도 · 밝기를 조정합니다.',
+    params: {
+      query: Q,
+      map: p('object', '{원본색: 새색} 형태의 치환표'),
+      hue: p('number', '색조 회전 (°)'), saturation: p('number', '채도 증감 (%)'), lightness: p('number', '밝기 증감 (%)')
+    },
+    run: function (ctx, a) {
+      var map = {};
+      if (a.map) Object.keys(a.map).forEach(function (k) {
+        map[String(k).toLowerCase()] = normalizeHex(a.map[k]) || a.map[k];
+      });
+      var changed;
+      withSel(ctx, a.query, 'recolor', function () {
+        changed = E.recolor(ctx, map, { hue: a.hue || 0, sat: a.saturation, light: a.lightness });
+      });
+      if (!changed) throw err('NO_CHANGE', 'recolor: 바뀐 색이 없습니다');
+      return E.collectColors(ctx).map(function (c) { return c.color; });
+    }
+  });
+  op('colors', {
+    undoable: false, group: '스타일', desc: '선택 아트웍에 쓰인 색을 많이 쓰인 순서로 반환합니다.',
+    params: { query: Q },
+    run: function (ctx, a) {
+      var out;
+      var prev = ctx.sel;
+      ctx.sel = need(ctx, a.query, 'colors');
+      try { out = E.collectColors(ctx); } finally { ctx.sel = prev; }
+      return out;
+    }
+  });
+
   /* ---------- 모양 (다중 칠/획) ---------- */
   op('appearance', {
     undoable: false, group: '모양', desc: '오브젝트의 모양 스택(칠·획 겹)을 아래→위 순서로 반환합니다.',
@@ -1371,6 +1658,16 @@
       return documentInfo(ctx);
     }
   });
+  op('toPDF', {
+    undoable: false, group: '출력', desc: '활성 대지를 벡터 PDF 문자열로 반환합니다 (latin1 바이트 문자열).',
+    params: { artboard: p('number', '대지 번호 (생략 시 활성 대지)') }, returns: 'string',
+    run: function (ctx, a) {
+      if (!AI.pdf) throw err('NO_PDF', 'toPDF: PDF 모듈을 찾을 수 없습니다');
+      var str = AI.pdf.toPDF(ctx, { artboard: a.artboard });
+      return str;
+    }
+  });
+
   op('toPNG', {
     undoable: false, group: '출력', desc: '활성 대지를 PNG data URL 로 반환합니다 (브라우저 전용).',
     params: { scale: p('number', '배율', { default: 2 }), background: p('boolean', '대지 배경 포함', { default: true }) },

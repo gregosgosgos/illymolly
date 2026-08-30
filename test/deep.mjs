@@ -636,6 +636,139 @@ const out = await page.evaluate(() => {
     ok('대지 재정렬 격자', pos === '0,0 130,0 0,110', pos);
   } catch (e) { ok('대지', false, e.message); }
 
+  /* ---------- 23d. 모양 스택 · 오프셋 · 마스크 · 심볼 ---------- */
+  try {
+    var L = fresh();
+    var r0 = Mo.newRect(50, 50, 100, 100, 0);
+    r0.fill = AI.color.solid('#3366cc');
+    r0.stroke = AI.color.none();
+    L.children.push(r0);
+    var AP = AI.appearance;
+
+    ok('기본 아이템은 모양 스택을 갖지 않는다', !AP.isCustom(r0));
+    ok('기본 스택 = 칠 1겹 (획 없음)', AP.list(r0).length === 1, AP.list(r0).length);
+
+    AP.addStroke(r0, Mo.mkStroke('#ff0000', 8));
+    ok('획 1겹 추가 후에도 기본형 유지', !AP.isCustom(r0) && r0.stroke.width === 8, r0.stroke.width);
+
+    AP.addStroke(r0, Mo.mkStroke('#00ff00', 2));
+    ok('획 2겹이면 사용자 스택이 된다', AP.isCustom(r0) && AP.list(r0).length === 3, AP.list(r0).length);
+    ok('대표 획 = 맨 위 획', r0.stroke.color === '#00ff00', r0.stroke.color);
+    ok('가장 두꺼운 획이 바운딩을 정한다', AP.maxStrokeWidth(r0) === 8, AP.maxStrokeWidth(r0));
+    var vb = Rn.boundsM(r0, Mo.worldMatrix(app.doc, r0), false, 1);
+    ok('미리보기 경계 = 100 + 8', near(vb.x2 - vb.x, 108, 0.01), vb.x2 - vb.x);
+    var gb = Rn.boundsM(r0, Mo.worldMatrix(app.doc, r0), true, 1);
+    ok('기하 경계는 그대로', near(gb.x2 - gb.x, 100, 0.01), gb.x2 - gb.x);
+
+    /* 모양 확장 -> 겹 수만큼의 오브젝트 */
+    AI.sel.set(app, [r0]);
+    AI.commands.run('expandAppearance');
+    var g0 = app.sel[0];
+    ok('모양 확장 = 겹 수만큼의 그룹', g0.type === 'group' && g0.children.length === 3, g0.children.length);
+    ok('확장 결과 바운딩 보존', near(Rn.worldBounds(app.doc, g0, false).x2 - Rn.worldBounds(app.doc, g0, false).x, 108, 0.5));
+  } catch (e) { ok('모양 스택', false, e.message); }
+
+  try {
+    fresh();
+    /* 오프셋: 사각형은 정확히 예측 가능하다 */
+    var rect = [[{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }]];
+    var out = E.offsetRings(PF.normalize(rect), 10);
+    var a1 = Math.abs(PF.area(out[0]));
+    ok('사각형 +10 오프셋 면적', near(a1, 120 * 120, 400), a1.toFixed(0));
+    var inn = E.offsetRings(PF.normalize(rect), -20);
+    var a2 = Math.abs(PF.area(inn[0]));
+    ok('사각형 -20 오프셋 면적', near(a2, 60 * 60, 200), a2.toFixed(0));
+    /* 원: 반지름이 정확히 늘어야 한다 */
+    var circle = [];
+    for (var ci = 0; ci < 128; ci++) {
+      var t2 = ci / 128 * Math.PI * 2;
+      circle.push({ x: 200 + Math.cos(t2) * 50, y: 200 + Math.sin(t2) * 50 });
+    }
+    var co = E.offsetRings(PF.normalize([circle]), 25);
+    var ca = Math.abs(PF.area(co[0]));
+    ok('원 r50 +25 오프셋 = r75 넓이', near(ca, Math.PI * 75 * 75, Math.PI * 75 * 75 * 0.01), ca.toFixed(0));
+    /* 안쪽으로 너무 많이 줄이면 사라진다 */
+    var gone = E.offsetRings(PF.normalize([circle]), -60);
+    ok('반지름보다 크게 줄이면 결과 없음', gone.length === 0, gone.length);
+  } catch (e) { ok('오프셋', false, e.message); }
+
+  try {
+    var L3 = fresh();
+    /* 단순화가 모양을 보존하는지 — 면적으로 확인 */
+    var poly = [];
+    for (var pi2 = 0; pi2 < 200; pi2++) {
+      var t3 = pi2 / 200 * Math.PI * 2;
+      poly.push({ x: 200 + Math.cos(t3) * 80, y: 200 + Math.sin(t3) * 80 });
+    }
+    var it3 = Mo.newPath([{ closed: true, pts: poly }]);
+    L3.children.push(it3);
+    AI.sel.set(app, [it3]);
+    var beforeArea = Math.abs(PF.area(G.flattenItem(it3, 0.2, Mo.worldMatrix(app.doc, it3))[0].pts));
+    var res = E.simplifyPaths(app, { precision: 85, curves: true });
+    var afterArea = Math.abs(PF.area(G.flattenItem(it3, 0.2, Mo.worldMatrix(app.doc, it3))[0].pts));
+    ok('단순화로 앵커가 줄어든다', res.after < res.before / 2, res.before + '->' + res.after);
+    ok('단순화가 면적을 보존한다', near(afterArea, beforeArea, beforeArea * 0.02),
+      beforeArea.toFixed(0) + ' -> ' + afterArea.toFixed(0));
+  } catch (e) { ok('단순화', false, e.message); }
+
+  try {
+    var L4 = fresh();
+    /* 불투명도 마스크: 흰 마스크는 그대로, 검은 마스크는 완전 투명 */
+    AI.viewT.setZoom(app, 1); app.view.tx = 0; app.view.ty = 0;
+    var base = Mo.newRect(20, 20, 100, 60, 0);
+    base.fill = AI.color.solid('#ff0000'); base.stroke = AI.color.none();
+    var mk = Mo.newRect(20, 20, 100, 60, 0);
+    mk.fill = AI.color.solid('#ffffff'); mk.stroke = AI.color.none();
+    L4.children.push(base, mk);
+    AI.sel.set(app, [base, mk]);
+    E.makeOpacityMask(app);
+    var ctx4 = app.canvas.getContext('2d');
+    Rn.scene(ctx4, app);
+    function pix(x, y) {
+      var d = ctx4.getImageData(Math.round(x * app.dpr), Math.round(y * app.dpr), 1, 1).data;
+      return [d[0], d[1], d[2]];
+    }
+    var white = pix(70, 50);
+    app.sel[0].opacityMask.fill = AI.color.solid('#000000');
+    Rn.scene(ctx4, app);
+    var black = pix(70, 50);
+    ok('흰 마스크 = 원본 그대로', white[0] > 200 && white[1] < 60, white.join(','));
+    ok('검은 마스크 = 완전 투명', black[0] > 240 && black[1] > 240 && black[2] > 240, black.join(','));
+    /* 반전하면 반대가 된다 */
+    app.sel[0].maskInvert = true;
+    Rn.scene(ctx4, app);
+    var inv = pix(70, 50);
+    ok('반전 마스크', inv[0] > 200 && inv[1] < 60, inv.join(','));
+  } catch (e) { ok('불투명도 마스크', false, e.message); }
+
+  try {
+    var L5 = fresh();
+    /* 심볼 인스턴스의 변환이 정의에 곱해지는지 */
+    var src = Mo.newRect(0, 0, 40, 40, 0);
+    L5.children.push(src);
+    AI.sel.set(app, [src]);
+    var def = AI.assets.defineSymbol(app, '사각');
+    var inst = app.sel[0];
+    inst.m = M.mulAll(M.translate(100, 100), M.scale(2, 2));
+    var ib = Rn.worldBounds(app.doc, inst, true);
+    ok('심볼 인스턴스에 변환이 적용된다',
+      near(ib.x, 100) && near(ib.x2 - ib.x, 80), [ib.x, ib.x2 - ib.x].join(','));
+    /* 히트 테스트도 정의를 따라간다 */
+    AI.viewT.setZoom(app, 1); app.view.tx = 0; app.view.ty = 0;
+    ok('심볼 히트 테스트', AI.hit.itemAt(app, 140, 140, false) === inst);
+    ok('심볼 바깥은 미히트', AI.hit.itemAt(app, 195, 195, false) !== inst);
+  } catch (e) { ok('심볼', false, e.message); }
+
+  try {
+    fresh();
+    /* 가변 폭 프로파일 보간 */
+    var prof = [{ t: 0, w: 1 }, { t: 0.5, w: 3 }, { t: 1, w: 1 }];
+    ok('프로파일 보간 (양 끝)', Rn.profileAt(prof, 0) === 1 && Rn.profileAt(prof, 1) === 1);
+    ok('프로파일 보간 (가운데)', Rn.profileAt(prof, 0.5) === 3);
+    ok('프로파일 보간 (중간값)', near(Rn.profileAt(prof, 0.25), 2, 0.001), Rn.profileAt(prof, 0.25));
+    ok('프로파일 범위 밖은 끝값', Rn.profileAt(prof, -1) === 1 && Rn.profileAt(prof, 2) === 1);
+  } catch (e) { ok('가변 폭', false, e.message); }
+
   /* ---------- 23. 성능 ---------- */
   try {
     fresh();

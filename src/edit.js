@@ -418,6 +418,21 @@
     return { x: dy / l, y: -dx / l };            /* 시계 반대 링 기준 바깥 법선 */
   }
 
+  /* 점에서 링 집합의 경계까지의 최단 거리 */
+  function distToRings(rings, x, y) {
+    var best = Infinity;
+    rings.forEach(function (r) {
+      for (var i = 0; i < r.length; i++) {
+        var a = r[i], b = r[(i + 1) % r.length];
+        var dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+        var t = l2 < 1e-12 ? 0 : U.clamp(((x - a.x) * dx + (y - a.y) * dy) / l2, 0, 1);
+        var dd = U.dist(x, y, a.x + dx * t, a.y + dy * t);
+        if (dd < best) best = dd;
+      }
+    });
+    return best;
+  }
+
   /* 링 집합을 d 만큼 오프셋한 결과 링들 */
   E.offsetRings = function (rings, d) {
     var raw = [];
@@ -426,13 +441,21 @@
       if (o) raw.push(o);
     });
     if (!raw.length) return [];
-    var faces = AI.pathfinder.faces([raw]);
+    var PFm = AI.pathfinder;
+    var faces = PFm.faces([raw]);
+    var tol = Math.abs(d) * 0.15 + 1e-6;
     var keep = faces.filter(function (f) {
-      var rp = AI.pathfinder.repPoint(f);
-      return AI.pathfinder.pointInRings(raw, rp.x, rp.y);
+      var rp = PFm.repPoint(f);
+      if (!PFm.pointInRings(raw, rp.x, rp.y)) return false;
+      /* 이등분선 오프셋은 d 가 크면 링이 뒤집힌다.
+         원본 경계까지의 거리로 "정말 그만큼 밀려난 자리인지" 확인해 걸러 낸다. */
+      var inside = PFm.pointInRings(rings, rp.x, rp.y);
+      var dist = distToRings(rings, rp.x, rp.y);
+      if (d > 0) return inside || dist <= d + tol;
+      return inside && dist >= -d - tol;
     });
     if (!keep.length) return [];
-    return AI.pathfinder.uniteAll(keep.map(function (f) { return AI.pathfinder.normalize([f]); }));
+    return PFm.uniteAll(keep.map(function (f) { return PFm.normalize([f]); }));
   };
 
   E.offsetPath = function (app, dist, opt) {
@@ -555,6 +578,145 @@
     AI.sel.set(app, [img]);
     return true;
   };
+
+  /* ---------------- 산포 브러시 (Scatter Brush) ---------------- */
+  /* 패스를 따라 심볼/도형 사본을 뿌린다. 일러스트레이터의 산포 브러시를
+     "적용 즉시 확장" 형태로 구현한 것 — 결과가 평범한 아트웍이라 다루기 쉽다. */
+  E.scatterAlongPath = function (app, art, o) {
+    o = o || {};
+    var spacing = Math.max(1, o.spacing == null ? 30 : o.spacing);
+    var sizeJit = (o.sizeJitter || 0) / 100;
+    var rotJit = o.rotationJitter || 0;
+    var offJit = o.offsetJitter || 0;
+    var followPath = o.follow !== false;
+    var made = [];
+
+    app.sel.forEach(function (it) {
+      if (it.type !== 'path') return;
+      var wm = Model.worldMatrix(app.doc, it);
+      it.subs.forEach(function (sub) {
+        var pts = G.flattenSub(sub, 0.4, wm);
+        if (pts.length < 2) return;
+        if (sub.closed) pts = pts.concat([pts[0]]);
+        var acc = [0], total = 0, i;
+        for (i = 1; i < pts.length; i++) {
+          total += U.dist(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y);
+          acc.push(total);
+        }
+        if (total < spacing * 0.5) return;
+        var n = Math.max(1, Math.floor(total / spacing));
+        for (var k = 0; k <= n; k++) {
+          var target = (k / n) * total;
+          var seg = 1;
+          while (seg < acc.length && acc[seg] < target) seg++;
+          seg = Math.min(seg, acc.length - 1);
+          var a0 = pts[seg - 1], b0 = pts[seg];
+          var span = acc[seg] - acc[seg - 1];
+          var t = span < 1e-9 ? 0 : (target - acc[seg - 1]) / span;
+          var px = a0.x + (b0.x - a0.x) * t, py = a0.y + (b0.y - a0.y) * t;
+          var ang = Math.atan2(b0.y - a0.y, b0.x - a0.x);
+
+          var c = U.deepCopy(art);
+          AI.assets.reid(c);
+          var b = Rn.localBounds(c);
+          var cx = (b.x + b.x2) / 2, cy = (b.y + b.y2) / 2;
+          var sJ = 1 + (Math.random() * 2 - 1) * sizeJit;
+          var rJ = U.rad((Math.random() * 2 - 1) * rotJit);
+          var oJ = (Math.random() * 2 - 1) * offJit;
+          var nx = -Math.sin(ang), ny = Math.cos(ang);
+          c.m = M.mulAll(
+            M.translate(px + nx * oJ, py + ny * oJ),
+            M.rotate((followPath ? ang : 0) + rJ),
+            M.scale(sJ, sJ),
+            M.translate(-cx, -cy),
+            c.m || M.ident()
+          );
+          made.push(c);
+        }
+      });
+    });
+    if (!made.length) { U.toast('뿌릴 패스를 선택하세요'); return false; }
+    var g = Model.newGroup(made);
+    g.name = '산포 브러시';
+    Model.activeLayer(app.doc).children.push(g);
+    AI.sel.set(app, [g]);
+    return true;
+  };
+
+  /* ---------------- 아트웍 재색상화 (Recolor Artwork) ---------------- */
+  /* 선택 영역에 쓰인 색을 모아 팔레트로 만들고, 색끼리 바꾸거나
+     색조 회전 · 채도 · 밝기를 한 번에 조정한다. */
+  E.collectColors = function (app) {
+    var seen = Object.create(null), out = [];
+    function add(hex) {
+      if (!hex) return;
+      var k = hex.toLowerCase();
+      if (seen[k]) { seen[k].count++; return; }
+      seen[k] = { color: k, count: 1 };
+      out.push(seen[k]);
+    }
+    var counted = [];
+    function scan(p) {
+      if (!p || p.type === 'none') return;
+      if (counted.indexOf(p) >= 0) return;      /* 기본 스택은 같은 객체를 두 번 준다 */
+      counted.push(p);
+      if (p.type === 'solid') add(p.color);
+      else if (p.stops) p.stops.forEach(function (st) { add(st.color); });
+    }
+    app.sel.forEach(function (it) {
+      (function rec(o) {
+        if (o.type === 'group') { o.children.forEach(rec); return; }
+        scan(o.fill); scan(o.stroke);
+        AI.appearance.list(o).forEach(function (e) { scan(e.kind === 'fill' ? e.paint : e.stroke); });
+      })(it);
+    });
+    return out.sort(function (a, b) { return b.count - a.count; });
+  };
+
+  /* map: {원본hex: 새hex}, adj: {hue, sat, light} (도 / %) */
+  E.recolor = function (app, map, adj) {
+    map = map || {};
+    adj = adj || {};
+    var any = false;
+    function conv(hex) {
+      var out = map[String(hex).toLowerCase()] || hex;
+      if (adj.hue || adj.sat != null || adj.light != null) out = adjustHex(out, adj);
+      if (out !== hex) any = true;
+      return out;
+    }
+    /* 기본 모양 스택은 it.fill / it.stroke 와 같은 객체를 돌려주므로,
+       이미 손댄 페인트를 기억해 두 번 변환되지 않게 한다. */
+    var seen = [];
+    function once(p) {
+      if (!p || p.type === 'none') return;
+      if (seen.indexOf(p) >= 0) return;
+      seen.push(p);
+      if (p.type === 'solid') p.color = conv(p.color);
+      else if (p.stops) p.stops.forEach(function (st) { st.color = conv(st.color); });
+    }
+    app.sel.forEach(function (it) {
+      (function rec(o) {
+        if (o.type === 'group') { o.children.forEach(rec); return; }
+        once(o.fill); once(o.stroke);
+        AI.appearance.list(o).forEach(function (e) { once(e.kind === 'fill' ? e.paint : e.stroke); });
+      })(it);
+    });
+    return any;
+  };
+
+  function adjustHex(hex, adj) {
+    var rgb = Col.hexToRgb(hex);
+    var hsb = Col.rgbToHsb ? Col.rgbToHsb(rgb.r, rgb.g, rgb.b) : null;
+    if (!hsb) return hex;
+    var h = (hsb.h + (adj.hue || 0)) % 360;
+    if (h < 0) h += 360;
+    var sMul = adj.sat == null ? 1 : (100 + adj.sat) / 100;
+    var bMul = adj.light == null ? 1 : (100 + adj.light) / 100;
+    var s2 = U.clamp(hsb.s * sMul, 0, 100);
+    var b2 = U.clamp(hsb.b * bMul, 0, 100);
+    var out = Col.hsbToRgb(h, s2, b2);
+    return Col.rgbToHex(out.r, out.g, out.b);
+  }
 
   /* ---------------- 불투명도 마스크 ---------------- */
   /* 맨 앞 오브젝트가 마스크가 되고, 나머지는 내용 그룹이 된다 (투명도 패널) */
@@ -725,14 +887,28 @@
   }
 
   /* ---------------- 레이어 ---------------- */
-  E.mergeLayers = function (app) {
-    if (app.doc.layers.length < 2) return false;
-    var base = app.doc.layers[0];
-    for (var i = 1; i < app.doc.layers.length; i++) {
-      base.children = base.children.concat(app.doc.layers[i].children);
+  /* indices 를 주면 그 레이어들만, 없으면 전부 병합한다 (가장 아래 레이어로) */
+  E.mergeLayers = function (app, indices) {
+    var L = app.doc.layers;
+    var idx = (indices && indices.length > 1)
+      ? indices.slice().filter(function (i) { return i >= 0 && i < L.length; }).sort(function (a, b) { return a - b; })
+      : null;
+    if (!idx && L.length < 2) return false;
+    if (idx && idx.length < 2) return false;
+
+    if (!idx) {
+      var base = L[0];
+      for (var i = 1; i < L.length; i++) base.children = base.children.concat(L[i].children);
+      app.doc.layers = [base];
+      app.doc.activeLayer = 0;
+      return true;
     }
-    app.doc.layers = [base];
-    app.doc.activeLayer = 0;
+    var target = L[idx[0]];
+    for (var k = 1; k < idx.length; k++) target.children = target.children.concat(L[idx[k]].children);
+    var drop = idx.slice(1).sort(function (a, b) { return b - a; });
+    drop.forEach(function (i2) { L.splice(i2, 1); });
+    app.doc.activeLayer = U.clamp(app.doc.layers.indexOf(target), 0, app.doc.layers.length - 1);
+    app.selLayers = [app.doc.activeLayer];
     return true;
   };
 

@@ -185,6 +185,8 @@ body.no-rulers #ruler-h,body.no-rulers #ruler-v,body.no-rulers #ruler-corner{dis
 .fx-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default}
 .fx-row .mini-btn{min-width:20px;padding:0 4px}
 
+.lyr.multi{outline:1px solid var(--accent);outline-offset:-1px}
+
 /* ---- 모양(Appearance) 패널 ---- */
 .ap-list{border:1px solid var(--line);border-radius:3px;background:#1c1c1c;max-height:140px;overflow:auto}
 .ap-row{display:flex;align-items:center;gap:6px;padding:4px 6px;cursor:pointer;border-bottom:1px solid #262626}
@@ -206,6 +208,14 @@ body.no-rulers #ruler-h,body.no-rulers #ruler-v,body.no-rulers #ruler-corner{dis
 .ab-i{min-width:14px;color:#8a8a8a;text-align:right}
 .ab-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ab-size{color:#8a8a8a;font-size:10px;white-space:nowrap}
+
+/* 심볼 · 패턴 격자 */
+.sw-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;min-height:26px}
+.sw-grid .sw{height:34px;display:flex;align-items:center;justify-content:center;
+  border:1px solid #555;border-radius:2px;background:#2a2a2a;color:#c9c9c9;cursor:pointer;
+  overflow:hidden;padding:0 2px}
+.sw-grid .sw:hover{outline:1px solid var(--accent)}
+.sw-grid .fx-empty{grid-column:1/-1}
 
 /* swatches */
 #p-swatches .sw{

@@ -47,7 +47,9 @@
     return { x: last.x, y: last.y, nx: -ddy / ll, ny: ddx / ll };
   }
 
-  /* 화면 좌표에서 가장 가까운 (아이템, 서브패스, t) */
+  /* 화면 좌표에서 가장 가까운 (아이템, 서브패스, t)
+     — 꼭짓점이 아니라 선분 위의 가장 가까운 점을 찾는다.
+       직선처럼 점이 2개뿐인 패스에서도 중간을 잡을 수 있어야 하기 때문이다. */
   function nearest(app, sx, sy) {
     var best = null;
     app.sel.forEach(function (it) {
@@ -56,10 +58,18 @@
       it.subs.forEach(function (sub, si) {
         var s = sampled(it, si);
         if (!s) return;
-        for (var i = 0; i < s.pts.length; i++) {
-          var p = M.apply(wm, s.pts[i].x, s.pts[i].y);
-          var d = U.dist(sx, sy, p.x, p.y);
-          if (!best || d < best.d) best = { d: d, it: it, si: si, t: s.acc[i] / s.total, s: s, wm: wm };
+        var prev = M.apply(wm, s.pts[0].x, s.pts[0].y);
+        for (var i = 1; i < s.pts.length; i++) {
+          var cur = M.apply(wm, s.pts[i].x, s.pts[i].y);
+          var dx = cur.x - prev.x, dy = cur.y - prev.y;
+          var l2 = dx * dx + dy * dy;
+          var k = l2 < 1e-9 ? 0 : U.clamp(((sx - prev.x) * dx + (sy - prev.y) * dy) / l2, 0, 1);
+          var d = U.dist(sx, sy, prev.x + dx * k, prev.y + dy * k);
+          if (!best || d < best.d) {
+            var len = s.acc[i - 1] + (s.acc[i] - s.acc[i - 1]) * k;
+            best = { d: d, it: it, si: si, t: len / s.total, s: s, wm: wm };
+          }
+          prev = cur;
         }
       });
     });

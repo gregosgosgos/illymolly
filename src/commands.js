@@ -44,6 +44,7 @@
   def('place', '가져오기(이미지)...', 'Ctrl+Shift+P', function (a) { AI.io.placeImage(a); });
   def('exportSvg', 'SVG로 내보내기...', 'Ctrl+Alt+Shift+S', function (a) { AI.io.exportSVG(a); });
   def('exportPng', 'PNG로 내보내기...', 'Ctrl+Alt+E', function (a) { AI.io.exportPNG(a); });
+  def('exportPdf', 'PDF로 내보내기...', null, function (a) { AI.io.exportPDF(a); });
   def('docSetup', '문서 설정...', 'Ctrl+Alt+P', function (a) { AI.dialogs.documentSetup(a); });
   def('preferences', '환경 설정...', 'Ctrl+K', function (a) { AI.dialogs.preferences(a); });
 
@@ -282,6 +283,9 @@
   def('fitArtboard', '대지에 맞추기', 'Ctrl+0', function (a) { AI.viewT.fitArtboard(a); });
   def('fitAll', '전체 대지 맞추기', 'Ctrl+Alt+0', function (a) { AI.viewT.fitAll(a); });
   def('actualSize', '실제 크기', 'Ctrl+1', function (a) { AI.viewT.setZoom(a, 1); });
+  def('rotateViewCW', '화면 시계 방향 회전', null, function (a) { AI.viewT.rotateView(a, Math.PI / 12); });
+  def('rotateViewCCW', '화면 반시계 방향 회전', null, function (a) { AI.viewT.rotateView(a, -Math.PI / 12); });
+  def('resetRotation', '화면 회전 초기화', 'Shift+Ctrl+1', function (a) { AI.viewT.resetRotation(a); U.toast('화면 회전 초기화'); });
   def('hideEdges', '가장자리 숨기기', 'Ctrl+H', function (a) { a.hideEdges = !a.hideEdges; }, { checked: function (a) { return a.hideEdges; } });
   def('showRulers', '눈금자', 'Ctrl+R', function (a) {
     a.prefs.rulers = !a.prefs.rulers;
@@ -416,6 +420,39 @@
     E.ungroup(a);
   }));
 
+  /* ================= 심볼 · 패턴 ================= */
+  def('newSymbol', '새 심볼', null, hist('새 심볼', function (a) {
+    if (!a.sel.length) { U.toast('심볼로 만들 아트웍을 선택하세요'); return false; }
+    var d = AI.assets.defineSymbol(a);
+    if (!d) { U.toast('심볼을 만들 수 없습니다'); return false; }
+    U.toast('심볼 "' + d.name + '" 등록됨');
+  }), { enabled: hasSel });
+  def('breakSymbolLink', '심볼 링크 끊기', null, hist('심볼 링크 끊기', function (a) {
+    if (AI.assets.breakLink(a) === false) { U.toast('심볼 인스턴스를 선택하세요'); return false; }
+  }), { enabled: hasSel });
+  def('redefineSymbol', '심볼 재정의', null, hist('심볼 재정의', function (a) {
+    if (a.sel.length !== 1) { U.toast('오브젝트 하나만 선택하세요'); return false; }
+    AI.assets.ensure(a.doc);
+    if (!a.doc.symbols.length) { U.toast('등록된 심볼이 없습니다'); return false; }
+    var id = a.lastSymbolId || a.doc.symbols[a.doc.symbols.length - 1].id;
+    if (!AI.assets.redefineFromSelection(a, id)) { U.toast('재정의할 수 없습니다'); return false; }
+    U.toast('심볼 재정의됨');
+  }));
+  def('newPattern', '새 패턴', null, hist('새 패턴', function (a) {
+    if (!a.sel.length) { U.toast('패턴 타일로 만들 아트웍을 선택하세요'); return false; }
+    var d = AI.assets.definePattern(a);
+    if (!d) { U.toast('패턴을 만들 수 없습니다'); return false; }
+    AI.assets.invalidateTiles();
+    U.toast('패턴 "' + d.name + '" 등록됨 (' + U.fmt(d.w) + '×' + U.fmt(d.h) + ')');
+  }), { enabled: hasSel });
+  def('patternOptions', '패턴 옵션...', null, function (a) { AI.dialogs.patternOptions(a); }, { enabled: hasSel });
+
+  /* ================= 브러시 ================= */
+  def('brushOptions', '브러시 옵션...', null, function (a) { AI.dialogs.brushOptions(a); });
+
+  /* ================= 색상 ================= */
+  def('recolor', '아트웍 재색상화...', null, function (a) { AI.dialogs.recolor(a); }, { enabled: hasSel });
+
   /* ================= 패스 ================= */
   def('offsetPath', '패스 이동...', null, function (a) { AI.dialogs.offsetPath(a); }, { enabled: hasSel });
   def('simplifyPath', '단순화...', null, function (a) { AI.dialogs.simplify(a); }, { enabled: hasSel });
@@ -440,7 +477,7 @@
 
   /* ================= 레이어 ================= */
   def('mergeLayers', '선택한 레이어 병합', null, hist('레이어 병합', function (a) {
-    if (E.mergeLayers(a) === false) { U.toast('병합할 레이어가 없습니다'); return false; }
+    if (E.mergeLayers(a, a.selLayers) === false) { U.toast('병합할 레이어가 없습니다'); return false; }
     U.toast('레이어 병합됨');
   }));
   def('releaseToLayers', '레이어로 배포(순차)', null, hist('레이어로 배포', function (a) {
@@ -563,7 +600,7 @@
   /* ================= 메뉴 구조 ================= */
   C.MENUS = [
     {
-      title: '파일', items: ['new', 'open', '-', 'save', 'saveAs', '-', 'place', '-', 'exportSvg', 'exportPng', '-', 'docSetup']
+      title: '파일', items: ['new', 'open', '-', 'save', 'saveAs', '-', 'place', '-', 'exportSvg', 'exportPng', 'exportPdf', '-', 'docSetup']
     },
     {
       title: '편집', items: ['undo', 'redo', '-', 'cut', 'copy', 'paste', 'pasteFront', 'pasteBack', 'pasteInPlace', '-', 'clear', 'duplicate', '-', 'preferences']
@@ -578,7 +615,8 @@
         'blendMake', 'blendOptions', 'blendRelease', '-',
         'compoundMake', 'compoundRelease', '-',
         'joinPath', 'averagePath', 'outlineStroke', 'offsetPath', 'simplifyPath', '-',
-        'expandAppearance', '-',
+        'expandAppearance', 'recolor', '-',
+        'newSymbol', 'breakSymbolLink', 'redefineSymbol', 'newPattern', 'brushOptions', '-',
         'imageTrace', 'cropImage', '-',
         'mergeLayers', 'releaseToLayers', 'collectInNewLayer', '-',
         'fitArtboardToSelection', 'fitArtboardToArtwork', '-',
@@ -602,6 +640,7 @@
     {
       title: '보기', items: [
         'outlineMode', '-', 'zoomIn', 'zoomOut', 'fitArtboard', 'fitAll', 'actualSize', '-',
+        'rotateViewCW', 'rotateViewCCW', 'resetRotation', '-',
         'hideEdges', 'showBBox', '-', 'showRulers', 'showGrid', 'snapGrid', 'smartGuides', '-',
         'showGuides', 'lockGuides', 'makeGuides', 'releaseGuides', 'clearGuides'
       ]

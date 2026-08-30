@@ -22,6 +22,7 @@
     buildStroke();
     buildAlign();
     buildPathfinder();
+    buildSymbols();
     buildAppearance();
     buildEffects();
     buildArtboards();
@@ -801,6 +802,74 @@
     return s + '</svg>';
   }
 
+  /* ================= 심볼 · 패턴 ================= */
+  function buildSymbols() {
+    var p = document.getElementById('p-symbols');
+    if (!p) return;
+    p.innerHTML =
+      '<div style="color:#9a9a9a;margin-bottom:4px">심볼</div>' +
+      '<div id="sy-list" class="sw-grid"></div>' +
+      '<div class="grid2" style="margin-top:5px">' +
+      '<button class="btn" data-sycmd="newSymbol">새 심볼</button>' +
+      '<button class="btn" data-sycmd="breakSymbolLink">링크 끊기</button>' +
+      '</div>' +
+      '<div style="color:#9a9a9a;margin:8px 0 4px">패턴</div>' +
+      '<div id="pt-list" class="sw-grid"></div>' +
+      '<div class="grid2" style="margin-top:5px">' +
+      '<button class="btn" data-sycmd="newPattern">새 패턴</button>' +
+      '<button class="btn" data-sycmd="patternOptions">패턴 옵션...</button>' +
+      '</div>' +
+      '<div class="hint">심볼을 클릭하면 화면 가운데에 배치됩니다. 패턴을 클릭하면 선택한 오브젝트의 칠이 됩니다.</div>';
+    U.qa('[data-sycmd]', p).forEach(function (b) { U.on(b, 'click', function () { C.run(b.dataset.sycmd); }); });
+  }
+
+  UI.syncSymbols = function (a) {
+    AI.assets.ensure(a.doc);
+    var sy = document.getElementById('sy-list'), pt = document.getElementById('pt-list');
+    if (!sy || !pt) return;
+
+    sy.innerHTML = a.doc.symbols.length
+      ? a.doc.symbols.map(function (d, i) {
+        return '<button class="sw" data-sym="' + i + '" title="' + U.esc(d.name) + '">' +
+          '<span style="font-size:9px">' + U.esc(d.name.slice(0, 6)) + '</span></button>';
+      }).join('')
+      : '<div class="fx-empty">심볼 없음</div>';
+    U.qa('[data-sym]', sy).forEach(function (b) {
+      U.on(b, 'click', function () {
+        var d = a.doc.symbols[+b.dataset.sym];
+        a.history.begin('심볼 배치', a.doc);
+        var c = AI.viewT.toDoc(a, a.canvas.clientWidth / 2, a.canvas.clientHeight / 2);
+        AI.assets.placeSymbol(a, d.id, c.x, c.y);
+        a.history.commit();
+        a.invalidate();
+        UI.syncAll(a);
+      });
+      U.on(b, 'dblclick', function () {
+        var d = a.doc.symbols[+b.dataset.sym];
+        var v = prompt ? prompt('심볼 이름', d.name) : null;
+        if (v) { d.name = v; UI.syncSymbols(a); }
+      });
+    });
+
+    pt.innerHTML = a.doc.patterns.length
+      ? a.doc.patterns.map(function (d, i) {
+        return '<button class="sw" data-pat="' + i + '" title="' + U.esc(d.name) + '">' +
+          '<span style="font-size:9px">' + U.esc(d.name.slice(0, 6)) + '</span></button>';
+      }).join('')
+      : '<div class="fx-empty">패턴 없음</div>';
+    U.qa('[data-pat]', pt).forEach(function (b) {
+      U.on(b, 'click', function () {
+        var d = a.doc.patterns[+b.dataset.pat];
+        if (!a.sel.length) { U.toast('오브젝트를 먼저 선택하세요'); return; }
+        a.history.begin('패턴 칠', a.doc);
+        E.applyPaint(a, AI.assets.patternPaint(d), a.fillFocus ? 'fill' : 'stroke');
+        a.history.commit();
+        a.invalidate();
+        UI.syncAll(a);
+      });
+    });
+  };
+
   /* ================= 모양 (Appearance) ================= */
   function buildAppearance() {
     var p = document.getElementById('p-appearance');
@@ -1335,6 +1404,7 @@
     UI.syncStatus(a);
     UI.updateZoom(a);
     UI.syncIsolation(a);
+    UI.syncSymbols(a);
     UI.syncAppearance(a);
     UI.syncEffects(a);
     UI.syncArtboards(a);
