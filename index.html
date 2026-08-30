@@ -21,29 +21,31 @@
 
   <!-- ================= CONTROL BAR ================= -->
   <div id="controlbar">
-    <span id="ctl-toolname" class="ctl-label">선택</span>
+    <span id="ctl-toolname" class="ctl-name">선택</span>
     <span class="ctl-sep"></span>
 
     <span class="ctl-label">칠</span>
     <button class="swatch-btn" id="ctl-fill" title="칠 (Fill)"><i></i></button>
     <span class="ctl-label">획</span>
     <button class="swatch-btn" id="ctl-stroke" title="획 (Stroke)"><i></i></button>
-    <input id="ctl-stroke-w" class="ctl-input" list="stroke-widths" value="1" title="획 두께" style="width:64px">
+    <input id="ctl-stroke-w" class="ctl-input" list="stroke-widths" value="1" title="획 두께 (pt)" style="width:58px">
     <datalist id="stroke-widths"><option>0.25</option><option>0.5</option><option>0.75</option><option>1</option><option>1.5</option><option>2</option><option>3</option><option>4</option><option>6</option><option>8</option><option>12</option><option>16</option><option>24</option></datalist>
 
     <span class="ctl-sep"></span>
     <span class="ctl-label">불투명도</span>
-    <input id="ctl-opacity" class="ctl-input" type="number" min="0" max="100" step="1" value="100" style="width:56px">
+    <input id="ctl-opacity" class="ctl-input" type="number" min="0" max="100" step="1" value="100" style="width:50px">
     <span class="ctl-label">%</span>
 
     <span class="ctl-sep"></span>
     <span class="ctl-group" id="ctl-xywh">
       <span class="ctl-label">X</span><input class="ctl-input num" id="ctl-x" type="text" value="0">
       <span class="ctl-label">Y</span><input class="ctl-input num" id="ctl-y" type="text" value="0">
+      <span class="ctl-gap"></span>
       <span class="ctl-label">W</span><input class="ctl-input num" id="ctl-w" type="text" value="0">
-      <button class="mini-btn" id="ctl-lockratio" title="가로세로 비율 유지">⛓</button>
+      <button class="mini-btn" id="ctl-lockratio" title="가로세로 비율 유지"></button>
       <span class="ctl-label">H</span><input class="ctl-input num" id="ctl-h" type="text" value="0">
-      <span class="ctl-label">∠</span><input class="ctl-input num" id="ctl-a" type="text" value="0">
+      <span class="ctl-gap"></span>
+      <span class="ctl-label" title="회전 각도">∠</span><input class="ctl-input num" id="ctl-a" type="text" value="0">
     </span>
 
     <span class="ctl-spacer"></span>
@@ -69,77 +71,95 @@
       </div>
     </div>
 
-    <!-- Panels -->
+    <!-- Panels — 일러스트레이터처럼 탭으로 묶인 도크 -->
     <div id="panels">
-      <section class="panel" data-panel="properties">
-        <header><span>속성</span><b class="fold">▾</b></header>
-        <div class="body" id="p-properties"></div>
-      </section>
-
-      <section class="panel" data-panel="transform">
-        <header><span>변형</span><b class="fold">▾</b></header>
-        <div class="body" id="p-transform"></div>
-      </section>
-
-      <section class="panel" data-panel="type">
-        <header><span>문자</span><b class="fold">▾</b></header>
-        <div class="body" id="p-type"></div>
-      </section>
-
-      <section class="panel" data-panel="color">
-        <header><span>색상</span><b class="fold">▾</b></header>
-        <div class="body" id="p-color"></div>
-      </section>
-
-      <section class="panel" data-panel="gradient">
-        <header><span>그레이디언트</span><b class="fold">▾</b></header>
-        <div class="body" id="p-gradient"></div>
-      </section>
-
-      <section class="panel" data-panel="swatches">
-        <header><span>견본</span><b class="fold">▾</b></header>
-        <div class="body" id="p-swatches"></div>
-      </section>
-
-      <section class="panel" data-panel="stroke">
-        <header><span>획</span><b class="fold">▾</b></header>
-        <div class="body" id="p-stroke"></div>
-      </section>
-
-      <section class="panel" data-panel="align">
-        <header><span>정렬</span><b class="fold">▾</b></header>
-        <div class="body" id="p-align"></div>
-      </section>
-
-      <section class="panel" data-panel="pathfinder">
-        <header><span>패스파인더</span><b class="fold">▾</b></header>
-        <div class="body" id="p-pathfinder"></div>
-      </section>
-
-      <section class="panel" data-panel="symbols">
-        <header><span>심볼 · 패턴</span><b class="fold">▾</b></header>
-        <div class="body" id="p-symbols"></div>
-      </section>
-
-      <section class="panel" data-panel="appearance">
-        <header><span>모양</span><b class="fold">▾</b></header>
-        <div class="body" id="p-appearance"></div>
-      </section>
-
-      <section class="panel" data-panel="effects">
-        <header><span>효과 (모양)</span><b class="fold">▾</b></header>
-        <div class="body" id="p-effects"></div>
-      </section>
-
-      <section class="panel" data-panel="artboards">
-        <header><span>대지</span><b class="fold">▾</b></header>
-        <div class="body" id="p-artboards"></div>
-      </section>
-
-      <section class="panel" data-panel="layers">
-        <header><span>레이어</span><b class="fold">▾</b></header>
-        <div class="body" id="p-layers"></div>
-      </section>
+      <div class="pgroup" data-group="0">
+        <div class="pgroup-tabs">
+          <button class="ptab on" data-tab="properties">속성</button>
+          <button class="ptab" data-tab="transform">변형</button>
+          <b class="fold" title="패널 그룹 접기/펴기"></b>
+        </div>
+        <section class="panel" data-panel="properties">
+          <div class="body" id="p-properties"></div>
+        </section>
+        <section class="panel tab-hidden" data-panel="transform">
+          <div class="body" id="p-transform"></div>
+        </section>
+      </div>
+      <div class="pgroup" data-group="1">
+        <div class="pgroup-tabs">
+          <button class="ptab on" data-tab="color">색상</button>
+          <button class="ptab" data-tab="gradient">그레이디언트</button>
+          <button class="ptab" data-tab="swatches">견본</button>
+          <b class="fold" title="패널 그룹 접기/펴기"></b>
+        </div>
+        <section class="panel" data-panel="color">
+          <div class="body" id="p-color"></div>
+        </section>
+        <section class="panel tab-hidden" data-panel="gradient">
+          <div class="body" id="p-gradient"></div>
+        </section>
+        <section class="panel tab-hidden" data-panel="swatches">
+          <div class="body" id="p-swatches"></div>
+        </section>
+      </div>
+      <div class="pgroup" data-group="2">
+        <div class="pgroup-tabs">
+          <button class="ptab on" data-tab="stroke">획</button>
+          <button class="ptab" data-tab="type">문자</button>
+          <b class="fold" title="패널 그룹 접기/펴기"></b>
+        </div>
+        <section class="panel" data-panel="stroke">
+          <div class="body" id="p-stroke"></div>
+        </section>
+        <section class="panel tab-hidden" data-panel="type">
+          <div class="body" id="p-type"></div>
+        </section>
+      </div>
+      <div class="pgroup" data-group="3">
+        <div class="pgroup-tabs">
+          <button class="ptab on" data-tab="align">정렬</button>
+          <button class="ptab" data-tab="pathfinder">패스파인더</button>
+          <b class="fold" title="패널 그룹 접기/펴기"></b>
+        </div>
+        <section class="panel" data-panel="align">
+          <div class="body" id="p-align"></div>
+        </section>
+        <section class="panel tab-hidden" data-panel="pathfinder">
+          <div class="body" id="p-pathfinder"></div>
+        </section>
+      </div>
+      <div class="pgroup" data-group="4">
+        <div class="pgroup-tabs">
+          <button class="ptab on" data-tab="appearance">모양</button>
+          <button class="ptab" data-tab="effects">효과</button>
+          <button class="ptab" data-tab="symbols">심볼 · 패턴</button>
+          <b class="fold" title="패널 그룹 접기/펴기"></b>
+        </div>
+        <section class="panel" data-panel="appearance">
+          <div class="body" id="p-appearance"></div>
+        </section>
+        <section class="panel tab-hidden" data-panel="effects">
+          <div class="body" id="p-effects"></div>
+        </section>
+        <section class="panel tab-hidden" data-panel="symbols">
+          <div class="body" id="p-symbols"></div>
+        </section>
+      </div>
+      <div class="pgroup" data-group="5">
+        <div class="pgroup-tabs">
+          <button class="ptab on" data-tab="layers">레이어</button>
+          <button class="ptab" data-tab="artboards">대지</button>
+          <b class="fold" title="패널 그룹 접기/펴기"></b>
+        </div>
+        <section class="panel" data-panel="layers">
+          <div class="body" id="p-layers"></div>
+        </section>
+        <section class="panel tab-hidden" data-panel="artboards">
+          <div class="body" id="p-artboards"></div>
+        </section>
+      </div>
+    </div>
     </div>
   </div>
 
@@ -151,11 +171,11 @@
     </div>
     <span class="ctl-sep"></span>
     <span class="ab-nav">
-      <button class="ab-btn" id="ab-first" title="첫 대지">⏮</button>
-      <button class="ab-btn" id="ab-prev" title="이전 대지">◀</button>
+      <button class="ab-btn" id="ab-first" title="첫 대지"></button>
+      <button class="ab-btn" id="ab-prev" title="이전 대지 (Alt+PageUp)"></button>
       <span id="st-artboard">대지 1</span>
-      <button class="ab-btn" id="ab-next" title="다음 대지">▶</button>
-      <button class="ab-btn" id="ab-last" title="마지막 대지">⏭</button>
+      <button class="ab-btn" id="ab-next" title="다음 대지 (Alt+PageDown)"></button>
+      <button class="ab-btn" id="ab-last" title="마지막 대지"></button>
     </span>
     <span class="ctl-sep"></span>
     <span id="st-hint">선택 도구</span>
@@ -199,6 +219,7 @@
 <script src="src/ui/dialog.js"></script>
 <script src="src/ui/dialogs.js"></script>
 <script src="src/ui/menus.js"></script>
+<script src="src/ui/icons.js"></script>
 <script src="src/ui/panels.js"></script>
 <script src="src/ui/layers.js"></script>
 <script src="src/ui/colorui.js"></script>

@@ -532,6 +532,34 @@
     a.resize();
   });
 
+  /* 윈도우 메뉴에서 패널을 이름으로 꺼낸다 (일러스트레이터와 같은 구성) */
+  C.PANELS = [
+    ['properties', '속성'], ['transform', '변형'],
+    ['color', '색상'], ['gradient', '그레이디언트'], ['swatches', '견본'],
+    ['stroke', '획'], ['type', '문자'],
+    ['align', '정렬'], ['pathfinder', '패스파인더'],
+    ['appearance', '모양'], ['effects', '효과'], ['symbols', '심볼 · 패턴'],
+    ['layers', '레이어'], ['artboards', '대지']
+  ];
+  C.PANELS.forEach(function (o) {
+    def('panel_' + o[0], o[1], null, function (a) {
+      if (a.panelsHidden || a.sidePanelsHidden) {
+        a.panelsHidden = a.sidePanelsHidden = false;
+        document.getElementById('panels').style.display = '';
+        document.getElementById('toolbar').style.display = '';
+        a.resize();
+      }
+      if (AI.ui.showPanel) AI.ui.showPanel(o[0]);
+    }, {
+      /* 지금 앞에 나와 있는 패널에 체크 표시 */
+      checked: function () {
+        var sec = document.querySelector('.panel[data-panel="' + o[0] + '"]');
+        return !!sec && !sec.classList.contains('tab-hidden') &&
+          !(sec.parentNode && sec.parentNode.classList.contains('collapsed'));
+      }
+    });
+  });
+
   /* ================= 칠 / 획 단축키 ================= */
   def('swapFillStroke', '칠/획 교체', 'Shift+X', function (a) {
     var f = a.fill, s = a.stroke;
@@ -646,7 +674,8 @@
       ]
     },
     {
-      title: '윈도우', items: ['togglePanels', 'togglePanelsKeepTools']
+      title: '윈도우', items: ['togglePanels', 'togglePanelsKeepTools', '-'].concat(
+        C.PANELS.map(function (o) { return 'panel_' + o[0]; }))
     },
     {
       title: '대지', items: [

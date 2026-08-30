@@ -304,7 +304,8 @@ await check('선택하면 컨텍스트 바가 나타나고 넛지가 동작', as
     await new Promise(s => setTimeout(s, 50));
     const shown = document.body.classList.contains('has-sel');
     const x0 = AI.render.selectionBounds(AI.app, true).x;
-    [...document.querySelectorAll('#m-context .m-chip')].find(c => c.textContent === '▶').click();
+    /* 넛지 칩은 이제 아이콘이라 title 로 찾는다 */
+    document.querySelector('#m-context .m-chip[title="오른쪽으로 이동"]').click();
     await new Promise(s => setTimeout(s, 50));
     const x1 = AI.render.selectionBounds(AI.app, true).x;
     AI.commands.run('deselectAll');

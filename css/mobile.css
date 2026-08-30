@@ -114,12 +114,16 @@ body.mobile.has-sel #m-context{ display:flex; }
 body.mobile.has-sel #main{ padding-bottom:calc(var(--m-dock) + var(--m-context) + var(--sab)); }
 .m-chip{
   flex:none; height:36px; min-width:var(--tap); padding:0 12px; border-radius:18px;
-  display:inline-flex; align-items:center; gap:6px; white-space:nowrap;
+  display:inline-flex; align-items:center; justify-content:center; gap:6px; white-space:nowrap;
   background:#404040; border:1px solid #4d4d4d; color:var(--txt); font-size:12px; cursor:pointer;
+  transition:background .08s linear;
 }
-.m-chip:active{ background:#4d4d4d; }
-.m-chip .dotc{ width:14px; height:14px; border-radius:3px; border:1px solid #777; }
-.m-chip.danger{ color:#ff9a9a; }
+.m-chip:active{ background:#565656; }
+.m-chip.ico{ padding:0; width:var(--tap); }
+.m-chip .dotc{ width:14px; height:14px; border-radius:3px; border:1px solid #777; flex:none; }
+.m-chip .ic{ stroke:currentColor; fill:none; stroke-width:1.4; stroke-linecap:round; stroke-linejoin:round; }
+.m-chip.danger{ color:#ff9a9a; border-color:#5d4040; }
+.m-chip.danger:active{ background:#6d3838; color:#fff; }
 .m-sep{ flex:none; width:1px; height:22px; background:var(--line2); }
 
 /* ---------------- 바텀 시트 ---------------- */

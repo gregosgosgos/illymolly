@@ -28,11 +28,11 @@
 
     var tools = U.el('div', 'lyr-tools');
     tools.innerHTML =
-      '<button class="mini-btn" id="ly-new" title="새 레이어">＋</button>' +
-      '<button class="mini-btn" id="ly-sub" title="새 하위 레이어">＋▸</button>' +
-      '<button class="mini-btn" id="ly-merge" title="선택한 레이어 병합">⊻</button>' +
-      '<button class="mini-btn" id="ly-dup" title="선택 항목 복제">⧉</button>' +
-      '<button class="mini-btn" id="ly-del" title="삭제">🗑</button>';
+      '<button class="mini-btn" id="ly-new" title="새 레이어">' + UI.icon('newLayer', 13) + '</button>' +
+      '<button class="mini-btn" id="ly-sub" title="새 하위 레이어">' + UI.icon('newSublayer', 13) + '</button>' +
+      '<button class="mini-btn" id="ly-merge" title="선택한 레이어 병합">' + UI.icon('merge', 13) + '</button>' +
+      '<button class="mini-btn" id="ly-dup" title="선택 항목 복제">' + UI.icon('duplicate', 13) + '</button>' +
+      '<button class="mini-btn danger" id="ly-del" title="삭제">' + UI.icon('trash', 13) + '</button>';
     p.appendChild(tools);
 
     U.on(U.q('#ly-sub', tools), 'click', function () {
@@ -75,12 +75,14 @@
     row.draggable = true;
     var anySel = app.sel.some(function (it) { var l = Model.locate(app.doc, it); return l && l.layer === ly; });
     row.innerHTML =
-      '<span class="eye' + (ly.visible ? '' : ' off') + '">👁</span>' +
-      '<span class="lock' + (ly.locked ? '' : ' off') + '">🔒</span>' +
-      '<span class="tw">' + (ly.collapsed ? '▸' : '▾') + '</span>' +
+      '<span class="eye' + (ly.visible ? '' : ' off') + '" title="표시 / 숨기기">' +
+      UI.icon(ly.visible ? 'eye' : 'eyeOff', 13) + '</span>' +
+      '<span class="lock' + (ly.locked ? '' : ' off') + '" title="잠금 / 잠금 해제">' +
+      UI.icon(ly.locked ? 'lock' : 'unlock', 13) + '</span>' +
+      '<span class="tw" title="펼치기 / 접기">' + UI.icon(ly.collapsed ? 'caretRight' : 'caretDown', 11) + '</span>' +
       '<span class="lyr-color" style="background:' + ly.color + '"></span>' +
       '<span class="nm">' + esc(ly.name) + '</span>' +
-      '<span class="target" title="레이어 전체 선택">' + (anySel ? '◉' : '○') + '</span>' +
+      '<span class="target" title="레이어 전체 선택">' + UI.icon(anySel ? 'targetOn' : 'target', 12) + '</span>' +
       '<span class="selsq" style="' + (anySel ? 'background:' + ly.color + ';border-color:' + ly.color : '') + '"></span>';
     U.on(U.q('.eye', row), 'click', function (e) { e.stopPropagation(); ly.visible = !ly.visible; app.invalidate(); UI.buildLayers(app); });
     U.on(U.q('.lock', row), 'click', function (e) { e.stopPropagation(); ly.locked = !ly.locked; UI.buildLayers(app); });
@@ -124,12 +126,15 @@
     var selected = AI.sel.has(app, it);
     var col = it.isLayer ? (it.color || '#2d8ceb') : ((layer && layer.color) || '#2d8ceb');
     row.innerHTML =
-      '<span class="eye' + (it.visible ? '' : ' off') + '">👁</span>' +
-      '<span class="lock' + (it.locked ? '' : ' off') + '">🔒</span>' +
-      (isGroup ? '<span class="tw">' + (it.collapsed ? '▸' : '▾') + '</span>' : '<span class="tw"></span>') +
+      '<span class="eye' + (it.visible ? '' : ' off') + '" title="표시 / 숨기기">' +
+      UI.icon(it.visible ? 'eye' : 'eyeOff', 13) + '</span>' +
+      '<span class="lock' + (it.locked ? '' : ' off') + '" title="잠금 / 잠금 해제">' +
+      UI.icon(it.locked ? 'lock' : 'unlock', 13) + '</span>' +
+      (isGroup ? '<span class="tw" title="펼치기 / 접기">' + UI.icon(it.collapsed ? 'caretRight' : 'caretDown', 11) + '</span>'
+        : '<span class="tw"></span>') +
       (it.isLayer ? '<span class="lyr-color" style="background:' + col + '"></span>' : '') +
       '<span class="nm">' + esc(itemLabel(it)) + '</span>' +
-      '<span class="target" title="이 항목을 타겟으로 선택">' + (selected ? '◉' : '○') + '</span>' +
+      '<span class="target" title="이 항목을 타겟으로 선택">' + UI.icon(selected ? 'targetOn' : 'target', 12) + '</span>' +
       '<span class="selsq" style="' + (selected ? 'background:' + col + ';border-color:' + col : '') + '"></span>';
     U.on(U.q('.eye', row), 'click', function (e) { e.stopPropagation(); it.visible = !it.visible; app.invalidate(); UI.buildLayers(app); });
     U.on(U.q('.lock', row), 'click', function (e) { e.stopPropagation(); it.locked = !it.locked; UI.buildLayers(app); });

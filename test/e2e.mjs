@@ -21,6 +21,8 @@ const box = await (await page.$('#view')).boundingBox();
 const at = (fx, fy) => ({ x: box.x + box.width * fx, y: box.y + box.height * fy });
 const ev = f => page.evaluate(f);
 const count = () => ev(() => AI.app.doc.layers.reduce((n, l) => n + l.children.length, 0));
+/* 패널은 탭으로 묶여 있으므로 만지기 전에 앞으로 꺼낸다 (사용자가 탭을 누르는 것과 같다) */
+const showPanel = name => page.evaluate(n => AI.ui.showPanel(n), name);
 
 async function drag(a, b, mods = []) {
   for (const m of mods) await page.keyboard.down(m);
@@ -288,6 +290,7 @@ await check('메뉴 / 컨텍스트 메뉴', async () => {
 await check('레이어 패널 · 견본 패널', async () => {
   const rows = await page.evaluate(() => document.querySelectorAll('#p-layers .lyr').length);
   await ev(() => AI.sel.set(AI.app, [AI.app.doc.layers[0].children[0]]));
+  await showPanel('swatches');
   await page.evaluate(() => document.querySelectorAll('#p-swatches .sw')[5].click());
   const c = await ev(() => AI.app.sel[0].fill.color);
   if (rows < 2 || !c) throw new Error(`rows=${rows} color=${c}`);
@@ -367,6 +370,7 @@ await check('문자 패널로 글꼴·크기·정렬 변경', async () => {
     AI.sel.set(app, [t]);
     AI.ui.syncAll(app);
   });
+  await showPanel('type');
   await page.selectOption('#ty-font', 'Georgia, serif');
   await page.fill('#ty-size', '48');
   await page.press('#ty-size', 'Enter');
@@ -387,6 +391,8 @@ await check('그레이디언트 패널 정지점 추가·이동·반전', async 
     app.fillFocus = true;
     AI.ui.syncAll(app);
   });
+  await showPanel('gradient');
+  await page.waitForTimeout(50);
   const bar = await (await page.$('#gr-bar')).boundingBox();
   await page.mouse.click(bar.x + bar.width * 0.5, bar.y + bar.height / 2);
   await page.waitForTimeout(60);
@@ -602,6 +608,7 @@ await check('변형 패널 기준점 (오른쪽 아래 고정 크기 조절)', a
     AI.sel.set(app, [r]);
     AI.ui.syncAll(app);
   });
+  await showPanel('transform');
   await page.click('#tf-ref .rp[data-i="8"]');          /* 오른쪽 아래 */
   await page.fill('#tf-w', '100');
   await page.press('#tf-w', 'Enter');
@@ -928,7 +935,7 @@ await check('효과 > 흐림 효과 > 가우시안 흐림 — 미리 보기 · �
       grew: Math.round((vis.x2 - vis.x) - (geo.x2 - geo.x)),
       geoW: Math.round(geo.x2 - geo.x),
       label: AI.effects.label(AI.effects.list(it)[0]),
-      panel: document.querySelectorAll('#fx-list .fx-row').length
+      panel: document.querySelectorAll('#fx-list .list-row').length
     };
   });
   if (title !== '가우시안 흐림') throw new Error('제목=' + title);
@@ -966,8 +973,9 @@ await check('마지막 효과 적용 (Ctrl+Shift+E) · 효과 패널 삭제', as
   await ev(() => AI.commands.run('fxLast'));
   await page.waitForTimeout(60);
   const applied = await ev(() => AI.effects.list(AI.app.sel[0]).map(e => e.type).join(','));
-  await page.waitForSelector('#fx-list .fx-del');
-  await page.click('#fx-list .fx-del');
+  await showPanel('effects');
+  await page.waitForSelector('#fx-list [data-del]');
+  await page.click('#fx-list [data-del]');
   await page.waitForTimeout(80);
   const left = await ev(() => AI.effects.list(AI.app.sel[0]).length);
   const undone = await ev(() => { AI.commands.run('undo'); return AI.effects.list(AI.app.sel[0]).length; });
@@ -996,12 +1004,13 @@ await check('획 패널 화살표 — 시작/끝/비율 · 뒤바꾸기 · SVG m
     AI.sel.set(app, [l]);
     AI.ui.syncAll(app);
   });
+  await showPanel('stroke');
   await page.selectOption('#sk-a2', 'arrow');
   await page.waitForTimeout(60);
   await page.fill('#sk-ascale', '150');
   await page.press('#sk-ascale', 'Enter');
   await page.waitForTimeout(60);
-  await page.click('#sk-aswap');
+  await page.click('#p-stroke [data-swap]');
   await page.waitForTimeout(60);
   const r = await ev(() => {
     const st = AI.app.sel[0].stroke;
@@ -1128,12 +1137,13 @@ await check('대지 패널 — 목록 · 추가 · 선택에 맞추기 · 재정
     AI.sel.set(app, [r]);
     AI.ui.syncAll(app);
   });
-  const rows0 = await ev(() => document.querySelectorAll('#p-artboards .ab-row').length);
-  await page.click('#p-artboards [data-abcmd="newArtboard"]');
+  await showPanel('artboards');
+  const rows0 = await ev(() => document.querySelectorAll('#p-artboards .list-row').length);
+  await page.click('#p-artboards [data-cmd="newArtboard"]');
   await page.waitForTimeout(80);
-  const rows1 = await ev(() => document.querySelectorAll('#p-artboards .ab-row').length);
+  const rows1 = await ev(() => document.querySelectorAll('#p-artboards .list-row').length);
   await ev(() => { AI.sel.set(AI.app, [AI.app.doc.layers[0].children[0]]); });
-  await page.click('#p-artboards [data-abcmd="fitArtboardToSelection"]');
+  await page.click('#p-artboards [data-cmd="fitArtboardToSelection"]');
   await page.waitForTimeout(80);
   const fit = await ev(() => {
     const ab = AI.app.doc.artboards[AI.app.doc.activeArtboard];
@@ -1141,7 +1151,7 @@ await check('대지 패널 — 목록 · 추가 · 선택에 맞추기 · 재정
   });
   await ev(() => { AI.edit.rearrangeArtboards(AI.app, 2, 20); });
   const arranged = await ev(() => AI.app.doc.artboards.map(a => Math.round(a.x) + ',' + Math.round(a.y)).join(' '));
-  const active = await ev(() => document.querySelectorAll('#p-artboards .ab-row.on').length);
+  const active = await ev(() => document.querySelectorAll('#p-artboards .list-row.on').length);
   if (rows0 !== 1 || rows1 !== 2) throw new Error(`행 ${rows0} → ${rows1}`);
   if (fit !== '400,400,120,60') throw new Error('맞추기=' + fit);
   if (!/^0,0 /.test(arranged)) throw new Error('재정렬=' + arranged);
@@ -1315,13 +1325,14 @@ await check('모양 패널 — 겹 추가 · 순서 · 겹 단위 색 적용', a
     AI.sel.set(app, [r]);
     AI.ui.syncAll(app);
   });
+  await showPanel('appearance');
   await page.click('#p-appearance [data-apcmd="addStroke"]');
   await page.waitForTimeout(60);
   await page.click('#p-appearance [data-apcmd="addStroke"]');
   await page.waitForTimeout(60);
-  const rows = await ev(() => document.querySelectorAll('#p-appearance .ap-row').length);
+  const rows = await ev(() => document.querySelectorAll('#p-appearance .list-row').length);
   /* 위쪽 행 = 스택의 끝 */
-  await page.click('#p-appearance .ap-row');
+  await page.click('#p-appearance .list-row');
   await page.waitForTimeout(60);
   const picked = await ev(() => AI.app.apIndex);
   await ev(() => { AI.app.history.begin('t', AI.app.doc); AI.edit.applyPaint(AI.app, AI.color.solid('#ff0000'), 'stroke'); AI.app.history.commit(); });
@@ -1423,15 +1434,17 @@ await check('그레이디언트 주석자 — 손잡이 드래그로 각도·길
     app.invalidate();
   });
   await page.waitForTimeout(60);
+  /* 패널 레이아웃이 바뀌면 캔버스 위치도 달라지므로 그때그때 다시 잰다 */
+  const gbox = await (await page.$('#view')).boundingBox();
   /* 캔버스를 가로질러 그으면 시작·끝점이 그대로 기록된다 */
-  await drag({ x: box.x + 60, y: box.y + 60 }, { x: box.x + 240, y: box.y + 240 });
+  await drag({ x: gbox.x + 60, y: gbox.y + 60 }, { x: gbox.x + 240, y: gbox.y + 240 });
   await page.waitForTimeout(80);
   const g = await ev(() => {
     const f = AI.app.sel[0].fill;
     return { p0: f.p0 && [Math.round(f.p0.x), Math.round(f.p0.y)].join(','), p1: f.p1 && [Math.round(f.p1.x), Math.round(f.p1.y)].join(','), angle: Math.round(f.angle) };
   });
   /* 끝점 손잡이를 잡아 옮긴다 */
-  await drag({ x: box.x + 240, y: box.y + 240 }, { x: box.x + 240, y: box.y + 60 });
+  await drag({ x: gbox.x + 240, y: gbox.y + 240 }, { x: gbox.x + 240, y: gbox.y + 60 });
   await page.waitForTimeout(80);
   const g2 = await ev(() => {
     const f = AI.app.sel[0].fill;
@@ -1687,6 +1700,141 @@ await check('눈금자 원점 드래그 · 하위 레이어 · 레이어 부분 
   if (r.layers !== 2) throw new Error('병합 후 레이어=' + r.layers + ' (' + r.names + ')');
   if (r.mergedItems !== 2) throw new Error('병합 항목=' + r.mergedItems);
   return `원점 ${r.origin} · 하위 레이어 표시 · 3→${r.layers}레이어(항목 ${r.mergedItems})`;
+});
+
+/* ---------------- UI 구조 · 버튼 상태 ---------------- */
+
+await check('패널 탭 도크 — 전환 · 접기 · 윈도우 메뉴', async () => {
+  const r0 = await ev(() => {
+    const groups = document.querySelectorAll('.pgroup').length;
+    const panels = document.querySelectorAll('.panel').length;
+    /* 그룹마다 정확히 하나만 보인다 */
+    const bad = [...document.querySelectorAll('.pgroup')].filter(g =>
+      [...g.querySelectorAll('.panel')].filter(p => !p.classList.contains('tab-hidden')).length !== 1);
+    return { groups, panels, badGroups: bad.length };
+  });
+  /* 탭을 눌러 전환 */
+  await page.click('.pgroup[data-group="1"] .ptab[data-tab="swatches"]');
+  await page.waitForTimeout(50);
+  const r1 = await ev(() => ({
+    shown: !document.querySelector('.panel[data-panel="swatches"]').classList.contains('tab-hidden'),
+    hidden: document.querySelector('.panel[data-panel="color"]').classList.contains('tab-hidden'),
+    tabOn: document.querySelector('.ptab[data-tab="swatches"]').classList.contains('on')
+  }));
+  /* 그룹 접기 */
+  await page.click('.pgroup[data-group="1"] .fold');
+  await page.waitForTimeout(50);
+  const collapsed = await ev(() => document.querySelector('.pgroup[data-group="1"]').classList.contains('collapsed'));
+  /* 윈도우 메뉴로 패널 꺼내기 — 접힌 그룹도 펴진다 */
+  const r2 = await ev(() => {
+    AI.commands.run('panel_gradient');
+    const g = document.querySelector('.pgroup[data-group="1"]');
+    return {
+      reopened: !g.classList.contains('collapsed'),
+      shown: !document.querySelector('.panel[data-panel="gradient"]').classList.contains('tab-hidden'),
+      checked: AI.commands.defs.panel_gradient.checked(AI.app),
+      otherChecked: AI.commands.defs.panel_swatches.checked(AI.app)
+    };
+  });
+  if (r0.groups !== 6) throw new Error('그룹 수=' + r0.groups);
+  if (r0.panels !== 14) throw new Error('패널 수=' + r0.panels);
+  if (r0.badGroups) throw new Error('한 번에 하나만 보여야 함 — 어긋난 그룹 ' + r0.badGroups);
+  if (!r1.shown || !r1.hidden || !r1.tabOn) throw new Error('탭 전환=' + JSON.stringify(r1));
+  if (!collapsed) throw new Error('접기 실패');
+  if (!r2.reopened || !r2.shown) throw new Error('윈도우 메뉴로 꺼내기 실패=' + JSON.stringify(r2));
+  if (!r2.checked || r2.otherChecked) throw new Error('체크 표시가 활성 탭을 따르지 않음');
+  return `그룹 ${r0.groups}개 · 패널 ${r0.panels}개 · 탭 전환 · 접기 · 윈도우 메뉴 체크`;
+});
+
+await check('버튼 — 아이콘은 SVG 하나로, 쓸 수 없으면 실제로 비활성', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 400));
+    AI.sel.clear(app);
+    AI.ui.syncAll(app);
+  });
+  const off = await ev(() => ({
+    pf: [...document.querySelectorAll('#p-pathfinder [data-pf]')].every(b => b.hasAttribute('disabled')),
+    align: document.querySelector('#p-align [data-cmd="alignLeft"]').hasAttribute('disabled'),
+    dist: document.querySelector('#p-align [data-cmd="distH"]').hasAttribute('disabled')
+  }));
+  /* 2개 선택 → 정렬은 켜지고 배분은 아직 꺼져 있다 (3개 이상 필요) */
+  await ev(() => {
+    const app = AI.app, Mo = AI.model;
+    const a = Mo.newRect(10, 10, 40, 40, 0), b = Mo.newRect(80, 10, 40, 40, 0);
+    app.doc.layers[0].children.push(a, b);
+    AI.sel.set(app, [a, b]);
+    AI.ui.syncAll(app);
+  });
+  const two = await ev(() => ({
+    pf: [...document.querySelectorAll('#p-pathfinder [data-pf]')].every(b => !b.hasAttribute('disabled')),
+    align: document.querySelector('#p-align [data-cmd="alignLeft"]').hasAttribute('disabled'),
+    dist: document.querySelector('#p-align [data-cmd="distH"]').hasAttribute('disabled')
+  }));
+  await ev(() => {
+    const app = AI.app, Mo = AI.model;
+    const c = Mo.newRect(150, 10, 40, 40, 0);
+    app.doc.layers[0].children.push(c);
+    AI.sel.set(app, app.doc.layers[0].children.slice());
+    AI.ui.syncAll(app);
+  });
+  const three = await ev(() => document.querySelector('#p-align [data-cmd="distH"]').hasAttribute('disabled'));
+
+  /* 패널 버튼에는 글리프 대신 SVG 아이콘만 들어간다 */
+  const glyphs = await ev(() => {
+    const bad = [];
+    document.querySelectorAll('#panels .btn, #panels .mini-btn, #panels .seg-b, .ab-btn, #ctl-lockratio')
+      .forEach(b => {
+        const txt = (b.textContent || '').trim();
+        /* 라벨 없는 버튼이라면 SVG 가 있어야 하고, 라벨이 있으면 한글/영문이어야 한다 */
+        if (!txt && !b.querySelector('svg')) bad.push(b.className + ' (빈 버튼)');
+        if (/[←-⇿─-➿＋\uD83C-\uDBFF]/.test(txt)) bad.push(b.className + ': ' + txt);
+      });
+    return bad;
+  });
+  if (!off.pf || !off.align) throw new Error('선택 없을 때 비활성이 아님=' + JSON.stringify(off));
+  if (two.pf !== true) throw new Error('2개 선택 시 패스파인더가 켜지지 않음');
+  if (two.align) throw new Error('2개 선택 시 정렬이 꺼져 있음');
+  if (!two.dist) throw new Error('2개 선택 시 배분은 아직 꺼져 있어야 함');
+  if (three) throw new Error('3개 선택 시 배분이 켜지지 않음');
+  if (glyphs.length) throw new Error('글리프 버튼이 남아 있음: ' + glyphs.join(', '));
+  return '선택 0→2→3 에 따라 비활성 전환 · 글리프 버튼 0개';
+});
+
+await check('세그먼트 컨트롤이 현재 획 설정을 비춘다', async () => {
+  await showPanel('stroke');
+  await ev(() => {
+    const app = AI.app, Mo = AI.model, Col = AI.color;
+    app.setDoc(Mo.newDoc(400, 400));
+    const r = Mo.newRect(50, 50, 100, 100, 0);
+    r.fill = Col.none();
+    r.stroke = Mo.mkStroke('#000000', 6);
+    r.stroke.cap = 'round';
+    r.stroke.join = 'bevel';
+    r.stroke.align = 'inside';
+    app.doc.layers[0].children.push(r);
+    AI.sel.set(app, [r]);
+    AI.ui.syncAll(app);
+  });
+  const on = await ev(() => ({
+    cap: document.querySelector('#p-stroke .seg-b[data-cap].on').dataset.cap,
+    join: document.querySelector('#p-stroke .seg-b[data-join].on').dataset.join,
+    align: document.querySelector('#p-stroke .seg-b[data-salign].on').dataset.salign,
+    /* 세그먼트는 하나씩만 켜져 있어야 한다 */
+    counts: ['cap', 'join', 'salign'].map(k =>
+      document.querySelectorAll('#p-stroke .seg-b[data-' + k + '].on').length).join(',')
+  }));
+  /* 세그먼트를 눌러 값을 바꾼다 */
+  await page.click('#p-stroke .seg-b[data-salign="outside"]');
+  await page.waitForTimeout(60);
+  const after = await ev(() => ({
+    model: AI.app.sel[0].stroke.align,
+    ui: document.querySelector('#p-stroke .seg-b[data-salign].on').dataset.salign
+  }));
+  if (on.cap !== 'round' || on.join !== 'bevel' || on.align !== 'inside') throw new Error('반영 실패=' + JSON.stringify(on));
+  if (on.counts !== '1,1,1') throw new Error('세그먼트가 여러 개 켜짐=' + on.counts);
+  if (after.model !== 'outside' || after.ui !== 'outside') throw new Error('클릭 반영 실패=' + JSON.stringify(after));
+  return `cap ${on.cap} · join ${on.join} · align ${on.align} → 클릭으로 ${after.model}`;
 });
 
 /* ---------------- 결과 ---------------- */

@@ -427,9 +427,13 @@
 
   /* ---------------- 선택 컨텍스트 바 ---------------- */
   function chip(label, opts) {
-    var b = U.el('button', 'm-chip' + (opts && opts.danger ? ' danger' : ''));
-    b.innerHTML = (opts && opts.dot ? '<span class="dotc" style="background:' + opts.dot + '"></span>' : '') + label;
-    if (opts && opts.run) U.on(b, 'click', opts.run);
+    opts = opts || {};
+    var b = U.el('button', 'm-chip' + (opts.danger ? ' danger' : '') + (opts.icon && !label ? ' ico' : ''));
+    var head = opts.dot ? '<span class="dotc" style="background:' + opts.dot + '"></span>'
+      : (opts.icon && AI.ui.icon ? AI.ui.icon(opts.icon, 15) : '');
+    b.innerHTML = head + (label ? '<span>' + U.esc(label) + '</span>' : '');
+    if (opts.title) b.title = opts.title;
+    if (opts.run) U.on(b, 'click', opts.run);
     return b;
   }
 
@@ -450,16 +454,16 @@
       bar.appendChild(chip('문자', { run: function () { openPanel('type', '문자'); } }));
     }
     bar.appendChild(chip('변형', { run: function () { openPanel('transform', '변형'); } }));
-    bar.appendChild(chip('효과', { run: function () { openPanel('effects', '효과 (모양)'); } }));
+    bar.appendChild(chip('효과', { icon: 'fxGlow', run: function () { openPanel('effects', '효과'); } }));
     if (app.sel.some(function (x) { return x.type === 'image'; })) {
-      bar.appendChild(chip('이미지 추적', { run: function () { C.run('imageTrace'); } }));
+      bar.appendChild(chip('이미지 추적', { icon: 'recolor', run: function () { C.run('imageTrace'); } }));
       bar.appendChild(chip('자르기', { run: function () { C.run('cropImage'); Mob.sync(); } }));
     }
     bar.appendChild(U.el('span', 'm-sep'));
-    bar.appendChild(chip('◀', { run: function () { C.nudge(app, -nudgeStep(), 0); } }));
-    bar.appendChild(chip('▶', { run: function () { C.nudge(app, nudgeStep(), 0); } }));
-    bar.appendChild(chip('▲', { run: function () { C.nudge(app, 0, -nudgeStep()); } }));
-    bar.appendChild(chip('▼', { run: function () { C.nudge(app, 0, nudgeStep()); } }));
+    bar.appendChild(chip('', { icon: 'navPrev', title: '왼쪽으로 이동', run: function () { C.nudge(app, -nudgeStep(), 0); } }));
+    bar.appendChild(chip('', { icon: 'navNext', title: '오른쪽으로 이동', run: function () { C.nudge(app, nudgeStep(), 0); } }));
+    bar.appendChild(chip('', { icon: 'forward', title: '위로 이동', run: function () { C.nudge(app, 0, -nudgeStep()); } }));
+    bar.appendChild(chip('', { icon: 'backward', title: '아래로 이동', run: function () { C.nudge(app, 0, nudgeStep()); } }));
     bar.appendChild(U.el('span', 'm-sep'));
     if (app.sel.length > 1) {
       bar.appendChild(chip('그룹', { run: function () { C.run('group'); Mob.sync(); } }));
@@ -469,10 +473,10 @@
     if (app.sel.some(function (x) { return x.type === 'group'; })) {
       bar.appendChild(chip('그룹 풀기', { run: function () { C.run('ungroup'); Mob.sync(); } }));
     }
-    bar.appendChild(chip('맨 앞', { run: function () { C.run('bringToFront'); } }));
-    bar.appendChild(chip('맨 뒤', { run: function () { C.run('sendToBack'); } }));
-    bar.appendChild(chip('복제', { run: function () { C.run('duplicate'); Mob.sync(); } }));
-    bar.appendChild(chip('삭제', { danger: true, run: function () { C.run('clear'); Mob.sync(); } }));
+    bar.appendChild(chip('맨 앞', { icon: 'toFront', run: function () { C.run('bringToFront'); } }));
+    bar.appendChild(chip('맨 뒤', { icon: 'toBack', run: function () { C.run('sendToBack'); } }));
+    bar.appendChild(chip('복제', { icon: 'duplicate', run: function () { C.run('duplicate'); Mob.sync(); } }));
+    bar.appendChild(chip('삭제', { icon: 'trash', danger: true, run: function () { C.run('clear'); Mob.sync(); } }));
   }
   function nudgeStep() { return (app.prefs.keyIncrement || 1); }
 

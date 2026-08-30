@@ -58,6 +58,14 @@
     ['zoom', 'hand']
   ];
 
+  /* 키맵 표에서 이 도구의 단축키를 되찾는다 (Shift 조합까지 정확히) */
+  function toolKey(id) {
+    var K = AI.keymap;
+    if (!K || !K.TOOLKEYS) return '';
+    for (var k in K.TOOLKEYS) if (K.TOOLKEYS[k] === id) return k;
+    return '';
+  }
+
   T.buildToolbar = function (app) {
     var bar = document.getElementById('toolbar');
     bar.innerHTML = '';
@@ -68,7 +76,7 @@
       var el = U.el('div', 'tool');
       el.dataset.tool = current;
       el.dataset.slot = si;
-      el.title = t.name + (t.key ? '  (' + t.key.toUpperCase() + ')' : '');
+      el.title = t.name + (toolKey(current) ? '  (' + toolKey(current) + ')' : '');
       el.innerHTML = '<svg viewBox="0 0 16 16">' + (T.icons[current] || '<rect x="3" y="3" width="10" height="10"/>') + '</svg>' +
         (slot.length > 1 ? '<span class="flyarrow"></span>' : '');
       if (app.tool === current) el.classList.add('active');
@@ -92,8 +100,11 @@
       '<div class="fs-box">' +
       '<div class="fs-fill" id="fs-fill" title="칠 (X 로 전환)"></div>' +
       '<div class="fs-stroke" id="fs-stroke" title="획"></div>' +
-      '<div class="fs-swap" id="fs-swap" title="칠/획 교체 (Shift+X)">⇄</div>' +
-      '<div class="fs-def" id="fs-def" title="기본값 (D)">◧</div>' +
+      '<div class="fs-swap" id="fs-swap" title="칠 / 획 교체 (Shift+X)">' +
+      '<svg viewBox="0 0 16 16" class="ic"><path d="M4.5 11.5V4.5h5M7 2 4.5 4.5 7 7M11.5 4.5v7h-5M9 14l2.5-2.5L9 9"/></svg></div>' +
+      '<div class="fs-def" id="fs-def" title="기본 칠 / 획 (D)">' +
+      '<svg viewBox="0 0 16 16" class="ic"><rect x="2.5" y="2.5" width="8" height="8" fill="#fff" stroke="#8a8a8a"/>' +
+      '<rect x="6.5" y="6.5" width="7" height="7" fill="#1c1c1c" stroke="#8a8a8a"/></svg></div>' +
       '</div>';
     bar.appendChild(fs);
 

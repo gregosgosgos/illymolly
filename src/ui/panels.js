@@ -12,6 +12,7 @@
   UI.init = function (a) {
     app = a;
     UI.buildMenus(a);
+    fillStaticIcons();
     buildControlBar();
     buildProperties();
     buildTransform();
@@ -31,11 +32,44 @@
     UI.syncAll(a);
   };
 
-  function bindPanelFolding() {
-    U.qa('.panel > header').forEach(function (h) {
-      U.on(h, 'click', function () { h.parentNode.classList.toggle('collapsed'); });
+  /* index.html 에 미리 놓인 버튼들에 아이콘을 채워 넣는다
+     (마크업에는 글리프를 두지 않아 OS 별 렌더 차이를 없앤다) */
+  function fillStaticIcons() {
+    var map = {
+      'ctl-lockratio': 'link',
+      'ab-first': 'navFirst', 'ab-prev': 'navPrev', 'ab-next': 'navNext', 'ab-last': 'navLast'
+    };
+    Object.keys(map).forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el && !el.firstChild) el.innerHTML = UI.icon(map[id], 12);
     });
   }
+
+  /* 패널 그룹: 탭 전환 + 그룹 접기 */
+  function bindPanelFolding() {
+    U.qa('.pgroup').forEach(function (g) {
+      U.qa('.ptab', g).forEach(function (tab) {
+        U.on(tab, 'click', function () { activateTab(g, tab.dataset.tab); });
+      });
+      var fold = U.q('.fold', g);
+      if (fold) U.on(fold, 'click', function (e) { e.stopPropagation(); g.classList.toggle('collapsed'); });
+    });
+  }
+
+  function activateTab(group, name) {
+    U.qa('.ptab', group).forEach(function (t) { t.classList.toggle('on', t.dataset.tab === name); });
+    U.qa('.panel', group).forEach(function (s2) { s2.classList.toggle('tab-hidden', s2.dataset.panel !== name); });
+    group.classList.remove('collapsed');
+  }
+
+  /* 이름으로 패널을 앞으로 꺼낸다 (메뉴 · 모바일 · 자동화에서 쓴다) */
+  UI.showPanel = function (name) {
+    var sec = document.querySelector('.panel[data-panel="' + name + '"]');
+    if (!sec) return false;
+    var g = sec.closest('.pgroup');
+    if (g) { activateTab(g, name); g.scrollIntoView({ block: 'nearest' }); }
+    return true;
+  };
 
   function num(el, get, set, label, isLength) {
     U.on(el, 'change', function () {
@@ -137,23 +171,26 @@
   function buildProperties() {
     var p = document.getElementById('p-properties');
     p.innerHTML =
-      '<div class="row"><span id="pr-info" style="color:#9a9a9a"></span></div>' +
-      '<div class="row"><label>불투명</label><input class="fld" id="pr-op" value="100"><span style="color:#9a9a9a">%</span></div>' +
+      '<div class="row"><span id="pr-info" class="pr-info"></span></div>' +
+      '<div class="row"><label style="min-width:34px">불투명</label>' +
+      '<input class="fld" id="pr-op" value="100"><span class="unit">%</span></div>' +
       '<div class="row"><label style="min-width:34px">혼합</label><select class="fld" id="pr-blend">' +
       ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity']
         .map(function (b) { return '<option value="' + b + '">' + b + '</option>'; }).join('') +
       '</select></div>' +
-      '<div class="grid4" style="margin-top:6px">' +
-      '<button class="btn" data-cmd="bringToFront" title="맨 앞으로 (Ctrl+Shift+])">⤒</button>' +
-      '<button class="btn" data-cmd="bringForward" title="앞으로 (Ctrl+])">↑</button>' +
-      '<button class="btn" data-cmd="sendBackward" title="뒤로 (Ctrl+[)">↓</button>' +
-      '<button class="btn" data-cmd="sendToBack" title="맨 뒤로 (Ctrl+Shift+[)">⤓</button>' +
+      '<div class="sec">정돈</div>' +
+      '<div class="grid4">' +
+      UI.btn({ icon: 'toFront', title: '맨 앞으로', cmd: 'bringToFront' }) +
+      UI.btn({ icon: 'forward', title: '앞으로', cmd: 'bringForward' }) +
+      UI.btn({ icon: 'backward', title: '뒤로', cmd: 'sendBackward' }) +
+      UI.btn({ icon: 'toBack', title: '맨 뒤로', cmd: 'sendToBack' }) +
       '</div>' +
-      '<div class="grid4" style="margin-top:4px">' +
-      '<button class="btn" data-cmd="group" title="그룹 (Ctrl+G)">그룹</button>' +
-      '<button class="btn" data-cmd="ungroup" title="그룹 풀기 (Ctrl+Shift+G)">풀기</button>' +
-      '<button class="btn" data-cmd="lock" title="잠금 (Ctrl+2)">잠금</button>' +
-      '<button class="btn" data-cmd="hide" title="숨기기 (Ctrl+3)">숨김</button>' +
+      '<div class="sec">그룹 · 잠금</div>' +
+      '<div class="grid4">' +
+      UI.btn({ label: '그룹', cmd: 'group' }) +
+      UI.btn({ label: '풀기', title: '그룹 풀기', cmd: 'ungroup' }) +
+      UI.btn({ icon: 'lock', title: '잠금', cmd: 'lock' }) +
+      UI.btn({ icon: 'eyeOff', title: '숨기기', cmd: 'hide' }) +
       '</div>';
     num(U.q('#pr-op', p), function () { return 100; }, function (v) { E.setOpacity(app, U.clamp(v, 0, 100) / 100); }, '불투명도');
     U.on(U.q('#pr-blend', p), 'change', function () {
@@ -229,14 +266,18 @@
     var p = document.getElementById('p-color');
     p.innerHTML =
       '<div class="row">' +
-      '<button class="swatch-btn" id="cl-fill" title="칠"><i></i></button>' +
+      '<button class="swatch-btn" id="cl-fill" title="칠 (X 로 초점 전환)"><i></i></button>' +
       '<button class="swatch-btn" id="cl-stroke" title="획"><i></i></button>' +
       '<input class="fld" id="cl-hex" style="flex:1" value="#000000">' +
-      '<button class="mini-btn" id="cl-none" title="없음 (/)">∅</button>' +
+      '<button class="mini-btn" id="cl-none" title="없음 (/)">' + UI.icon('none', 13) + '</button>' +
       '</div>' +
-      '<div class="row"><label>R</label><input class="fld" id="cl-r"><label>G</label><input class="fld" id="cl-g"><label>B</label><input class="fld" id="cl-b"></div>' +
-      '<div class="row"><label style="min-width:30px">알파</label><input class="fld" id="cl-a" value="100"><span style="color:#9a9a9a">%</span></div>' +
-      '<div class="hint">클릭한 견본은 현재 초점(칠/획)에 적용됩니다. X = 초점 전환, Shift+X = 교체</div>';
+      '<div class="row">' +
+      '<label>R</label><input class="fld" id="cl-r">' +
+      '<label>G</label><input class="fld" id="cl-g">' +
+      '<label>B</label><input class="fld" id="cl-b"></div>' +
+      '<div class="row"><label style="min-width:30px">알파</label>' +
+      '<input class="fld" id="cl-a" value="100"><span class="unit">%</span></div>' +
+      '<div class="hint">클릭한 견본은 현재 초점(칠 · 획)에 적용됩니다. X = 초점 전환, Shift+X = 교체</div>';
 
     U.on(U.q('#cl-fill', p), 'click', function () { app.fillFocus = true; UI.syncStyle(app); UI.openColorPicker(app, this); });
     U.on(U.q('#cl-stroke', p), 'click', function () { app.fillFocus = false; UI.syncStyle(app); UI.openColorPicker(app, this); });
@@ -342,15 +383,17 @@
       '<div class="row"><label style="min-width:26px" title="행간(배수)">행간</label><input class="fld" id="ty-leading" value="1.2"></div>' +
       '<div class="row"><label style="min-width:26px" title="자간(px)">자간</label><input class="fld" id="ty-tracking" value="0"></div>' +
       '</div>' +
-      '<div class="row" style="gap:4px;margin-top:6px">' +
+      '<div class="row" style="margin-top:var(--gap)">' +
       '<label style="min-width:26px">정렬</label>' +
-      '<button class="mini-btn" data-talign="left" title="왼쪽 정렬" style="flex:1">◧</button>' +
-      '<button class="mini-btn" data-talign="center" title="가운데 정렬" style="flex:1">◫</button>' +
-      '<button class="mini-btn" data-talign="right" title="오른쪽 정렬" style="flex:1">◨</button>' +
+      UI.seg([
+        { value: 'left', icon: 'textLeft', title: '왼쪽 정렬' },
+        { value: 'center', icon: 'textCenter', title: '가운데 정렬' },
+        { value: 'right', icon: 'textRight', title: '오른쪽 정렬' }
+      ], 'data-talign') +
       '</div>' +
-      '<div class="grid2" style="margin-top:4px">' +
-      '<button class="btn" data-cmd="fontBigger" title="글꼴 크기 확대 (' + AI.keymap.display('Ctrl+Shift+.') + ')">크게</button>' +
-      '<button class="btn" data-cmd="fontSmaller" title="글꼴 크기 축소 (' + AI.keymap.display('Ctrl+Shift+,') + ')">작게</button>' +
+      '<div class="grid2" style="margin-top:var(--gap-s)">' +
+      UI.btn({ label: '크게', title: '글꼴 크기 확대', cmd: 'fontBigger' }) +
+      UI.btn({ label: '작게', title: '글꼴 크기 축소', cmd: 'fontSmaller' }) +
       '</div>' +
       '<div class="hint">텍스트를 선택하거나 문자 도구로 새로 만들 때 적용됩니다.</div>';
 
@@ -438,14 +481,14 @@
       '<div class="row">' +
       '<select class="fld" id="gr-type" style="flex:1"><option value="linear">선형</option><option value="radial">방사형</option></select>' +
       '<label title="각도">∠</label><input class="fld" id="gr-angle" style="width:48px" value="0">' +
-      '<button class="mini-btn" id="gr-rev" title="정지점 반전">⇄</button>' +
+      '<button class="mini-btn" id="gr-rev" title="정지점 반전">' + UI.icon('reverse', 13) + '</button>' +
       '</div>' +
       '<div class="gradbar" id="gr-bar"><div class="gradfill" id="gr-fill"></div><div class="stops" id="gr-stops"></div></div>' +
       '<div class="row" style="margin-top:8px">' +
       '<button class="swatch-btn" id="gr-color" title="선택한 정지점 색상"><i></i></button>' +
-      '<label>위치</label><input class="fld" id="gr-pos" style="width:52px" value="0"><span style="color:#9a9a9a">%</span>' +
+      '<label>위치</label><input class="fld" id="gr-pos" style="width:52px" value="0"><span class="unit">%</span>' +
       '<label>불투명</label><input class="fld" id="gr-alpha" style="width:46px" value="100">' +
-      '<button class="mini-btn" id="gr-del" title="정지점 삭제">🗑</button>' +
+      '<button class="mini-btn danger" id="gr-del" title="정지점 삭제">' + UI.icon('trash', 13) + '</button>' +
       '</div>' +
       '<div class="hint">막대를 클릭하면 정지점 추가, 드래그하면 이동합니다. G 도구로 캔버스에서 방향을 그릴 수 있습니다.</div>';
 
@@ -630,36 +673,52 @@
   function buildStroke() {
     var p = document.getElementById('p-stroke');
     p.innerHTML =
-      '<div class="row"><label style="min-width:30px">두께</label><input class="fld" id="sk-w" value="1"><span style="color:#9a9a9a">pt</span></div>' +
-      '<div class="row"><label style="min-width:30px">단면</label>' +
-      '<button class="mini-btn" data-cap="butt" title="끝 단면">▭</button>' +
-      '<button class="mini-btn" data-cap="round" title="둥근 단면">▬</button>' +
-      '<button class="mini-btn" data-cap="square" title="돌출 단면">▪</button>' +
-      '<label style="min-width:30px;margin-left:6px">모퉁이</label>' +
-      '<button class="mini-btn" data-join="miter">◣</button>' +
-      '<button class="mini-btn" data-join="round">◜</button>' +
-      '<button class="mini-btn" data-join="bevel">◺</button>' +
-      '</div>' +
-      '<div class="row"><label style="min-width:30px">정렬</label>' +
-      '<button class="mini-btn" data-salign="center" title="획을 가운데 정렬" style="flex:1">가운데</button>' +
-      '<button class="mini-btn" data-salign="inside" title="획을 안쪽 정렬" style="flex:1">안쪽</button>' +
-      '<button class="mini-btn" data-salign="outside" title="획을 바깥쪽 정렬" style="flex:1">바깥쪽</button>' +
-      '</div>' +
-      '<div class="row"><label style="min-width:30px">점선</label><input class="fld" id="sk-dash" placeholder="예: 4 2"></div>' +
-      '<div class="row"><label style="min-width:30px">화살표</label>' +
+      '<div class="row"><label style="min-width:34px">두께</label>' +
+      '<input class="fld" id="sk-w" value="1"><span class="unit">pt</span></div>' +
+
+      '<div class="row"><label style="min-width:34px">단면</label>' +
+      UI.seg([
+        { value: 'butt', icon: 'capButt', title: '끝 단면 (butt)' },
+        { value: 'round', icon: 'capRound', title: '둥근 단면 (round)' },
+        { value: 'square', icon: 'capSquare', title: '돌출 단면 (square)' }
+      ], 'data-cap') + '</div>' +
+
+      '<div class="row"><label style="min-width:34px">모퉁이</label>' +
+      UI.seg([
+        { value: 'miter', icon: 'joinMiter', title: '마이터 결합' },
+        { value: 'round', icon: 'joinRound', title: '둥근 결합' },
+        { value: 'bevel', icon: 'joinBevel', title: '베벨 결합' }
+      ], 'data-join') + '</div>' +
+
+      '<div class="row"><label style="min-width:34px">정렬</label>' +
+      UI.seg([
+        { value: 'center', icon: 'strokeCenter', title: '획을 가운데 정렬' },
+        { value: 'inside', icon: 'strokeInside', title: '획을 안쪽 정렬 (닫힌 패스)' },
+        { value: 'outside', icon: 'strokeOutside', title: '획을 바깥쪽 정렬 (닫힌 패스)' }
+      ], 'data-salign') + '</div>' +
+
+      '<div class="row"><label style="min-width:34px">점선</label>' +
+      '<input class="fld" id="sk-dash" placeholder="예: 4 2"></div>' +
+
+      '<div class="sec">화살표</div>' +
+      '<div class="row">' +
       '<select class="fld" id="sk-a1" title="시작 화살표">' + ARROW_OPTS + '</select>' +
-      '<button class="mini-btn" id="sk-aswap" title="화살표 뒤바꾸기">⇄</button>' +
+      UI.btn({ icon: 'swapArrows', title: '시작 · 끝 화살표 뒤바꾸기', data: { swap: '1' } }) +
       '<select class="fld" id="sk-a2" title="끝 화살표">' + ARROW_OPTS + '</select></div>' +
-      '<div class="row"><label style="min-width:30px">비율</label><input class="fld" id="sk-ascale" value="100"><span style="color:#9a9a9a">%</span></div>' +
-      '<div class="row"><label style="min-width:30px">프로파일</label>' +
-      '<select class="fld" id="sk-prof">' +
+      '<div class="row"><label style="min-width:34px">비율</label>' +
+      '<input class="fld" id="sk-ascale" value="100"><span class="unit">%</span></div>' +
+
+      '<div class="sec">폭 프로파일</div>' +
+      '<div class="row"><select class="fld" id="sk-prof">' +
       '<option value="uniform">균일</option>' +
       '<option value="taper">한쪽 가늘게</option>' +
       '<option value="taper2">양쪽 가늘게</option>' +
       '<option value="bulge">가운데 굵게</option>' +
       '<option value="wave">물결</option>' +
       '</select></div>' +
-      '<div class="hint">점선은 공백으로 구분해 입력 (비우면 실선).<br>안쪽·바깥쪽 정렬은 닫힌 패스에만 적용됩니다.<br>화살표는 열린 패스의 시작·끝점에 표시됩니다.</div>';
+
+      '<div class="hint">점선은 공백으로 구분해 입력합니다 (비우면 실선).<br>' +
+      '안쪽 · 바깥쪽 정렬과 화살표는 각각 닫힌 · 열린 패스에만 적용됩니다.</div>';
 
     num(U.q('#sk-w', p), function () { return 1; }, function (v) {
       app.strokeWidth = v;
@@ -709,7 +768,7 @@
         app.history.commit(); app.invalidate(); UI.syncStyle(app);
       });
     });
-    U.on(U.q('#sk-aswap', p), 'click', function () {
+    U.on(U.q('[data-swap]', p), 'click', function () {
       var a1 = U.q('#sk-a1', p), a2 = U.q('#sk-a2', p);
       var t = a1.value; a1.value = a2.value; a2.value = t;
       app.arrowStart = a1.value; app.arrowEnd = a2.value;
@@ -745,26 +804,50 @@
   }
 
   /* ================= 정렬 ================= */
+  var ALIGN_BTNS = [
+    ['alignLeft', '왼쪽 정렬', 'alignLeft'], ['alignHCenter', '가로 가운데 정렬', 'alignHCenter'],
+    ['alignRight', '오른쪽 정렬', 'alignRight'], ['alignTop', '위쪽 정렬', 'alignTop'],
+    ['alignVCenter', '세로 가운데 정렬', 'alignVCenter'], ['alignBottom', '아래쪽 정렬', 'alignBottom']
+  ];
+
   function buildAlign() {
     var p = document.getElementById('p-align');
     p.innerHTML =
+      '<div class="sec">오브젝트 정렬</div>' +
       '<div class="grid6">' +
-      '<button class="btn" data-cmd="alignLeft" title="왼쪽 정렬">⇤</button>' +
-      '<button class="btn" data-cmd="alignHCenter" title="가로 가운데">⇥⇤</button>' +
-      '<button class="btn" data-cmd="alignRight" title="오른쪽 정렬">⇥</button>' +
-      '<button class="btn" data-cmd="alignTop" title="위쪽 정렬">⤒</button>' +
-      '<button class="btn" data-cmd="alignVCenter" title="세로 가운데">⇕</button>' +
-      '<button class="btn" data-cmd="alignBottom" title="아래쪽 정렬">⤓</button>' +
+      ALIGN_BTNS.map(function (o) {
+        return UI.btn({ icon: o[2], title: o[1], cmd: o[0] });
+      }).join('') + '</div>' +
+
+      '<div class="sec">오브젝트 배분</div>' +
+      '<div class="grid2">' +
+      UI.btn({ icon: 'distH', label: '가로', title: '가로 균등 배분', cmd: 'distH' }) +
+      UI.btn({ icon: 'distV', label: '세로', title: '세로 균등 배분', cmd: 'distV' }) +
       '</div>' +
-      '<div class="grid2" style="margin-top:5px">' +
-      '<button class="btn" data-cmd="distH" title="가로 균등 배분">⇹ 가로</button>' +
-      '<button class="btn" data-cmd="distV" title="세로 균등 배분">⇳ 세로</button>' +
-      '</div>' +
-      '<div class="row" style="margin-top:6px"><label style="min-width:42px">기준</label>' +
-      '<select class="fld" id="al-to"><option value="selection">선택 영역</option><option value="artboard">대지</option><option value="key">키 오브젝트</option></select></div>';
+
+      '<div class="row" style="margin-top:8px"><label style="min-width:34px">기준</label>' +
+      '<select class="fld" id="al-to">' +
+      '<option value="selection">선택 영역</option>' +
+      '<option value="artboard">대지</option>' +
+      '<option value="key">키 오브젝트</option>' +
+      '</select></div>';
     U.qa('[data-cmd]', p).forEach(function (b) { U.on(b, 'click', function () { C.run(b.dataset.cmd); }); });
     U.on(U.q('#al-to', p), 'change', function () { app.alignTo = this.value; });
   }
+
+  UI.syncAlign = function (a) {
+    var p = document.getElementById('p-align');
+    if (!p) return;
+    U.qa('[data-cmd]', p).forEach(function (b) {
+      var d = C.defs[b.dataset.cmd];
+      var on = !d || !d.enabled || d.enabled(a);
+      /* 배분은 3개 이상이어야 의미가 있다 */
+      if (b.dataset.cmd === 'distH' || b.dataset.cmd === 'distV') on = a.sel.length > 2;
+      if (on) b.removeAttribute('disabled'); else b.setAttribute('disabled', '');
+    });
+    var sel = U.q('#al-to', p);
+    if (sel && sel.value !== (a.alignTo || 'selection')) sel.value = a.alignTo || 'selection';
+  };
 
   /* ================= 패스파인더 ================= */
   function buildPathfinder() {
@@ -772,17 +855,27 @@
     var shape = [['unite', '합치기'], ['minusFront', '앞면 제외'], ['intersect', '교차'], ['exclude', '교차 제외']];
     var conv = [['divide', '나누기'], ['trim', '자르기'], ['merge', '병합'], ['crop', '오리기'], ['outline', '윤곽선'], ['minusBack', '뒷면 제외']];
     p.innerHTML =
-      '<div style="color:#9a9a9a;margin-bottom:4px">모양 모드</div>' +
+      '<div class="sec">모양 모드</div>' +
       '<div class="grid4">' + shape.map(function (o) {
-        return '<button class="btn" data-pf="' + o[0] + '" title="' + o[1] + '">' + pfIcon(o[0]) + '</button>';
+        return '<button class="btn pf" data-pf="' + o[0] + '" title="' + o[1] + '">' + pfIcon(o[0]) + '</button>';
       }).join('') + '</div>' +
-      '<div style="color:#9a9a9a;margin:8px 0 4px">패스파인더</div>' +
+      '<div class="sec">패스파인더</div>' +
       '<div class="grid6">' + conv.map(function (o) {
-        return '<button class="btn" data-pf="' + o[0] + '" title="' + o[1] + '">' + pfIcon(o[0]) + '</button>';
+        return '<button class="btn pf" data-pf="' + o[0] + '" title="' + o[1] + '">' + pfIcon(o[0]) + '</button>';
       }).join('') + '</div>' +
       '<div class="hint">2개 이상의 도형을 선택한 뒤 사용하세요. 곡선은 근사 처리됩니다.</div>';
     U.qa('[data-pf]', p).forEach(function (b) { U.on(b, 'click', function () { C.run('pf_' + b.dataset.pf); }); });
   }
+
+  /* 선택이 2개 미만이면 패스파인더 버튼을 흐리게 */
+  UI.syncPathfinder = function (a) {
+    var p = document.getElementById('p-pathfinder');
+    if (!p) return;
+    var on = a.sel.length > 1;
+    U.qa('[data-pf]', p).forEach(function (b) {
+      if (on) b.removeAttribute('disabled'); else b.setAttribute('disabled', '');
+    });
+  };
 
   function pfIcon(op) {
     var s = '<svg viewBox="0 0 20 16" style="width:20px;height:16px">';
@@ -807,36 +900,49 @@
     var p = document.getElementById('p-symbols');
     if (!p) return;
     p.innerHTML =
-      '<div style="color:#9a9a9a;margin-bottom:4px">심볼</div>' +
+      '<div class="sec">심볼</div>' +
       '<div id="sy-list" class="sw-grid"></div>' +
-      '<div class="grid2" style="margin-top:5px">' +
-      '<button class="btn" data-sycmd="newSymbol">새 심볼</button>' +
-      '<button class="btn" data-sycmd="breakSymbolLink">링크 끊기</button>' +
+      '<div class="grid2" style="margin-top:var(--gap-s)">' +
+      UI.btn({ icon: 'symbol', label: '새 심볼', title: '선택 아트웍을 심볼로 등록', cmd: 'newSymbol' }) +
+      UI.btn({ icon: 'breakLink', label: '링크 끊기', title: '인스턴스를 실제 아트웍으로', cmd: 'breakSymbolLink' }) +
       '</div>' +
-      '<div style="color:#9a9a9a;margin:8px 0 4px">패턴</div>' +
+      '<div class="sec">패턴</div>' +
       '<div id="pt-list" class="sw-grid"></div>' +
-      '<div class="grid2" style="margin-top:5px">' +
-      '<button class="btn" data-sycmd="newPattern">새 패턴</button>' +
-      '<button class="btn" data-sycmd="patternOptions">패턴 옵션...</button>' +
+      '<div class="grid2" style="margin-top:var(--gap-s)">' +
+      UI.btn({ icon: 'pattern', label: '새 패턴', title: '선택 아트웍을 타일로 등록', cmd: 'newPattern' }) +
+      UI.btn({ icon: 'gear', label: '패턴 옵션', cmd: 'patternOptions' }) +
       '</div>' +
-      '<div class="hint">심볼을 클릭하면 화면 가운데에 배치됩니다. 패턴을 클릭하면 선택한 오브젝트의 칠이 됩니다.</div>';
-    U.qa('[data-sycmd]', p).forEach(function (b) { U.on(b, 'click', function () { C.run(b.dataset.sycmd); }); });
+      '<div class="sec">브러시</div>' +
+      '<div class="grid2">' +
+      UI.btn({ icon: 'brush', label: '브러시 옵션', title: '서예 · 산포 브러시', cmd: 'brushOptions' }) +
+      UI.btn({ icon: 'recolor', label: '재색상화', title: '아트웍 재색상화', cmd: 'recolor' }) +
+      '</div>' +
+      '<div class="hint">심볼을 클릭하면 화면 가운데에 배치되고, 패턴을 클릭하면 선택한 오브젝트의 칠이 됩니다.</div>';
+    U.qa('[data-cmd]', p).forEach(function (b) { U.on(b, 'click', function () { C.run(b.dataset.cmd); }); });
   }
 
   UI.syncSymbols = function (a) {
     AI.assets.ensure(a.doc);
     var sy = document.getElementById('sy-list'), pt = document.getElementById('pt-list');
     if (!sy || !pt) return;
+    var p = document.getElementById('p-symbols');
+
+    U.qa('[data-cmd]', p).forEach(function (b) {
+      var d = C.defs[b.dataset.cmd];
+      var on = !d || !d.enabled || d.enabled(a);
+      if (on) b.removeAttribute('disabled'); else b.setAttribute('disabled', '');
+    });
 
     sy.innerHTML = a.doc.symbols.length
       ? a.doc.symbols.map(function (d, i) {
-        return '<button class="sw" data-sym="' + i + '" title="' + U.esc(d.name) + '">' +
-          '<span style="font-size:9px">' + U.esc(d.name.slice(0, 6)) + '</span></button>';
+        return '<button class="sw" data-sym="' + i + '" title="' + U.esc(d.name) + ' — 클릭해 배치">' +
+          UI.icon('symbol', 15) + '<span class="nm">' + U.esc(d.name) + '</span></button>';
       }).join('')
-      : '<div class="fx-empty">심볼 없음</div>';
+      : '<div class="list-empty">심볼 없음</div>';
     U.qa('[data-sym]', sy).forEach(function (b) {
       U.on(b, 'click', function () {
         var d = a.doc.symbols[+b.dataset.sym];
+        a.lastSymbolId = d.id;
         a.history.begin('심볼 배치', a.doc);
         var c = AI.viewT.toDoc(a, a.canvas.clientWidth / 2, a.canvas.clientHeight / 2);
         AI.assets.placeSymbol(a, d.id, c.x, c.y);
@@ -844,19 +950,14 @@
         a.invalidate();
         UI.syncAll(a);
       });
-      U.on(b, 'dblclick', function () {
-        var d = a.doc.symbols[+b.dataset.sym];
-        var v = prompt ? prompt('심볼 이름', d.name) : null;
-        if (v) { d.name = v; UI.syncSymbols(a); }
-      });
     });
 
     pt.innerHTML = a.doc.patterns.length
       ? a.doc.patterns.map(function (d, i) {
-        return '<button class="sw" data-pat="' + i + '" title="' + U.esc(d.name) + '">' +
-          '<span style="font-size:9px">' + U.esc(d.name.slice(0, 6)) + '</span></button>';
+        return '<button class="sw" data-pat="' + i + '" title="' + U.esc(d.name) + ' — 클릭해 칠하기">' +
+          UI.icon('pattern', 15) + '<span class="nm">' + U.esc(d.name) + '</span></button>';
       }).join('')
-      : '<div class="fx-empty">패턴 없음</div>';
+      : '<div class="list-empty">패턴 없음</div>';
     U.qa('[data-pat]', pt).forEach(function (b) {
       U.on(b, 'click', function () {
         var d = a.doc.patterns[+b.dataset.pat];
@@ -875,18 +976,18 @@
     var p = document.getElementById('p-appearance');
     if (!p) return;
     p.innerHTML =
-      '<div id="ap-list" class="ap-list"></div>' +
-      '<div class="grid4" style="margin-top:5px">' +
-      '<button class="btn" data-apcmd="addFill" title="새 칠 추가">칠+</button>' +
-      '<button class="btn" data-apcmd="addStroke" title="새 획 추가">획+</button>' +
-      '<button class="btn" data-apcmd="up" title="선택한 겹을 위로">▲</button>' +
-      '<button class="btn" data-apcmd="down" title="선택한 겹을 아래로">▼</button>' +
+      '<div id="ap-list" class="list"></div>' +
+      '<div class="grid4" style="margin-top:var(--gap-s)">' +
+      UI.btn({ icon: 'addFill', title: '새 칠 추가', data: { apcmd: 'addFill' } }) +
+      UI.btn({ icon: 'addStroke', title: '새 획 추가', data: { apcmd: 'addStroke' } }) +
+      UI.btn({ icon: 'moveUp', title: '선택한 겹을 앞으로', data: { apcmd: 'up' } }) +
+      UI.btn({ icon: 'moveDown', title: '선택한 겹을 뒤로', data: { apcmd: 'down' } }) +
       '</div>' +
-      '<div class="grid2" style="margin-top:5px">' +
-      '<button class="btn" data-apcmd="remove" title="선택한 겹 삭제">겹 삭제</button>' +
-      '<button class="btn" data-cmd="expandAppearance" title="각 겹을 실제 오브젝트로">모양 확장</button>' +
+      '<div class="grid2">' +
+      UI.btn({ icon: 'trash', label: '겹 삭제', title: '선택한 겹 삭제', data: { apcmd: 'remove' }, cls: 'danger' }) +
+      UI.btn({ icon: 'expand', label: '모양 확장', title: '각 겹을 실제 오브젝트로', cmd: 'expandAppearance' }) +
       '</div>' +
-      '<div class="hint">겹을 클릭해 선택하고 색을 바꾸세요. 목록 위쪽이 앞(위)에 그려집니다.</div>';
+      '<div class="hint">겹을 클릭해 선택한 뒤 색을 바꾸세요. 목록 위쪽이 앞(위)에 그려집니다.</div>';
     U.qa('[data-apcmd]', p).forEach(function (b) {
       U.on(b, 'click', function () { apCommand(b.dataset.apcmd); });
     });
@@ -897,7 +998,7 @@
 
   function apCommand(cmd) {
     var it = apTarget(app);
-    if (!it) { U.toast('오브젝트를 하나만 선택하세요'); return; }
+    if (!it) { U.toast('패스나 문자를 하나만 선택하세요'); return; }
     var AP = AI.appearance;
     var n = AP.list(it).length;
     var i = app.apIndex == null ? n - 1 : U.clamp(app.apIndex, 0, n - 1);
@@ -914,30 +1015,50 @@
     UI.syncAll(app);
   }
 
+  /* 칠 · 획 겹의 색 견본 */
+  function paintChip(e) {
+    if (e.kind === 'fill') {
+      return '<span class="chip"><i style="background:' + Col.paintPreviewCss(e.paint) + '"></i></span>';
+    }
+    var s2 = e.stroke;
+    var css = (s2 && s2.type !== 'none') ? Col.paintPreviewCss(s2) : 'transparent';
+    return '<span class="chip stroke" style="color:' + (s2 && s2.color ? s2.color : 'transparent') +
+      '"><i style="background:' + css + '"></i></span>';
+  }
+
   UI.syncAppearance = function (a) {
     var host = document.getElementById('ap-list');
     if (!host) return;
     var AP = AI.appearance;
     var it = apTarget(a);
+    var p = document.getElementById('p-appearance');
+
     if (!it) {
-      host.innerHTML = '<div class="fx-empty">' +
+      host.innerHTML = '<div class="list-empty">' +
         (a.sel.length ? '패스나 문자를 하나만 선택하세요' : '선택 없음') + '</div>';
+      setEnabled(p, '[data-apcmd]', false);
+      setEnabled(p, '[data-cmd]', false);
       return;
     }
+    setEnabled(p, '[data-apcmd]', true);
+
     var list = AP.list(it);
     if (a.apIndex != null) a.apIndex = U.clamp(a.apIndex, 0, list.length - 1);
     /* 일러스트레이터처럼 위쪽이 앞(스택의 끝)이므로 뒤집어 보여 준다 */
     var rows = [];
     for (var i = list.length - 1; i >= 0; i--) {
-      var e = list[i];
-      var sw = e.kind === 'fill' ? Col.paintPreviewCss(e.paint)
-        : (e.stroke && e.stroke.type !== 'none' ? Col.paintPreviewCss(e.stroke) : 'transparent');
-      rows.push('<div class="ap-row' + (i === a.apIndex ? ' on' : '') + '" data-i="' + i + '">' +
-        '<span class="ap-sw" style="background:' + sw + '"></span>' +
-        '<span class="ap-name">' + U.esc(AP.label(e)) + '</span></div>');
+      rows.push('<div class="list-row' + (i === a.apIndex ? ' on' : '') + '" data-i="' + i + '">' +
+        paintChip(list[i]) +
+        '<span class="list-name">' + U.esc(AP.label(list[i])) + '</span></div>');
     }
     host.innerHTML = rows.join('');
-    U.qa('.ap-row', host).forEach(function (row) {
+    /* 겹이 하나뿐이면 삭제할 수 없고, 확장은 스택이 있을 때만 */
+    setEnabled(p, '[data-apcmd="remove"]', list.length > 1);
+    setEnabled(p, '[data-apcmd="up"]', a.apIndex != null && a.apIndex < list.length - 1);
+    setEnabled(p, '[data-apcmd="down"]', a.apIndex != null && a.apIndex > 0);
+    setEnabled(p, '[data-cmd="expandAppearance"]', AP.isCustom(it));
+
+    U.qa('.list-row', host).forEach(function (row) {
       U.on(row, 'click', function () {
         a.apIndex = +row.dataset.i;
         var e = AP.entry(it, a.apIndex);
@@ -945,60 +1066,72 @@
         a.fillFocus = (e && e.kind === 'fill');
         UI.syncAll(a);
       });
-      U.on(row, 'dblclick', function () {
-        var e = AP.entry(it, +row.dataset.i);
-        if (!e) return;
-        UI.openColorPicker(a, row);
-      });
     });
   };
 
-  /* ================= 효과 (모양) ================= */
+  /* 셀렉터에 맞는 버튼의 사용 가능 여부를 한 번에 설정 */
+  function setEnabled(root, sel, on) {
+    if (!root) return;
+    U.qa(sel, root).forEach(function (b) {
+      if (on) b.removeAttribute('disabled'); else b.setAttribute('disabled', '');
+    });
+  }
+  UI.setEnabled = setEnabled;
+
+  /* ================= 효과 ================= */
   function buildEffects() {
     var p = document.getElementById('p-effects');
     if (!p) return;
     p.innerHTML =
-      '<div class="grid2">' +
-      '<button class="btn" data-fx="fxBlur" title="효과 &gt; 흐림 효과 &gt; 가우시안 흐림">흐림</button>' +
-      '<button class="btn" data-fx="fxShadow" title="효과 &gt; 스타일화 &gt; 그림자 만들기">그림자</button>' +
+      '<div class="grid4">' +
+      UI.btn({ icon: 'fxBlur', title: '가우시안 흐림', cmd: 'fxBlur' }) +
+      UI.btn({ icon: 'fxShadow', title: '그림자 만들기', cmd: 'fxShadow' }) +
+      UI.btn({ icon: 'fxGlow', title: '외부 광선', cmd: 'fxGlow' }) +
+      UI.btn({ icon: 'fxRepeat', title: '마지막 효과 적용', cmd: 'fxLast' }) +
       '</div>' +
-      '<div class="grid2" style="margin-top:5px">' +
-      '<button class="btn" data-fx="fxGlow" title="효과 &gt; 스타일화 &gt; 외부 광선">광선</button>' +
-      '<button class="btn" data-fx="fxLast" title="마지막 효과 적용 (Ctrl+Shift+E)">반복</button>' +
-      '</div>' +
-      '<div id="fx-list" class="fx-list"></div>' +
-      '<div class="grid2" style="margin-top:5px">' +
-      '<button class="btn" data-fx="fxClear">모양 지우기</button>' +
-      '<button class="btn" data-fx="expandAppearance">모양 확장</button>' +
+      '<div id="fx-list" class="list" style="margin-top:var(--gap-s)"></div>' +
+      '<div class="grid2" style="margin-top:var(--gap-s)">' +
+      UI.btn({ icon: 'fxClear', label: '모양 지우기', title: '적용된 효과 모두 제거', cmd: 'fxClear', cls: 'danger' }) +
+      UI.btn({ icon: 'expand', label: '모양 확장', cmd: 'expandAppearance' }) +
       '</div>' +
       '<div class="hint">효과는 비파괴적입니다 — 원본 패스는 그대로 남고, 목록에서 다시 편집하거나 지울 수 있습니다.</div>';
-    U.qa('[data-fx]', p).forEach(function (b) { U.on(b, 'click', function () { C.run(b.dataset.fx); }); });
+    U.qa('[data-cmd]', p).forEach(function (b) { U.on(b, 'click', function () { C.run(b.dataset.cmd); }); });
   }
 
   UI.syncEffects = function (a) {
     var host = document.getElementById('fx-list');
     if (!host) return;
+    var p = document.getElementById('p-effects');
     var FX = AI.effects;
     var it = a.sel.length === 1 ? a.sel[0] : null;
-    var list = it ? FX.list(it) : [];
+
+    /* 버튼은 명령이 실제로 쓸 수 있을 때만 켠다 */
+    U.qa('[data-cmd]', p).forEach(function (b) {
+      var d = C.defs[b.dataset.cmd];
+      var on = !d || !d.enabled || d.enabled(a);
+      if (on) b.removeAttribute('disabled'); else b.setAttribute('disabled', '');
+    });
+
     if (!it) {
-      host.innerHTML = '<div class="fx-empty">' +
-        (a.sel.length ? a.sel.length + '개 선택됨 — 목록은 한 개만 선택했을 때 표시됩니다' : '선택 없음') + '</div>';
+      host.innerHTML = '<div class="list-empty">' +
+        (a.sel.length ? a.sel.length + '개 선택됨 — 목록은 하나만 선택했을 때 표시됩니다' : '선택 없음') + '</div>';
       return;
     }
-    if (!list.length) { host.innerHTML = '<div class="fx-empty">적용된 효과 없음</div>'; return; }
+    var list = FX.list(it);
+    if (!list.length) { host.innerHTML = '<div class="list-empty">적용된 효과 없음</div>'; return; }
     host.innerHTML = list.map(function (e, i) {
-      return '<div class="fx-row" data-i="' + i + '">' +
-        '<span class="fx-name" title="두 번 눌러 편집">' + U.esc(FX.label(e)) + '</span>' +
-        '<button class="mini-btn fx-edit" data-edit="' + i + '" title="편집">✎</button>' +
-        '<button class="mini-btn fx-del" data-del="' + i + '" title="삭제">✕</button>' +
+      return '<div class="list-row" data-i="' + i + '">' +
+        '<span class="list-name" title="두 번 눌러 편집">' + U.esc(FX.label(e)) + '</span>' +
+        '<button class="mini-btn" data-edit="' + i + '" title="편집">' + UI.icon('pencil', 12) + '</button>' +
+        '<button class="mini-btn" data-del="' + i + '" title="삭제">' + UI.icon('close', 12) + '</button>' +
         '</div>';
     }).join('');
     U.qa('[data-edit]', host).forEach(function (b) {
-      U.on(b, 'click', function () { AI.dialogs.effect(app, list[+b.dataset.edit].type); });
+      U.on(b, 'click', function (ev) { ev.stopPropagation(); AI.dialogs.effect(app, list[+b.dataset.edit].type); });
     });
     U.qa('[data-del]', host).forEach(function (b) {
-      U.on(b, 'click', function () {
+      U.on(b, 'click', function (ev) {
+        ev.stopPropagation();
         app.history.begin('효과 삭제', app.doc);
         AI.effects.removeAt(it, +b.dataset.del);
         app.history.commit();
@@ -1006,8 +1139,8 @@
         UI.syncAll(app);
       });
     });
-    U.qa('.fx-name', host).forEach(function (n, i) {
-      U.on(n, 'dblclick', function () { AI.dialogs.effect(app, list[i].type); });
+    U.qa('.list-row', host).forEach(function (row) {
+      U.on(row, 'dblclick', function () { AI.dialogs.effect(app, list[+row.dataset.i].type); });
     });
   };
 
@@ -1016,36 +1149,44 @@
     var p = document.getElementById('p-artboards');
     if (!p) return;
     p.innerHTML =
-      '<div id="ab-list" class="ab-list"></div>' +
-      '<div class="grid4" style="margin-top:5px">' +
-      '<button class="btn" data-abcmd="newArtboard" title="새 대지">＋</button>' +
-      '<button class="btn" data-abcmd="duplicateArtboard" title="대지 복제">⧉</button>' +
-      '<button class="btn" data-abcmd="artboardOptions" title="대지 옵션">⚙</button>' +
-      '<button class="btn" data-abcmd="deleteArtboard" title="대지 삭제">🗑</button>' +
+      '<div id="ab-list" class="list"></div>' +
+      '<div class="grid4" style="margin-top:var(--gap-s)">' +
+      UI.btn({ icon: 'plus', title: '새 대지', cmd: 'newArtboard' }) +
+      UI.btn({ icon: 'duplicate', title: '대지 복제', cmd: 'duplicateArtboard' }) +
+      UI.btn({ icon: 'gear', title: '대지 옵션', cmd: 'artboardOptions' }) +
+      UI.btn({ icon: 'trash', title: '대지 삭제', cmd: 'deleteArtboard', cls: 'danger' }) +
       '</div>' +
-      '<div class="grid2" style="margin-top:5px">' +
-      '<button class="btn" data-abcmd="fitArtboardToSelection" title="대지를 선택 항목에 맞추기">선택에 맞춤</button>' +
-      '<button class="btn" data-abcmd="fitArtboardToArtwork" title="대지를 아트웍 전체에 맞추기">아트웍에 맞춤</button>' +
+      '<div class="grid2">' +
+      UI.btn({ icon: 'fitSelection', label: '선택에 맞춤', title: '대지를 선택 항목에 맞추기', cmd: 'fitArtboardToSelection' }) +
+      UI.btn({ icon: 'fitArtwork', label: '아트웍에 맞춤', title: '대지를 아트웍 전체에 맞추기', cmd: 'fitArtboardToArtwork' }) +
       '</div>' +
-      '<div class="grid2" style="margin-top:5px">' +
-      '<button class="btn" data-abcmd="rearrangeArtboards">모두 재정렬...</button>' +
-      '<button class="btn" data-abcmd="fitAll">전체 보기</button>' +
-      '</div>';
-    U.qa('[data-abcmd]', p).forEach(function (b) { U.on(b, 'click', function () { C.run(b.dataset.abcmd); }); });
+      '<div class="grid2">' +
+      UI.btn({ icon: 'rearrange', label: '모두 재정렬', cmd: 'rearrangeArtboards' }) +
+      UI.btn({ icon: 'fitAll', label: '전체 보기', cmd: 'fitAll' }) +
+      '</div>' +
+      '<div class="hint">행을 클릭하면 그 대지로 이동하고, 두 번 누르면 옵션이 열립니다.</div>';
+    U.qa('[data-cmd]', p).forEach(function (b) { U.on(b, 'click', function () { C.run(b.dataset.cmd); }); });
   }
 
   UI.syncArtboards = function (a) {
     var host = document.getElementById('ab-list');
     if (!host) return;
+    var p = document.getElementById('p-artboards');
     var un = a.prefs.unit || 'pt';
     host.innerHTML = a.doc.artboards.map(function (ab, i) {
-      return '<div class="ab-row' + (i === a.doc.activeArtboard ? ' on' : '') + '" data-ab="' + i + '">' +
-        '<span class="ab-i">' + (i + 1) + '</span>' +
-        '<span class="ab-name" title="두 번 눌러 이름 바꾸기">' + U.esc(ab.name) + '</span>' +
-        '<span class="ab-size">' + U.fmtUnit(ab.w, un) + ' × ' + U.fmtUnit(ab.h, un) + '</span>' +
+      return '<div class="list-row' + (i === a.doc.activeArtboard ? ' on' : '') + '" data-ab="' + i + '">' +
+        '<span class="list-num">' + (i + 1) + '</span>' +
+        '<span class="list-name" title="두 번 눌러 옵션 열기">' + U.esc(ab.name) + '</span>' +
+        '<span class="list-sub">' + U.fmtUnit(ab.w, un) + ' × ' + U.fmtUnit(ab.h, un) + '</span>' +
         '</div>';
     }).join('');
-    U.qa('.ab-row', host).forEach(function (row) {
+    U.qa('[data-cmd]', p).forEach(function (b) {
+      var d = C.defs[b.dataset.cmd];
+      var on = !d || !d.enabled || d.enabled(a);
+      if (b.dataset.cmd === 'deleteArtboard') on = a.doc.artboards.length > 1;
+      if (on) b.removeAttribute('disabled'); else b.setAttribute('disabled', '');
+    });
+    U.qa('.list-row', host).forEach(function (row) {
       U.on(row, 'click', function () {
         a.doc.activeArtboard = +row.dataset.ab;
         AI.viewT.fitArtboard(a);
@@ -1404,6 +1545,8 @@
     UI.syncStatus(a);
     UI.updateZoom(a);
     UI.syncIsolation(a);
+    UI.syncPathfinder(a);
+    UI.syncAlign(a);
     UI.syncSymbols(a);
     UI.syncAppearance(a);
     UI.syncEffects(a);
