@@ -337,6 +337,174 @@
     return any;
   };
 
+  /* ---------------- 개별 변형 (Transform Each) ---------------- */
+  /* 선택한 오브젝트를 각자의 기준점을 중심으로 변형한다.
+     random 을 켜면 각 오브젝트마다 0~지정값 사이의 임의 값이 적용된다. */
+  E.transformEach = function (app, o) {
+    o = o || {};
+    var anchor = o.anchor == null ? 4 : o.anchor;
+    app.sel.forEach(function (it) {
+      var b = Rn.worldBounds(app.doc, it, true);
+      if (R.isEmpty(b)) return;
+      var ref = E.refPointOf(b, anchor);
+      var rnd = function () { return o.random ? Math.random() : 1; };
+      var sgn = function () { return o.random ? (Math.random() * 2 - 1) : 1; };
+      var sx = 1 + ((o.sx == null ? 100 : o.sx) / 100 - 1) * rnd();
+      var sy = 1 + ((o.sy == null ? 100 : o.sy) / 100 - 1) * rnd();
+      var mx = (o.dx || 0) * sgn(), my = (o.dy || 0) * sgn();
+      var ang = U.rad(-(o.angle || 0) * sgn());
+      var W = M.mulAll(
+        M.translate(mx, my),
+        M.around(M.rotate(ang), ref.x, ref.y),
+        M.around(M.scale(sx || 1e-6, sy || 1e-6), ref.x, ref.y)
+      );
+      if (o.reflectX) W = M.mul(W, M.around(M.scale(-1, 1), ref.x, ref.y));
+      if (o.reflectY) W = M.mul(W, M.around(M.scale(1, -1), ref.x, ref.y));
+      E.applyWorld(app.doc, it, W);
+    });
+  };
+
+  /* ---------------- 이미지 자르기 (Crop Image) ---------------- */
+  /* 이미지 + 그 위의 도형을 선택하면 도형의 바운딩으로 이미지를 자른다.
+     원본 픽셀은 유지하고 표시할 영역(crop)만 기록한다. */
+  E.cropImage = function (app) {
+    var img = null, shape = null;
+    app.sel.forEach(function (it) {
+      if (it.type === 'image' && !img) img = it;
+      else if (!shape) shape = it;
+    });
+    if (!img) { U.toast('자를 이미지를 선택하세요'); return false; }
+    if (!shape) { U.toast('자를 범위가 될 도형을 이미지 위에 두고 함께 선택하세요'); return false; }
+
+    var inv = M.invert(Model.worldMatrix(app.doc, img));
+    var wb = Rn.worldBounds(app.doc, shape, true);
+    var lb = R.empty();
+    [[wb.x, wb.y], [wb.x2, wb.y], [wb.x2, wb.y2], [wb.x, wb.y2]].forEach(function (p) {
+      var q = M.apply(inv, p[0], p[1]);
+      R.add(lb, q.x, q.y);
+    });
+    var x0 = U.clamp(lb.x, 0, img.w), y0 = U.clamp(lb.y, 0, img.h);
+    var x1 = U.clamp(lb.x2, 0, img.w), y1 = U.clamp(lb.y2, 0, img.h);
+    if (x1 - x0 < 1 || y1 - y0 < 1) { U.toast('자를 영역이 이미지와 겹치지 않습니다'); return false; }
+
+    var c = img.crop || { x: 0, y: 0, w: 1, h: 1 };
+    img.crop = {
+      x: c.x + (x0 / img.w) * c.w,
+      y: c.y + (y0 / img.h) * c.h,
+      w: ((x1 - x0) / img.w) * c.w,
+      h: ((y1 - y0) / img.h) * c.h
+    };
+    img.m = M.mul(img.m, M.translate(x0, y0));
+    img.w = x1 - x0;
+    img.h = y1 - y0;
+
+    var loc = Model.locate(app.doc, shape);
+    if (loc) loc.list.splice(loc.index, 1);
+    AI.sel.set(app, [img]);
+    return true;
+  };
+
+  /* ---------------- 레이어 ---------------- */
+  E.mergeLayers = function (app) {
+    if (app.doc.layers.length < 2) return false;
+    var base = app.doc.layers[0];
+    for (var i = 1; i < app.doc.layers.length; i++) {
+      base.children = base.children.concat(app.doc.layers[i].children);
+    }
+    app.doc.layers = [base];
+    app.doc.activeLayer = 0;
+    return true;
+  };
+
+  /* 활성 레이어의 최상위 아이템을 각각 새 레이어로 (Release to Layers) */
+  E.releaseToLayers = function (app) {
+    var ly = Model.activeLayer(app.doc);
+    if (ly.children.length < 2) return false;
+    var idx = app.doc.layers.indexOf(ly);
+    var made = ly.children.map(function (it, i) {
+      var nl = Model.newLayer(ly.name + ' ' + (i + 1), app.doc.layers.length + i);
+      nl.children = [it];
+      return nl;
+    });
+    app.doc.layers.splice(idx, 1);
+    Array.prototype.splice.apply(app.doc.layers, [idx, 0].concat(made));
+    app.doc.activeLayer = idx;
+    return true;
+  };
+
+  /* 선택 항목을 새 레이어로 모으기 */
+  E.collectInNewLayer = function (app, name) {
+    if (!app.sel.length) return false;
+    var ordered = [];
+    Model.walk(app.doc, function (it) { if (app.sel.indexOf(it) >= 0) ordered.push(it); });
+    ordered.forEach(function (it) {
+      var loc = Model.locate(app.doc, it);
+      if (loc) loc.list.splice(loc.index, 1);
+    });
+    var nl = Model.newLayer(name || ('레이어 ' + (app.doc.layers.length + 1)), app.doc.layers.length);
+    nl.children = ordered;
+    app.doc.layers.push(nl);
+    app.doc.activeLayer = app.doc.layers.length - 1;
+    AI.sel.set(app, ordered);
+    return true;
+  };
+
+  /* ---------------- 대지 ---------------- */
+  E.fitArtboardTo = function (app, mode) {
+    var r = R.empty();
+    if (mode === 'selection') {
+      app.sel.forEach(function (it) { r = R.union(r, Rn.worldBounds(app.doc, it)); });
+      if (R.isEmpty(r)) { U.toast('오브젝트를 선택하세요'); return false; }
+    } else {
+      Model.walkWorld(app.doc, function (it, info) {
+        r = R.union(r, Rn.boundsM(it, info.m, false, 1));
+        if (it.type === 'group') return false;
+      }, { skipHidden: true });
+      if (R.isEmpty(r)) { U.toast('대지에 오브젝트가 없습니다'); return false; }
+    }
+    var ab = app.doc.artboards[app.doc.activeArtboard];
+    ab.x = r.x; ab.y = r.y; ab.w = Math.max(1, R.w(r)); ab.h = Math.max(1, R.h(r));
+    app.doc.width = ab.w; app.doc.height = ab.h;
+    return true;
+  };
+
+  /* 대지를 격자로 재정렬 */
+  E.rearrangeArtboards = function (app, cols, gap) {
+    var abs = app.doc.artboards;
+    cols = Math.max(1, cols || Math.ceil(Math.sqrt(abs.length)));
+    gap = gap == null ? 40 : gap;
+    var rowH = 0, x = 0, y = 0, i;
+    for (i = 0; i < abs.length; i++) {
+      if (i % cols === 0 && i) { x = 0; y += rowH + gap; rowH = 0; }
+      var dx = x - abs[i].x, dy = y - abs[i].y;
+      abs[i].x = x; abs[i].y = y;
+      x += abs[i].w + gap;
+      rowH = Math.max(rowH, abs[i].h);
+    }
+    return true;
+  };
+
+  /* ---------------- 안내선 ---------------- */
+  /* 안내선을 선 패스로 되돌린다 (오브젝트 > 안내선 > 안내선 해제) */
+  E.releaseGuides = function (app) {
+    if (!app.doc.guides.length) { U.toast('안내선이 없습니다'); return false; }
+    var ab = app.doc.artboards[app.doc.activeArtboard];
+    var made = [];
+    app.doc.guides.forEach(function (g) {
+      var it = (g.axis === 'v')
+        ? Model.newLine(g.pos, ab.y - 20, g.pos, ab.y + ab.h + 20)
+        : Model.newLine(ab.x - 20, g.pos, ab.x + ab.w + 20, g.pos);
+      it.name = '안내선';
+      it.fill = Col.none();
+      it.stroke = Model.mkStroke('#3ad0e0', 1);
+      Model.activeLayer(app.doc).children.push(it);
+      made.push(it);
+    });
+    app.doc.guides = [];
+    AI.sel.set(app, made);
+    return true;
+  };
+
   /* ---------------- 클리핑 마스크 ---------------- */
   E.makeClipMask = function (app) {
     if (app.sel.length < 2) { U.toast('클리핑 마스크는 2개 이상 선택이 필요합니다'); return; }
@@ -412,14 +580,17 @@
       var faces = AI.pathfinder.faces(sets);
       var top = sets[sets.length - 1];
       var pieces = [];
+      /* 오리기(Crop)에서 맨 앞 오브젝트는 잘라 내는 틀일 뿐 결과에 남지 않는다.
+         따라서 칠의 주인을 찾을 때 맨 앞 오브젝트는 후보에서 뺀다. */
+      var topOwner = (op === 'crop') ? sets.length - 2 : sets.length - 1;
       faces.forEach(function (f) {
         var rp = AI.pathfinder.repPoint(f);
+        if (op === 'crop' && !AI.pathfinder.pointInRings(top, rp.x, rp.y)) return;
         var owner = -1;
-        for (var k = sets.length - 1; k >= 0; k--) {
+        for (var k = topOwner; k >= 0; k--) {
           if (AI.pathfinder.pointInRings(sets[k], rp.x, rp.y)) { owner = k; break; }
         }
-        if (owner < 0) return;                       /* 바깥 영역·구멍 */
-        if (op === 'crop' && !AI.pathfinder.pointInRings(top, rp.x, rp.y)) return;
+        if (owner < 0) return;                       /* 바깥 영역·구멍 · 틀만 덮은 자리 */
         pieces.push({ ring: f, owner: owner });
       });
       if (op === 'merge') {

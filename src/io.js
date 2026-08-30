@@ -136,6 +136,11 @@
     if (!it.visible) return '';
     var tr = M.isIdent(it.m) ? '' : ' transform="matrix(' + it.m.map(function (v) { return U.round(v, 4); }).join(' ') + ')"';
     var op = (it.opacity != null && it.opacity < 1) ? ' opacity="' + U.round(it.opacity, 3) + '"' : '';
+    if (AI.effects.has(it)) {
+      var fid = 'fx' + (++gradSeq);
+      var fdef = AI.effects.svgFilter(it, fid);
+      if (fdef) { defs.push(fdef); op += ' filter="url(#' + fid + ')"'; }
+    }
     if (it.type === 'group') {
       var inner = it.children.map(function (c) { return itemSvg(doc, c, defs); }).join('');
       if (it.clip && it.children.length) {
@@ -157,9 +162,20 @@
       if (it.stroke.cap && it.stroke.cap !== 'butt') style += ' stroke-linecap="' + it.stroke.cap + '"';
       if (it.stroke.join && it.stroke.join !== 'miter') style += ' stroke-linejoin="' + it.stroke.join + '"';
       if (it.stroke.dash && it.stroke.dash.length) style += ' stroke-dasharray="' + it.stroke.dash.join(' ') + '"';
+      style += arrowMarkers(it, defs);
     }
     if (it.type === 'path') return '<path' + tr + op + ' d="' + G.toSvgD(it, null) + '"' + style + '/>';
     if (it.type === 'image') {
+      if (it.crop) {
+        var c = it.crop;
+        var W = it.w / Math.max(c.w, 1e-6), H = it.h / Math.max(c.h, 1e-6);
+        var cid = 'clip' + (++gradSeq);
+        defs.push('<clipPath id="' + cid + '"><rect x="0" y="0" width="' + U.round(it.w, 3) +
+          '" height="' + U.round(it.h, 3) + '"/></clipPath>');
+        return '<g' + tr + op + ' clip-path="url(#' + cid + ')"><image x="' + U.round(-c.x * W, 3) +
+          '" y="' + U.round(-c.y * H, 3) + '" width="' + U.round(W, 3) + '" height="' + U.round(H, 3) +
+          '" preserveAspectRatio="none" href="' + escXml(it.src) + '"/></g>';
+      }
       return '<image' + tr + op + ' x="0" y="0" width="' + U.round(it.w, 3) + '" height="' + U.round(it.h, 3) +
         '" preserveAspectRatio="none" href="' + escXml(it.src) + '"/>';
     }
@@ -175,6 +191,37 @@
         style + '>' + lines + '</text>';
     }
     return '';
+  }
+
+  /* 화살표를 <marker> 로 — 시작/끝 각각 정의한다 */
+  var ARROW_D = {
+    arrow: 'M0 0 L-3.2 1.7 L-2.3 0 L-3.2 -1.7 Z',
+    triangle: 'M0 0 L-2.8 1.5 L-2.8 -1.5 Z',
+    circle: 'M-2.6 0 a1.3 1.3 0 1 0 2.6 0 a1.3 1.3 0 1 0 -2.6 0',
+    square: 'M-2.6 -1.3 h2.6 v2.6 h-2.6 z',
+    bar: 'M-0.35 -1.5 h0.7 v3 h-0.7 z'
+  };
+  /* 화살표는 열린 패스의 끝점에만 붙는다 — 렌더러와 같은 규칙 */
+  function hasOpenSub(it) {
+    if (it.type !== 'path' || !it.subs) return false;
+    return it.subs.some(function (sub) { return !sub.closed && sub.pts.length >= 2; });
+  }
+  function arrowMarkers(it, defs) {
+    var s = it.stroke, out = '';
+    if (!s || !hasOpenSub(it)) return '';
+    var sc = (s.arrowScale == null ? 100 : s.arrowScale) / 100;
+    [['arrowStart', 'marker-start', true], ['arrowEnd', 'marker-end', false]].forEach(function (o) {
+      var kind = s[o[0]] || 'none';
+      if (!ARROW_D[kind]) return;
+      var id = 'arw' + (++gradSeq);
+      var flip = o[2] ? ' transform="rotate(180)"' : '';
+      defs.push('<marker id="' + id + '" markerUnits="strokeWidth" markerWidth="8" markerHeight="8" ' +
+        'viewBox="-4 -4 8 8" refX="0" refY="0" orient="auto" overflow="visible">' +
+        '<g' + flip + ' transform="scale(' + U.round(sc, 3) + ')">' +
+        '<path d="' + ARROW_D[kind] + '" fill="' + s.color + '"/></g></marker>');
+      out += ' ' + o[1] + '="url(#' + id + ')"';
+    });
+    return out;
   }
 
   function escXml(s) {

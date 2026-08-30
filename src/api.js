@@ -93,7 +93,9 @@
     return {
       type: s.type, color: s.color, alpha: s.alpha == null ? 1 : s.alpha,
       width: s.width, cap: s.cap, join: s.join, align: s.align || 'center',
-      dash: (s.dash || []).slice()
+      dash: (s.dash || []).slice(),
+      arrowStart: s.arrowStart || 'none', arrowEnd: s.arrowEnd || 'none',
+      arrowScale: s.arrowScale == null ? 100 : s.arrowScale
     };
   }
 
@@ -886,6 +888,280 @@
       ctx.doc.activeArtboard = U.clamp(Math.round(a.index), 0, ctx.doc.artboards.length - 1);
       if (!ctx.headless && AI.viewT) AI.viewT.fitArtboard(ctx);
       return ctx.doc.activeArtboard;
+    }
+  });
+
+  op('setArtboard', {
+    undoable: true, group: '대지', desc: '대지의 이름 · 위치 · 크기를 바꿉니다. index 를 생략하면 활성 대지.',
+    params: {
+      index: p('number', '0부터 시작하는 인덱스 (생략 시 활성 대지)'),
+      name: p('string', '이름'), x: p('number', 'x'), y: p('number', 'y'),
+      width: p('number', '폭'), height: p('number', '높이')
+    },
+    run: function (ctx, a) {
+      var i = a.index == null ? ctx.doc.activeArtboard : U.clamp(Math.round(a.index), 0, ctx.doc.artboards.length - 1);
+      var ab = ctx.doc.artboards[i];
+      if (a.name) ab.name = a.name;
+      if (a.x != null) ab.x = a.x;
+      if (a.y != null) ab.y = a.y;
+      if (a.width != null) ab.w = Math.max(1, a.width);
+      if (a.height != null) ab.h = Math.max(1, a.height);
+      if (i === ctx.doc.activeArtboard) { ctx.doc.width = ab.w; ctx.doc.height = ab.h; }
+      return documentInfo(ctx).artboards;
+    }
+  });
+  op('removeArtboard', {
+    undoable: true, group: '대지', desc: '대지를 삭제합니다 (최소 1개는 남습니다).',
+    params: { index: p('number', '0부터 시작하는 인덱스 (생략 시 활성 대지)') },
+    run: function (ctx, a) {
+      if (ctx.doc.artboards.length < 2) throw err('LAST_ARTBOARD', '대지는 최소 1개 필요합니다');
+      var i = a.index == null ? ctx.doc.activeArtboard : U.clamp(Math.round(a.index), 0, ctx.doc.artboards.length - 1);
+      ctx.doc.artboards.splice(i, 1);
+      ctx.doc.activeArtboard = U.clamp(ctx.doc.activeArtboard, 0, ctx.doc.artboards.length - 1);
+      return documentInfo(ctx).artboards;
+    }
+  });
+  op('fitArtboard', {
+    undoable: true, group: '대지', desc: '활성 대지를 선택 항목 또는 아트웍 전체 경계에 맞춥니다.',
+    params: { mode: p('string', '기준', { enum: ['selection', 'artwork'], default: 'selection' }), query: Q },
+    run: function (ctx, a) {
+      var mode = a.mode || 'selection';
+      if (mode === 'selection') {
+        var listed = need(ctx, a.query, 'fitArtboard');
+        var prev = ctx.sel;
+        ctx.sel = listed;
+        try {
+          if (E.fitArtboardTo(ctx, 'selection') === false) throw err('EMPTY', 'fitArtboard: 대상이 비어 있습니다');
+        } finally { ctx.sel = prev; }
+      } else if (E.fitArtboardTo(ctx, 'artwork') === false) {
+        throw err('EMPTY', 'fitArtboard: 대지에 오브젝트가 없습니다');
+      }
+      if (!ctx.headless && AI.viewT) AI.viewT.fitArtboard(ctx);
+      return documentInfo(ctx).artboards[ctx.doc.activeArtboard];
+    }
+  });
+  op('rearrangeArtboards', {
+    undoable: true, group: '대지', desc: '모든 대지를 격자로 재배치합니다.',
+    params: {
+      columns: p('number', '가로 개수 (생략 시 정사각에 가깝게)'),
+      gap: p('number', '대지 사이 간격', { default: 40 })
+    },
+    run: function (ctx, a) {
+      E.rearrangeArtboards(ctx, a.columns, a.gap == null ? 40 : a.gap);
+      if (!ctx.headless && AI.viewT) AI.viewT.fitAll(ctx);
+      return documentInfo(ctx).artboards;
+    }
+  });
+
+  /* ---------- 레이어 (구성) ---------- */
+  op('mergeLayers', {
+    undoable: true, group: '레이어', desc: '모든 레이어를 맨 아래 레이어 하나로 병합합니다.', params: {},
+    run: function (ctx) {
+      if (E.mergeLayers(ctx) === false) throw err('ONE_LAYER', '병합할 레이어가 없습니다');
+      return documentInfo(ctx).layers;
+    }
+  });
+  op('releaseToLayers', {
+    undoable: true, group: '레이어', desc: '활성 레이어의 최상위 오브젝트를 각각 새 레이어로 배포합니다.', params: {},
+    run: function (ctx) {
+      if (E.releaseToLayers(ctx) === false) throw err('TOO_FEW', '배포하려면 오브젝트가 2개 이상 필요합니다');
+      return documentInfo(ctx).layers;
+    }
+  });
+  op('collectInLayer', {
+    undoable: true, group: '레이어', desc: '선택한 오브젝트를 새 레이어로 모읍니다.',
+    params: { query: Q, name: p('string', '새 레이어 이름') }, returns: 'id[]',
+    run: function (ctx, a) {
+      withSel(ctx, a.query, 'collectInLayer', function () {
+        if (E.collectInNewLayer(ctx, a.name) === false) throw err('EMPTY', 'collectInLayer: 대상이 없습니다');
+      });
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+
+  /* ---------- 안내선 ---------- */
+  op('addGuide', {
+    undoable: true, group: '안내선', desc: '가로 · 세로 안내선을 추가합니다.',
+    params: {
+      axis: p('string', "축 ('h' = 가로선, 'v' = 세로선)", { enum: ['h', 'v'], required: true }),
+      position: p('number', '문서 좌표 위치', { required: true })
+    },
+    run: function (ctx, a) {
+      ctx.doc.guides.push({ axis: a.axis, pos: a.position });
+      return ctx.doc.guides.map(function (g) { return { axis: g.axis, position: U.round(g.pos, 4) }; });
+    }
+  });
+  op('guides', {
+    undoable: false, group: '안내선', desc: '안내선 목록을 반환합니다.', params: {},
+    run: function (ctx) {
+      return ctx.doc.guides.map(function (g) { return { axis: g.axis, position: U.round(g.pos, 4) }; });
+    }
+  });
+  op('clearGuides', {
+    undoable: true, group: '안내선', desc: '모든 안내선을 지웁니다.', params: {},
+    run: function (ctx) { var n = ctx.doc.guides.length; ctx.doc.guides = []; return n; }
+  });
+  op('releaseGuides', {
+    undoable: true, group: '안내선', desc: '안내선을 선 오브젝트로 바꿉니다.', params: {}, returns: 'id[]',
+    run: function (ctx) {
+      if (E.releaseGuides(ctx) === false) throw err('NO_GUIDES', '안내선이 없습니다');
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+
+  /* ---------- 효과 ---------- */
+  var FX_PARAMS = {
+    radius: p('number', '흐림 반경 (blur)'),
+    dx: p('number', 'X 오프셋 (shadow)'), dy: p('number', 'Y 오프셋 (shadow)'),
+    blur: p('number', '흐림 정도 (shadow · glow)'),
+    color: p('color', '효과 색상 (shadow · glow)'),
+    alpha: p('number', '효과 불투명도 0~1 (shadow · glow)')
+  };
+  op('applyEffect', {
+    undoable: true, group: '효과', desc: '비파괴 효과를 적용합니다. 같은 종류가 이미 있으면 값을 갱신합니다.',
+    params: (function () {
+      var o = { query: Q, type: p('string', '효과 종류', { enum: ['blur', 'shadow', 'glow'], required: true }) };
+      for (var k in FX_PARAMS) o[k] = FX_PARAMS[k];
+      return o;
+    })(),
+    returns: 'id[]',
+    run: function (ctx, a) {
+      var FX = AI.effects;
+      if (!FX.DEFS[a.type]) throw err('BAD_EFFECT', '알 수 없는 효과: ' + a.type);
+      withSel(ctx, a.query, 'applyEffect', function (list) {
+        list.forEach(function (it) {
+          var base = null;
+          (it.effects || []).forEach(function (e) { if (!base && e.type === a.type) base = e; });
+          var e2 = base || FX.create(a.type);
+          ['radius', 'dx', 'dy', 'blur', 'alpha'].forEach(function (k) {
+            if (a[k] != null && e2[k] !== undefined) e2[k] = a[k];
+          });
+          if (a.color != null && e2.color !== undefined) e2.color = normalizeHex(a.color) || e2.color;
+          if (!base) { it.effects = it.effects || []; it.effects.push(e2); }
+        });
+      });
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+  op('clearEffects', {
+    undoable: true, group: '효과', desc: '적용된 효과를 모두 제거합니다.', params: { query: Q }, returns: 'id[]',
+    run: function (ctx, a) {
+      withSel(ctx, a.query, 'clearEffects', function (list) {
+        list.forEach(function (it) { AI.effects.clear(it); });
+      });
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+  op('effects', {
+    undoable: false, group: '효과', desc: '대상에 적용된 효과 목록을 반환합니다.', params: { query: Q },
+    run: function (ctx, a) {
+      return need(ctx, a.query, 'effects').map(function (it) {
+        return { id: it.id, effects: AI.effects.list(it).map(function (e) { return U.deepCopy(e); }) };
+      });
+    }
+  });
+
+  /* ---------- 획 화살표 ---------- */
+  var ARROW_ENUM = ['none', 'arrow', 'triangle', 'circle', 'square', 'bar'];
+  op('setArrowheads', {
+    undoable: true, group: '스타일', desc: '열린 패스의 시작 · 끝 화살표를 지정합니다.',
+    params: {
+      query: Q,
+      start: p('string', '시작 화살표', { enum: ARROW_ENUM }),
+      end: p('string', '끝 화살표', { enum: ARROW_ENUM }),
+      scale: p('number', '화살표 비율 (%)')
+    },
+    returns: 'id[]',
+    run: function (ctx, a) {
+      if (a.start == null && a.end == null && a.scale == null) {
+        throw err('NO_ARGS', 'setArrowheads: start · end · scale 중 하나는 지정해야 합니다');
+      }
+      withSel(ctx, a.query, 'setArrowheads', function () {
+        if (a.start != null) E.applyStrokeProp(ctx, 'arrowStart', a.start);
+        if (a.end != null) E.applyStrokeProp(ctx, 'arrowEnd', a.end);
+        if (a.scale != null) E.applyStrokeProp(ctx, 'arrowScale', U.clamp(a.scale, 1, 1000));
+      });
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+
+  /* ---------- 개별 변형 ---------- */
+  op('transformEach', {
+    undoable: true, group: '변형', desc: '선택한 오브젝트를 각자의 기준점 기준으로 변형합니다.',
+    params: {
+      query: Q,
+      scaleX: p('number', '가로 비율 (%)', { default: 100 }),
+      scaleY: p('number', '세로 비율 (%)', { default: 100 }),
+      dx: p('number', '가로 이동', { default: 0 }),
+      dy: p('number', '세로 이동', { default: 0 }),
+      angle: p('number', '회전 각도 (°, 반시계)', { default: 0 }),
+      anchor: p('number', '기준점 0~8 (0=좌상단, 4=가운데)', { default: 4 }),
+      reflectX: p('boolean', 'X 반사'), reflectY: p('boolean', 'Y 반사'),
+      random: p('number', '임의 적용 (참이면 오브젝트마다 임의 값)')
+    },
+    run: function (ctx, a) {
+      withSel(ctx, a.query, 'transformEach', function () {
+        E.transformEach(ctx, {
+          sx: a.scaleX == null ? 100 : a.scaleX, sy: a.scaleY == null ? 100 : a.scaleY,
+          dx: a.dx || 0, dy: a.dy || 0, angle: a.angle || 0,
+          anchor: a.anchor == null ? 4 : a.anchor,
+          reflectX: !!a.reflectX, reflectY: !!a.reflectY, random: !!a.random
+        });
+      });
+      return rect(Rn.selectionBounds(ctx, true));
+    }
+  });
+
+  /* ---------- 이미지 ---------- */
+  op('cropImage', {
+    undoable: true, group: '이미지', desc: '이미지와 그 위의 도형을 함께 지정하면 도형 경계로 이미지를 자릅니다.',
+    params: { query: Q }, returns: 'id',
+    run: function (ctx, a) {
+      var okRes;
+      withSel(ctx, a.query, 'cropImage', function () { okRes = E.cropImage(ctx); });
+      if (okRes === false) throw err('CROP_FAILED', 'cropImage: 이미지와 자를 도형을 함께 선택하세요');
+      return ctx.sel[0] ? ctx.sel[0].id : null;
+    }
+  });
+  op('imageTrace', {
+    undoable: true, group: '이미지', desc: '이미지를 벡터 패스 그룹으로 추적합니다 (브라우저 전용).',
+    params: {
+      query: Q,
+      preset: p('string', '사전 설정', { enum: Object.keys(AI.trace ? AI.trace.PRESETS : {}) }),
+      mode: p('string', '모드', { enum: ['bw', 'gray', 'color'] }),
+      colors: p('number', '색상 수 (gray · color)'),
+      threshold: p('number', '한계값 0~255 (bw)'),
+      path: p('number', '패스 단순화 허용치 — 클수록 단순'),
+      noise: p('number', '노이즈 제거 최소 면적 (px²)'),
+      curves: p('boolean', '곡선으로 맞춤', { default: true })
+    },
+    returns: 'id',
+    run: function (ctx, a) {
+      var TR = AI.trace;
+      if (!TR || !U.hasDOM) throw err('NO_DOM', 'imageTrace: 브라우저 환경에서만 사용할 수 있습니다');
+      var list = need(ctx, a.query, 'imageTrace');
+      var img = null;
+      list.forEach(function (it) { if (!img && it.type === 'image') img = it; });
+      if (!img) throw err('NO_IMAGE', 'imageTrace: 이미지를 선택하세요');
+      var el = Rn.getImage(img.src);
+      if (!el || !el.complete || !el.naturalWidth) throw err('IMAGE_LOADING', 'imageTrace: 이미지를 아직 읽는 중입니다');
+
+      var P = (a.preset && TR.PRESETS[a.preset]) || TR.PRESETS.color6;
+      var opt = {
+        mode: a.mode || P.mode,
+        colors: a.colors == null ? P.colors : a.colors,
+        threshold: a.threshold == null ? P.threshold : a.threshold,
+        path: a.path == null ? P.path : a.path,
+        noise: a.noise == null ? P.noise : a.noise,
+        curves: a.curves !== false
+      };
+      var g = TR.toGroup(ctx, img, TR.traceImage(el, opt), opt);
+      if (!g) throw err('TRACE_EMPTY', 'imageTrace: 추적 결과가 비어 있습니다');
+      var loc = Model.locate(ctx.doc, img);
+      if (loc) loc.list.splice(loc.index, 1, g);
+      else Model.activeLayer(ctx.doc).children.push(g);
+      ctx.sel = [g];
+      return g.id;
     }
   });
 

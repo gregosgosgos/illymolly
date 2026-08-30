@@ -896,6 +896,411 @@ await check('postMessage 브리지로 외부에서 제어', async () => {
   return `ping v${out.ping.version} · ${out.opCount}개 연산 · ${out.madeId} · 배치 ${out.batchCount}개 · SVG ${out.svgLen}B`;
 });
 
+/* ---------------- 일러스트레이터 메뉴 기능 (효과 · 대지 · 안내선 · 추적) ---------------- */
+
+await check('효과 > 흐림 효과 > 가우시안 흐림 — 미리 보기 · 바운딩 확장', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 400));
+    const r = AI.model.newRect(100, 100, 100, 100, 0);
+    r.fill = AI.color.solid('#3366cc');
+    app.doc.layers[0].children.push(r);
+    AI.sel.set(app, [r]);
+  });
+  await ev(() => AI.commands.run('fxBlur'));
+  await page.waitForSelector('.dlg');
+  const title = await page.textContent('.dlg-title');
+  await page.fill('#dlgf-radius', '10');
+  await page.press('#dlgf-radius', 'Tab');
+  await page.waitForTimeout(60);
+  const preview = await ev(() => AI.effects.list(AI.app.sel[0]).length);
+  await page.click('.dlg-btn:has-text("확인")');
+  await page.waitForTimeout(80);
+  const r2 = await ev(() => {
+    const it = AI.app.sel[0];
+    const wm = AI.model.worldMatrix(AI.app.doc, it);
+    const vis = AI.render.boundsM(it, wm, false, 1);     /* 미리보기(효과 포함) 경계 */
+    const geo = AI.render.boundsM(it, wm, true, 1);      /* 기하 경계 — 효과에 영향받지 않는다 */
+    return {
+      n: AI.effects.list(it).length,
+      type: AI.effects.list(it)[0].type,
+      radius: AI.effects.list(it)[0].radius,
+      grew: Math.round((vis.x2 - vis.x) - (geo.x2 - geo.x)),
+      geoW: Math.round(geo.x2 - geo.x),
+      label: AI.effects.label(AI.effects.list(it)[0]),
+      panel: document.querySelectorAll('#fx-list .fx-row').length
+    };
+  });
+  if (title !== '가우시안 흐림') throw new Error('제목=' + title);
+  if (preview !== 1) throw new Error('미리보기 효과 수=' + preview);
+  if (r2.n !== 1 || r2.type !== 'blur' || r2.radius !== 10) throw new Error('효과=' + JSON.stringify(r2));
+  if (r2.grew !== 60) throw new Error('바운딩 확장=' + r2.grew);   /* radius*3 양쪽 = 60 */
+  if (r2.geoW !== 100) throw new Error('기하 경계가 바뀜=' + r2.geoW);
+  if (r2.panel !== 1) throw new Error('패널 행=' + r2.panel);
+  return `${r2.label} · 바운딩 +${r2.grew}pt · 효과 패널 ${r2.panel}행`;
+});
+
+await check('효과 취소는 원래 모양을 되돌린다', async () => {
+  await ev(() => AI.commands.run('fxShadow'));
+  await page.waitForSelector('.dlg');
+  await page.fill('#dlgf-dy', '20');
+  await page.press('#dlgf-dy', 'Tab');
+  await page.waitForTimeout(60);
+  const during = await ev(() => AI.effects.list(AI.app.sel[0]).length);
+  await page.click('.dlg-btn:has-text("취소")');
+  await page.waitForTimeout(60);
+  const after = await ev(() => AI.effects.list(AI.app.sel[0]).map(e => e.type).join(','));
+  if (during !== 2) throw new Error('미리보기 중 효과 수=' + during);
+  if (after !== 'blur') throw new Error('취소 후=' + after);
+  return '미리보기 2개 → 취소 후 blur 만 남음';
+});
+
+await check('마지막 효과 적용 (Ctrl+Shift+E) · 효과 패널 삭제', async () => {
+  await ev(() => {
+    const app = AI.app;
+    const r = AI.model.newRect(250, 250, 60, 60, 0);
+    app.doc.layers[0].children.push(r);
+    AI.sel.set(app, [r]);
+  });
+  await ev(() => { AI.app.lastEffect = { type: 'glow', blur: 8, color: '#ffcc00', alpha: 0.8 }; });
+  await ev(() => AI.commands.run('fxLast'));
+  await page.waitForTimeout(60);
+  const applied = await ev(() => AI.effects.list(AI.app.sel[0]).map(e => e.type).join(','));
+  await page.waitForSelector('#fx-list .fx-del');
+  await page.click('#fx-list .fx-del');
+  await page.waitForTimeout(80);
+  const left = await ev(() => AI.effects.list(AI.app.sel[0]).length);
+  const undone = await ev(() => { AI.commands.run('undo'); return AI.effects.list(AI.app.sel[0]).length; });
+  if (applied !== 'glow') throw new Error('적용=' + applied);
+  if (left !== 0) throw new Error('삭제 후=' + left);
+  if (undone !== 1) throw new Error('삭제 취소 후=' + undone);
+  return 'glow 반복 적용 · 패널에서 삭제 · 실행 취소로 복원';
+});
+
+await check('효과가 SVG 필터로 내보내진다', async () => {
+  const svg = await ev(() => AI.io.toSVG(AI.app));
+  if (!/<filter id="fx/.test(svg)) throw new Error('filter 정의 없음');
+  if (!/filter="url\(#fx/.test(svg)) throw new Error('filter 참조 없음');
+  if (!/feDropShadow|feGaussianBlur/.test(svg)) throw new Error('필터 원소 없음');
+  return 'filter 정의 · 참조 · feGaussianBlur/feDropShadow 포함';
+});
+
+await check('획 패널 화살표 — 시작/끝/비율 · 뒤바꾸기 · SVG marker', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 400));
+    const l = AI.model.newLine(50, 200, 350, 200);
+    l.fill = AI.color.none();
+    l.stroke = AI.model.mkStroke('#000000', 4);
+    app.doc.layers[0].children.push(l);
+    AI.sel.set(app, [l]);
+    AI.ui.syncAll(app);
+  });
+  await page.selectOption('#sk-a2', 'arrow');
+  await page.waitForTimeout(60);
+  await page.fill('#sk-ascale', '150');
+  await page.press('#sk-ascale', 'Enter');
+  await page.waitForTimeout(60);
+  await page.click('#sk-aswap');
+  await page.waitForTimeout(60);
+  const r = await ev(() => {
+    const st = AI.app.sel[0].stroke;
+    return { start: st.arrowStart, end: st.arrowEnd, scale: st.arrowScale, svg: AI.io.toSVG(AI.app) };
+  });
+  if (r.start !== 'arrow' || r.end !== 'none') throw new Error('뒤바꾸기 실패 ' + r.start + '/' + r.end);
+  if (r.scale !== 150) throw new Error('비율=' + r.scale);
+  if (!/<marker /.test(r.svg) || !/marker-start="url\(/.test(r.svg)) throw new Error('SVG marker 누락');
+  return '끝→시작 뒤바꾸기 · 비율 150% · SVG <marker> 출력';
+});
+
+await check('개별 변형 (Ctrl+Alt+Shift+D) — 각자의 중심 기준', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(600, 400));
+    const a = AI.model.newRect(50, 50, 100, 100, 0);
+    const b = AI.model.newRect(300, 50, 100, 100, 0);
+    app.doc.layers[0].children.push(a, b);
+    AI.sel.set(app, [a, b]);
+  });
+  await ev(() => AI.commands.run('transformEach'));
+  await page.waitForSelector('.dlg');
+  const t = await page.textContent('.dlg-title');
+  await page.fill('#dlgf-sx', '200');
+  await page.fill('#dlgf-sy', '200');
+  await page.press('#dlgf-sy', 'Tab');
+  await page.waitForTimeout(80);
+  await page.click('.dlg-btn:has-text("확인")');
+  await page.waitForTimeout(80);
+  const r = await ev(() => AI.app.doc.layers[0].children.map(it => {
+    const b = AI.render.worldBounds(AI.app.doc, it, true);
+    return [Math.round(b.x), Math.round(b.y), Math.round(b.x2 - b.x)].join(',');
+  }));
+  if (t !== '개별 변형') throw new Error('제목=' + t);
+  /* 각자 자기 중심(100,100)/(350,100)에서 2배 → 각각 200폭, 중심 유지 */
+  if (r[0] !== '0,0,200') throw new Error('첫째=' + r[0]);
+  if (r[1] !== '250,0,200') throw new Error('둘째=' + r[1]);
+  return `각자 중심에서 200% — ${r.join(' / ')}`;
+});
+
+await check('이미지 자르기 (크롭)', async () => {
+  const r = await page.evaluate(async (src) => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 400));
+    const im = AI.model.newImage(src, 0, 0, 200, 200);
+    const clip = AI.model.newRect(50, 50, 100, 100, 0);
+    app.doc.layers[0].children.push(im, clip);
+    await new Promise(res => { const x = AI.render.getImage(src, res); if (x.complete) res(); });
+    AI.sel.set(app, [im, clip]);
+    AI.commands.run('cropImage');
+    const it = app.doc.layers[0].children[0];
+    const b = AI.render.worldBounds(app.doc, it, true);
+    return {
+      n: app.doc.layers[0].children.length,
+      crop: it.crop && [it.crop.x, it.crop.y, it.crop.w, it.crop.h].map(v => +v.toFixed(3)).join(','),
+      bounds: [b.x, b.y, b.x2 - b.x, b.y2 - b.y].join(','),
+      svgClip: /clip-path="url\(/.test(AI.io.toSVG(app))
+    };
+  }, PNG1x1);
+  if (r.n !== 1) throw new Error('자른 뒤 개수=' + r.n);
+  if (r.crop !== '0.25,0.25,0.5,0.5') throw new Error('crop=' + r.crop);
+  if (r.bounds !== '50,50,100,100') throw new Error('bounds=' + r.bounds);
+  if (!r.svgClip) throw new Error('SVG clip-path 누락');
+  return `crop=${r.crop} · 배치 ${r.bounds} · SVG clip-path 포함`;
+});
+
+await check('이미지 추적 — 사전 설정 · 미리 보기 · 확장', async () => {
+  const src = await ev(() => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 96;
+    const x = c.getContext('2d');
+    x.fillStyle = '#ffffff'; x.fillRect(0, 0, 96, 96);
+    x.fillStyle = '#000000';
+    x.beginPath(); x.arc(48, 48, 30, 0, Math.PI * 2); x.fill();
+    return c.toDataURL('image/png');
+  });
+  await page.evaluate(async (s) => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(300, 300));
+    const im = AI.model.newImage(s, 0, 0, 96, 96);
+    app.doc.layers[0].children.push(im);
+    await new Promise(res => { const x = AI.render.getImage(s, res); if (x.complete) res(); });
+    AI.sel.set(app, [im]);
+  }, src);
+  await ev(() => AI.commands.run('imageTrace'));
+  await page.waitForSelector('.dlg');
+  await page.selectOption('#dlgf-preset', 'bwLogo');
+  await page.waitForTimeout(60);
+  await page.check('#dlgf-preview');
+  await page.waitForTimeout(400);
+  const during = await ev(() => ({
+    n: AI.app.doc.layers[0].children.length,
+    imgHidden: AI.app.doc.layers[0].children[0].visible === false,
+    info: document.querySelector('.dlg-info').textContent
+  }));
+  await page.click('.dlg-btn:has-text("확인")');
+  await page.waitForTimeout(500);
+  const after = await ev(() => {
+    const ch = AI.app.doc.layers[0].children;
+    const g = ch[0];
+    const b = AI.render.worldBounds(AI.app.doc, g, true);
+    return {
+      n: ch.length, type: g.type, name: g.name, kids: g.children.length,
+      bounds: [b.x, b.y, b.x2 - b.x, b.y2 - b.y].map(v => Math.round(v)).join(',')
+    };
+  });
+  if (during.n !== 2 || !during.imgHidden) throw new Error('미리 보기 상태=' + JSON.stringify(during));
+  if (!/패스 \d+/.test(during.info)) throw new Error('정보 없음: ' + during.info);
+  if (after.n !== 1 || after.type !== 'group') throw new Error('확장 결과=' + JSON.stringify(after));
+  if (after.kids < 1) throw new Error('패스 없음');
+  /* 원(지름 60)이 96×96 안 가운데 — 대략 (18,18,60,60) */
+  const [bx, by, bw, bh] = after.bounds.split(',').map(Number);
+  if (Math.abs(bw - 60) > 8 || Math.abs(bh - 60) > 8) throw new Error('추적 바운딩=' + after.bounds);
+  if (Math.abs(bx - 18) > 8 || Math.abs(by - 18) > 8) throw new Error('추적 위치=' + after.bounds);
+  return `${during.info} · 그룹 "${after.name}" 패스 ${after.kids}개 · 바운딩 ${after.bounds}`;
+});
+
+await check('대지 패널 — 목록 · 추가 · 선택에 맞추기 · 재정렬', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(200, 200));
+    const r = AI.model.newRect(400, 400, 120, 60, 0);
+    app.doc.layers[0].children.push(r);
+    AI.sel.set(app, [r]);
+    AI.ui.syncAll(app);
+  });
+  const rows0 = await ev(() => document.querySelectorAll('#p-artboards .ab-row').length);
+  await page.click('#p-artboards [data-abcmd="newArtboard"]');
+  await page.waitForTimeout(80);
+  const rows1 = await ev(() => document.querySelectorAll('#p-artboards .ab-row').length);
+  await ev(() => { AI.sel.set(AI.app, [AI.app.doc.layers[0].children[0]]); });
+  await page.click('#p-artboards [data-abcmd="fitArtboardToSelection"]');
+  await page.waitForTimeout(80);
+  const fit = await ev(() => {
+    const ab = AI.app.doc.artboards[AI.app.doc.activeArtboard];
+    return [ab.x, ab.y, ab.w, ab.h].map(v => Math.round(v)).join(',');
+  });
+  await ev(() => { AI.edit.rearrangeArtboards(AI.app, 2, 20); });
+  const arranged = await ev(() => AI.app.doc.artboards.map(a => Math.round(a.x) + ',' + Math.round(a.y)).join(' '));
+  const active = await ev(() => document.querySelectorAll('#p-artboards .ab-row.on').length);
+  if (rows0 !== 1 || rows1 !== 2) throw new Error(`행 ${rows0} → ${rows1}`);
+  if (fit !== '400,400,120,60') throw new Error('맞추기=' + fit);
+  if (!/^0,0 /.test(arranged)) throw new Error('재정렬=' + arranged);
+  if (active !== 1) throw new Error('활성 표시=' + active);
+  return `대지 ${rows0}→${rows1}개 · 선택에 맞춤 ${fit} · 재정렬 ${arranged}`;
+});
+
+await check('안내선 — 잠금 해제 후 캔버스에서 이동 · 안내선 해제', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 400));
+    AI.viewT.setZoom(app, 1);
+    app.view.tx = 0; app.view.ty = 0;
+    app.prefs.guides = true;
+    app.doc.guides = [{ axis: 'v', pos: 100 }];
+  });
+  const lockedDefault = await ev(() => AI.app.prefs.guidesLocked !== false);
+  await ev(() => AI.commands.run('lockGuides'));
+  const p0 = await ev(() => AI.viewT.toScreen(AI.app, 100, 0));
+  await drag({ x: box.x + p0.x, y: box.y + 100 }, { x: box.x + p0.x + 60, y: box.y + 100 });
+  const moved = await ev(() => Math.round(AI.app.doc.guides[0].pos));
+  await ev(() => AI.commands.run('undo'));
+  const back = await ev(() => Math.round(AI.app.doc.guides[0].pos));
+  await ev(() => AI.commands.run('releaseGuides'));
+  const rel = await ev(() => ({
+    guides: AI.app.doc.guides.length,
+    lines: AI.app.doc.layers[0].children.filter(i => i.name === '안내선').length
+  }));
+  if (!lockedDefault) throw new Error('기본값이 잠김이 아님');
+  if (moved !== 160) throw new Error('이동 후=' + moved);
+  if (back !== 100) throw new Error('실행 취소 후=' + back);
+  if (rel.guides !== 0 || rel.lines !== 1) throw new Error('해제=' + JSON.stringify(rel));
+  return `기본 잠김 · 해제 후 100 → ${moved} · undo 복원 · 안내선 해제 → 선 ${rel.lines}개`;
+});
+
+await check('레이어 — 새 레이어로 모으기 · 레이어로 배포 · 병합', async () => {
+  const r = await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 400));
+    const a = AI.model.newRect(10, 10, 50, 50, 0);
+    const b = AI.model.newRect(80, 10, 50, 50, 0);
+    const c = AI.model.newRect(150, 10, 50, 50, 0);
+    app.doc.layers[0].children.push(a, b, c);
+    AI.sel.set(app, [a, b]);
+    AI.commands.run('collectInNewLayer');
+    const afterCollect = app.doc.layers.map(l => l.children.length).join('/');
+    AI.commands.run('releaseToLayers');
+    const afterRelease = app.doc.layers.length;
+    AI.commands.run('mergeLayers');
+    return {
+      afterCollect, afterRelease,
+      merged: app.doc.layers.length,
+      items: app.doc.layers[0].children.length
+    };
+  });
+  if (r.afterCollect !== '1/2') throw new Error('모으기=' + r.afterCollect);
+  if (r.afterRelease !== 3) throw new Error('배포 후 레이어=' + r.afterRelease);
+  if (r.merged !== 1 || r.items !== 3) throw new Error('병합=' + JSON.stringify(r));
+  return `모으기 ${r.afterCollect} · 배포 ${r.afterRelease}개 레이어 · 병합 1개(오브젝트 ${r.items})`;
+});
+
+await check('정렬 — 키 오브젝트 · 대지 기준', async () => {
+  const r = await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 400));
+    const a = AI.model.newRect(10, 10, 50, 50, 0);
+    const b = AI.model.newRect(200, 100, 80, 80, 0);
+    app.doc.layers[0].children.push(a, b);
+    AI.sel.set(app, [a, b]);
+    app.alignTo = 'artboard';
+    AI.commands.run('alignHCenter');
+    const cx = app.doc.layers[0].children.map(it => {
+      const bb = AI.render.worldBounds(app.doc, it, true);
+      return Math.round((bb.x + bb.x2) / 2);
+    }).join(',');
+    app.alignTo = 'key';
+    app.keyObject = b;
+    AI.commands.run('alignTop');
+    const tops = app.doc.layers[0].children.map(it => Math.round(AI.render.worldBounds(app.doc, it, true).y)).join(',');
+    app.alignTo = 'selection';
+    app.keyObject = null;
+    return { cx, tops };
+  });
+  if (r.cx !== '200,200') throw new Error('대지 가운데=' + r.cx);
+  if (r.tops !== '100,100') throw new Error('키 오브젝트 위쪽=' + r.tops);
+  return `대지 가운데 ${r.cx} · 키 오브젝트 위쪽 ${r.tops}`;
+});
+
+await check('패스파인더 오리기 · 자르기 · 뒷면 제외', async () => {
+  const r = await ev(() => {
+    const app = AI.app;
+    function area() {
+      let s = 0;
+      AI.model.walk(app.doc, it => {
+        if (it.type !== 'path') return;
+        const m = AI.model.worldMatrix(app.doc, it);
+        it.subs.forEach(sub => {
+          const pts = AI.geom.flattenSub(sub, 0.2).map(p => AI.mat.apply(m, p.x, p.y));
+          s += Math.abs(AI.pathfinder.area(pts));
+        });
+      });
+      return Math.round(s);
+    }
+    const out = {};
+    ['crop', 'trim', 'minusBack'].forEach(op => {
+      app.setDoc(AI.model.newDoc(400, 400));
+      const a = AI.model.newRect(50, 50, 100, 100, 0);
+      const b = AI.model.newRect(100, 100, 100, 100, 0);
+      app.doc.layers[0].children.push(a, b);
+      AI.sel.set(app, [a, b]);
+      AI.commands.run('pf_' + op);
+      out[op] = area();
+    });
+    return out;
+  });
+  /* crop: 두 사각형의 교집합(50×50) / trim: 겹치는 부분을 앞면이 가져감 → 총 17500 / minusBack: 앞면 - 뒷면 = 7500 */
+  if (r.crop !== 2500) throw new Error('crop=' + r.crop);
+  if (r.trim !== 17500) throw new Error('trim=' + r.trim);
+  if (r.minusBack !== 7500) throw new Error('minusBack=' + r.minusBack);
+  return `오리기 ${r.crop} · 자르기 ${r.trim} · 뒷면 제외 ${r.minusBack}`;
+});
+
+await check('새 연산이 API 로도 노출된다', async () => {
+  const r = await ev(() => {
+    const doc = illy.newDocument({ width: 300, height: 300 });
+    const id = illy.rect({ x: 20, y: 20, width: 100, height: 100, fill: '#ff0000' });
+    illy.applyEffect({ query: id, type: 'shadow', dx: 6, dy: 6, blur: 4, color: '#000000', alpha: 0.6 });
+    const fx = illy.effects(id);
+    illy.setArrowheads({ query: id, end: 'triangle', scale: 120 });
+    illy.addGuide({ axis: 'v', position: 150 });
+    illy.transformEach({ query: id, scaleX: 50, scaleY: 50 });
+    const info = illy.get(id);
+    const b = info.geometricBounds;   /* bounds 는 효과를 포함한 미리보기 경계 */
+    const vis = info.bounds;
+    illy.fitArtboard({ mode: 'artwork' });
+    const ab = illy.documentInfo().artboards[0];
+    const names = illy.ops().map(o => o.name);
+    return {
+      fx: fx[0].effects[0],
+      bounds: [b.x, b.y, b.w, b.h].join(','),
+      visualGrew: Math.round(vis.w - b.w),
+      artboard: [ab.width, ab.height].map(Math.round).join(','),
+      guides: illy.guides().length,
+      has: ['applyEffect', 'clearEffects', 'effects', 'imageTrace', 'cropImage', 'transformEach',
+        'setArrowheads', 'mergeLayers', 'releaseToLayers', 'collectInLayer',
+        'fitArtboard', 'rearrangeArtboards', 'addGuide', 'guides', 'clearGuides', 'releaseGuides',
+        'setArtboard', 'removeArtboard'].every(n => names.indexOf(n) >= 0),
+      count: names.length
+    };
+  });
+  if (!r.has) throw new Error('누락된 연산이 있습니다');
+  if (r.fx.type !== 'shadow' || r.fx.dy !== 6) throw new Error('효과=' + JSON.stringify(r.fx));
+  if (r.bounds !== '45,45,50,50') throw new Error('개별 변형 bounds=' + r.bounds);
+  if (r.visualGrew !== 48) throw new Error('효과 경계 확장=' + r.visualGrew);   /* (blur*3+|dx|+|dy|)*2 */
+  if (r.guides !== 1) throw new Error('안내선=' + r.guides);
+  if (r.artboard !== '98,98') throw new Error('대지 맞춤=' + r.artboard);
+  return `${r.count}개 연산 · shadow · 개별변형 ${r.bounds} · 대지 ${r.artboard}`;
+});
+
 /* ---------------- 결과 ---------------- */
 console.log('\n=== Illymolly E2E ===');
 for (const [n, s, d] of results) console.log(`${s === 'OK' ? '✔' : '✘'} ${n}${d ? ' — ' + d : ''}`);

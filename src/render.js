@@ -93,6 +93,7 @@
       for (var i = 0; i < it.children.length; i++) {
         r = R.union(r, Rn.boundsM(it.children[i], M.mul(m, it.children[i].m), geo, sw));
       }
+      if (!geo && AI.effects.has(it) && !R.isEmpty(r)) r = R.grow(r, AI.effects.padding(it) * (sw == null ? 1 : sw));
       return r;
     }
     var b = (it.type === 'path') ? G.pathBounds(it, m) : Rn.xformBounds(Rn.localBounds(it), m);
@@ -100,6 +101,7 @@
       var al = it.stroke.align, k = al === 'inside' ? 0 : al === 'outside' ? 1 : 0.5;
       b = R.grow(b, (it.stroke.width || 0) * (sw == null ? 1 : sw) * k);
     }
+    if (!geo && AI.effects.has(it)) b = R.grow(b, AI.effects.padding(it) * (sw == null ? 1 : sw));
     return b;
   };
 
@@ -233,6 +235,51 @@
     for (var i = 0; i < list.length; i++) Rn.item(ctx, app, list[i], pm, alpha, inIso);
   }
 
+  /* 효과가 있는 아이템은 오프스크린에 그린 뒤 필터를 걸어 합성한다.
+     칠·획을 각각 그리면 그림자가 두 번 생기므로 반드시 한 번에 합성해야 한다. */
+  var scratch = null, sctx = null;
+  function getScratch(w, h) {
+    if (!scratch) {
+      if (!U.hasDOM) return null;
+      scratch = document.createElement('canvas');
+      sctx = scratch.getContext('2d');
+    }
+    if (scratch.width < w || scratch.height < h) {
+      scratch.width = Math.max(scratch.width, w);
+      scratch.height = Math.max(scratch.height, h);
+    }
+    sctx.setTransform(1, 0, 0, 1, 0, 0);
+    sctx.clearRect(0, 0, scratch.width, scratch.height);
+    return sctx;
+  }
+
+  function drawWithEffects(ctx, app, it, m, a, inIso) {
+    var sc = (app.view && app.view.scale) || 1;
+    var dpr = app.dpr || 1;
+    var b = Rn.boundsM(it, m, true, sc);
+    if (R.isEmpty(b)) return;
+    var strokePad = 0;
+    (function scan(o) {
+      if (o.type === 'group') { o.children.forEach(scan); return; }
+      if (o.stroke && o.stroke.type !== 'none') strokePad = Math.max(strokePad, o.stroke.width);
+    })(it);
+    var pad = (AI.effects.padding(it) + strokePad) * sc + 6;
+    var x0 = Math.floor(b.x - pad), y0 = Math.floor(b.y - pad);
+    var w = Math.ceil(R.w(b) + pad * 2) + 2, h = Math.ceil(R.h(b) + pad * 2) + 2;
+    var s2 = (w > 0 && h > 0 && w * dpr <= 6000 && h * dpr <= 6000)
+      ? getScratch(Math.ceil(w * dpr), Math.ceil(h * dpr)) : null;
+    if (!s2) { drawPlain(ctx, app, it, m, a, inIso); return; }
+
+    s2.setTransform(dpr, 0, 0, dpr, -x0 * dpr, -y0 * dpr);
+    drawPlain(s2, app, it, m, a, inIso);
+
+    ctx.save();
+    if (it.blend && it.blend !== 'normal') ctx.globalCompositeOperation = it.blend;
+    ctx.filter = AI.effects.filterString(it, sc) || 'none';
+    ctx.drawImage(scratch, 0, 0, Math.ceil(w * dpr), Math.ceil(h * dpr), x0, y0, w, h);
+    ctx.restore();
+  }
+
   Rn.item = function (ctx, app, it, pm, alpha, inIso) {
     if (!it.visible || it.__editing) return;
     var iso = app.isolation && app.isolation.length;
@@ -243,6 +290,14 @@
     if (iso && !inIso && it.type !== 'group') a *= 0.28;
     if (a <= 0.001) return;
 
+    if (AI.effects.has(it) && !app.prefs.outline && Rn.hasCanvas()) {
+      drawWithEffects(ctx, app, it, m, a, inIso);
+      return;
+    }
+    drawPlain(ctx, app, it, m, a, inIso);
+  };
+
+  function drawPlain(ctx, app, it, m, a, inIso) {
     if (it.type === 'group') {
       ctx.save();
       if (it.blend && it.blend !== 'normal') ctx.globalCompositeOperation = it.blend;
@@ -266,7 +321,13 @@
     if (app.prefs.outline) {
       ctx.beginPath();
       if (it.type === 'path') G.tracePath(ctx, it, m);
-      else { var b = Rn.localBounds(it), q = [[b.x, b.y], [b.x2, b.y], [b.x2, b.y2], [b.x, b.y2]].map(function (p) { return M.apply(m, p[0], p[1]); }); ctx.moveTo(q[0].x, q[0].y); for (var k = 1; k < 4; k++) ctx.lineTo(q[k].x, q[k].y); ctx.closePath(); }
+      else {
+        var bb = Rn.localBounds(it);
+        var q = [[bb.x, bb.y], [bb.x2, bb.y], [bb.x2, bb.y2], [bb.x, bb.y2]].map(function (p) { return M.apply(m, p[0], p[1]); });
+        ctx.moveTo(q[0].x, q[0].y);
+        for (var k = 1; k < 4; k++) ctx.lineTo(q[k].x, q[k].y);
+        ctx.closePath();
+      }
       ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
       ctx.restore(); return;
     }
@@ -275,7 +336,7 @@
     else if (it.type === 'text') drawText(ctx, app, it, m);
     else if (it.type === 'image') drawImage(ctx, app, it, m);
     ctx.restore();
-  };
+  }
 
   function viewBoundsOf(it, m) {
     if (it.type === 'path') return G.pathBounds(it, m);
@@ -318,6 +379,7 @@
       G.tracePath(ctx, it, m);
       ctx.stroke();
       ctx.setLineDash([]);
+      drawArrows(ctx, app, it, m);
       return;
     }
 
@@ -340,6 +402,7 @@
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.restore();
+    drawArrows(ctx, app, it, m);
   }
 
   function drawImage(ctx, app, it, m) {
@@ -348,7 +411,17 @@
     ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
     if (im.complete && im.naturalWidth && !im.__failed) {
       ctx.imageSmoothingQuality = 'high';
-      try { ctx.drawImage(im, 0, 0, it.w, it.h); } catch (e) { }
+      try {
+        var c = it.crop;
+        if (c) {
+          ctx.drawImage(im,
+            c.x * im.naturalWidth, c.y * im.naturalHeight,
+            c.w * im.naturalWidth, c.h * im.naturalHeight,
+            0, 0, it.w, it.h);
+        } else {
+          ctx.drawImage(im, 0, 0, it.w, it.h);
+        }
+      } catch (e) { }
     } else {
       ctx.fillStyle = 'rgba(150,150,150,.25)';
       ctx.fillRect(0, 0, it.w, it.h);
@@ -357,6 +430,69 @@
       ctx.strokeRect(0, 0, it.w, it.h);
     }
     ctx.restore();
+  }
+
+  /* ---------------- 화살표 (획 패널) ---------------- */
+  var ARROWS = {
+    none: null,
+    /* 각 도형은 획 두께 1 기준 단위 좌표. 끝점이 원점, +x 가 진행 방향 */
+    arrow: function (ctx) {
+      ctx.moveTo(0, 0); ctx.lineTo(-3.2, 1.7); ctx.lineTo(-2.3, 0); ctx.lineTo(-3.2, -1.7); ctx.closePath();
+    },
+    triangle: function (ctx) {
+      ctx.moveTo(0, 0); ctx.lineTo(-2.8, 1.5); ctx.lineTo(-2.8, -1.5); ctx.closePath();
+    },
+    circle: function (ctx) { ctx.arc(-1.3, 0, 1.3, 0, 6.2832); },
+    square: function (ctx) { ctx.rect(-2.6, -1.3, 2.6, 2.6); },
+    bar: function (ctx) { ctx.rect(-0.35, -1.5, 0.7, 3); }
+  };
+  Rn.ARROW_TYPES = Object.keys(ARROWS);
+
+  /* 열린 서브패스의 양 끝에서 접선 방향을 구한다 */
+  function endpoints(it) {
+    var out = [];
+    it.subs.forEach(function (sub) {
+      if (sub.closed || sub.pts.length < 2) return;
+      var segs = G.segments(sub);
+      if (!segs.length) return;
+      var f = segs[0];
+      var fdx = (f.c1.x !== f.a.x || f.c1.y !== f.a.y) ? f.c1.x - f.a.x : f.b.x - f.a.x;
+      var fdy = (f.c1.x !== f.a.x || f.c1.y !== f.a.y) ? f.c1.y - f.a.y : f.b.y - f.a.y;
+      var l = segs[segs.length - 1];
+      var ldx = (l.c2.x !== l.b.x || l.c2.y !== l.b.y) ? l.b.x - l.c2.x : l.b.x - l.a.x;
+      var ldy = (l.c2.x !== l.b.x || l.c2.y !== l.b.y) ? l.b.y - l.c2.y : l.b.y - l.a.y;
+      out.push({ start: { p: f.a, dx: -fdx, dy: -fdy }, end: { p: l.b, dx: ldx, dy: ldy } });
+    });
+    return out;
+  }
+
+  function drawArrows(ctx, app, it, m) {
+    var s = it.stroke;
+    if (!s || s.type === 'none' || !(s.width > 0)) return;
+    if ((s.arrowStart || 'none') === 'none' && (s.arrowEnd || 'none') === 'none') return;
+    var sc = app.view.scale;
+    var size = s.width * sc * ((s.arrowScale == null ? 100 : s.arrowScale) / 100);
+    if (size <= 0.2) return;
+    var color = s.type === 'solid' ? Col.toCss(s.color, s.alpha) : '#000000';
+    endpoints(it).forEach(function (e) {
+      [['arrowStart', e.start], ['arrowEnd', e.end]].forEach(function (o) {
+        var kind = s[o[0]] || 'none';
+        var fn = ARROWS[kind];
+        if (!fn) return;
+        var sp = M.apply(m, o[1].p.x, o[1].p.y);
+        var d = M.applyV(m, o[1].dx, o[1].dy);
+        var a = Math.atan2(d.y, d.x);
+        ctx.save();
+        ctx.translate(sp.x, sp.y);
+        ctx.rotate(a);
+        ctx.scale(size, size);
+        ctx.beginPath();
+        fn(ctx);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.restore();
+      });
+    });
   }
 
   function drawText(ctx, app, it, m) {

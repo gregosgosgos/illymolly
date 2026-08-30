@@ -22,6 +22,8 @@
     buildStroke();
     buildAlign();
     buildPathfinder();
+    buildEffects();
+    buildArtboards();
     UI.buildLayers(a);
     bindPanelFolding();
     UI.syncAll(a);
@@ -606,6 +608,14 @@
   }
 
   /* ================= 획 ================= */
+  var ARROW_OPTS =
+    '<option value="none">없음</option>' +
+    '<option value="arrow">화살표</option>' +
+    '<option value="triangle">삼각형</option>' +
+    '<option value="circle">원</option>' +
+    '<option value="square">사각형</option>' +
+    '<option value="bar">막대</option>';
+
   function buildStroke() {
     var p = document.getElementById('p-stroke');
     p.innerHTML =
@@ -625,7 +635,12 @@
       '<button class="mini-btn" data-salign="outside" title="획을 바깥쪽 정렬" style="flex:1">바깥쪽</button>' +
       '</div>' +
       '<div class="row"><label style="min-width:30px">점선</label><input class="fld" id="sk-dash" placeholder="예: 4 2"></div>' +
-      '<div class="hint">점선은 공백으로 구분해 입력 (비우면 실선).<br>안쪽·바깥쪽 정렬은 닫힌 패스에만 적용됩니다.</div>';
+      '<div class="row"><label style="min-width:30px">화살표</label>' +
+      '<select class="fld" id="sk-a1" title="시작 화살표">' + ARROW_OPTS + '</select>' +
+      '<button class="mini-btn" id="sk-aswap" title="화살표 뒤바꾸기">⇄</button>' +
+      '<select class="fld" id="sk-a2" title="끝 화살표">' + ARROW_OPTS + '</select></div>' +
+      '<div class="row"><label style="min-width:30px">비율</label><input class="fld" id="sk-ascale" value="100"><span style="color:#9a9a9a">%</span></div>' +
+      '<div class="hint">점선은 공백으로 구분해 입력 (비우면 실선).<br>안쪽·바깥쪽 정렬은 닫힌 패스에만 적용됩니다.<br>화살표는 열린 패스의 시작·끝점에 표시됩니다.</div>';
 
     num(U.q('#sk-w', p), function () { return 1; }, function (v) {
       app.strokeWidth = v;
@@ -664,6 +679,31 @@
       E.applyStrokeProp(app, 'dash', arr);
       app.history.commit(); app.invalidate();
     });
+
+    /* 화살표 */
+    [['sk-a1', 'arrowStart'], ['sk-a2', 'arrowEnd']].forEach(function (o) {
+      U.on(U.q('#' + o[0], p), 'change', function () {
+        if (syncing) return;
+        app[o[1]] = this.value;
+        app.history.begin('화살표', app.doc);
+        E.applyStrokeProp(app, o[1], this.value);
+        app.history.commit(); app.invalidate(); UI.syncStyle(app);
+      });
+    });
+    U.on(U.q('#sk-aswap', p), 'click', function () {
+      var a1 = U.q('#sk-a1', p), a2 = U.q('#sk-a2', p);
+      var t = a1.value; a1.value = a2.value; a2.value = t;
+      app.arrowStart = a1.value; app.arrowEnd = a2.value;
+      app.history.begin('화살표 뒤바꾸기', app.doc);
+      E.applyStrokeProp(app, 'arrowStart', a1.value);
+      E.applyStrokeProp(app, 'arrowEnd', a2.value);
+      app.history.commit(); app.invalidate(); UI.syncStyle(app);
+    });
+    num(U.q('#sk-ascale', p), function () { return app.arrowScale == null ? 100 : app.arrowScale; }, function (v) {
+      v = U.clamp(v, 1, 1000);
+      app.arrowScale = v;
+      E.applyStrokeProp(app, 'arrowScale', v);
+    }, '화살표 비율');
   }
 
   /* ================= 정렬 ================= */
@@ -723,6 +763,113 @@
     else s += '<g fill="#333">' + A + '</g><g fill="' + f + '">' + B + '</g>';
     return s + '</svg>';
   }
+
+  /* ================= 효과 (모양) ================= */
+  function buildEffects() {
+    var p = document.getElementById('p-effects');
+    if (!p) return;
+    p.innerHTML =
+      '<div class="grid2">' +
+      '<button class="btn" data-fx="fxBlur" title="효과 &gt; 흐림 효과 &gt; 가우시안 흐림">흐림</button>' +
+      '<button class="btn" data-fx="fxShadow" title="효과 &gt; 스타일화 &gt; 그림자 만들기">그림자</button>' +
+      '</div>' +
+      '<div class="grid2" style="margin-top:5px">' +
+      '<button class="btn" data-fx="fxGlow" title="효과 &gt; 스타일화 &gt; 외부 광선">광선</button>' +
+      '<button class="btn" data-fx="fxLast" title="마지막 효과 적용 (Ctrl+Shift+E)">반복</button>' +
+      '</div>' +
+      '<div id="fx-list" class="fx-list"></div>' +
+      '<div class="grid2" style="margin-top:5px">' +
+      '<button class="btn" data-fx="fxClear">모양 지우기</button>' +
+      '<button class="btn" data-fx="expandAppearance">모양 확장</button>' +
+      '</div>' +
+      '<div class="hint">효과는 비파괴적입니다 — 원본 패스는 그대로 남고, 목록에서 다시 편집하거나 지울 수 있습니다.</div>';
+    U.qa('[data-fx]', p).forEach(function (b) { U.on(b, 'click', function () { C.run(b.dataset.fx); }); });
+  }
+
+  UI.syncEffects = function (a) {
+    var host = document.getElementById('fx-list');
+    if (!host) return;
+    var FX = AI.effects;
+    var it = a.sel.length === 1 ? a.sel[0] : null;
+    var list = it ? FX.list(it) : [];
+    if (!it) {
+      host.innerHTML = '<div class="fx-empty">' +
+        (a.sel.length ? a.sel.length + '개 선택됨 — 목록은 한 개만 선택했을 때 표시됩니다' : '선택 없음') + '</div>';
+      return;
+    }
+    if (!list.length) { host.innerHTML = '<div class="fx-empty">적용된 효과 없음</div>'; return; }
+    host.innerHTML = list.map(function (e, i) {
+      return '<div class="fx-row" data-i="' + i + '">' +
+        '<span class="fx-name" title="두 번 눌러 편집">' + U.esc(FX.label(e)) + '</span>' +
+        '<button class="mini-btn fx-edit" data-edit="' + i + '" title="편집">✎</button>' +
+        '<button class="mini-btn fx-del" data-del="' + i + '" title="삭제">✕</button>' +
+        '</div>';
+    }).join('');
+    U.qa('[data-edit]', host).forEach(function (b) {
+      U.on(b, 'click', function () { AI.dialogs.effect(app, list[+b.dataset.edit].type); });
+    });
+    U.qa('[data-del]', host).forEach(function (b) {
+      U.on(b, 'click', function () {
+        app.history.begin('효과 삭제', app.doc);
+        AI.effects.removeAt(it, +b.dataset.del);
+        app.history.commit();
+        app.invalidate();
+        UI.syncAll(app);
+      });
+    });
+    U.qa('.fx-name', host).forEach(function (n, i) {
+      U.on(n, 'dblclick', function () { AI.dialogs.effect(app, list[i].type); });
+    });
+  };
+
+  /* ================= 대지 ================= */
+  function buildArtboards() {
+    var p = document.getElementById('p-artboards');
+    if (!p) return;
+    p.innerHTML =
+      '<div id="ab-list" class="ab-list"></div>' +
+      '<div class="grid4" style="margin-top:5px">' +
+      '<button class="btn" data-abcmd="newArtboard" title="새 대지">＋</button>' +
+      '<button class="btn" data-abcmd="duplicateArtboard" title="대지 복제">⧉</button>' +
+      '<button class="btn" data-abcmd="artboardOptions" title="대지 옵션">⚙</button>' +
+      '<button class="btn" data-abcmd="deleteArtboard" title="대지 삭제">🗑</button>' +
+      '</div>' +
+      '<div class="grid2" style="margin-top:5px">' +
+      '<button class="btn" data-abcmd="fitArtboardToSelection" title="대지를 선택 항목에 맞추기">선택에 맞춤</button>' +
+      '<button class="btn" data-abcmd="fitArtboardToArtwork" title="대지를 아트웍 전체에 맞추기">아트웍에 맞춤</button>' +
+      '</div>' +
+      '<div class="grid2" style="margin-top:5px">' +
+      '<button class="btn" data-abcmd="rearrangeArtboards">모두 재정렬...</button>' +
+      '<button class="btn" data-abcmd="fitAll">전체 보기</button>' +
+      '</div>';
+    U.qa('[data-abcmd]', p).forEach(function (b) { U.on(b, 'click', function () { C.run(b.dataset.abcmd); }); });
+  }
+
+  UI.syncArtboards = function (a) {
+    var host = document.getElementById('ab-list');
+    if (!host) return;
+    var un = a.prefs.unit || 'pt';
+    host.innerHTML = a.doc.artboards.map(function (ab, i) {
+      return '<div class="ab-row' + (i === a.doc.activeArtboard ? ' on' : '') + '" data-ab="' + i + '">' +
+        '<span class="ab-i">' + (i + 1) + '</span>' +
+        '<span class="ab-name" title="두 번 눌러 이름 바꾸기">' + U.esc(ab.name) + '</span>' +
+        '<span class="ab-size">' + U.fmtUnit(ab.w, un) + ' × ' + U.fmtUnit(ab.h, un) + '</span>' +
+        '</div>';
+    }).join('');
+    U.qa('.ab-row', host).forEach(function (row) {
+      U.on(row, 'click', function () {
+        a.doc.activeArtboard = +row.dataset.ab;
+        AI.viewT.fitArtboard(a);
+        a.invalidate();
+        UI.syncStatus(a);
+        UI.syncArtboards(a);
+      });
+      U.on(row, 'dblclick', function () {
+        a.doc.activeArtboard = +row.dataset.ab;
+        AI.dialogs.artboardOptions(a);
+      });
+    });
+  };
 
   /* ================= 컨트롤 바 도구 옵션 (상황별) ================= */
   function optNum(label, id, value, title, onSet, width) {
@@ -977,7 +1124,8 @@
     if (al && document.activeElement !== al) al.value = Math.round(((cur && cur.alpha != null) ? cur.alpha : 1) * 100);
 
     var w = a.strokeWidth == null ? 1 : a.strokeWidth;
-    if (a.sel.length && a.sel[0].stroke) w = a.sel[0].stroke.width;
+    /* 획이 '없음'이면 width 가 없다 — 그때는 마지막으로 쓰던 두께를 그대로 보여 준다 */
+    if (a.sel.length && a.sel[0].stroke && a.sel[0].stroke.width != null) w = a.sel[0].stroke.width;
     var sw = document.getElementById('ctl-stroke-w');
     if (sw && document.activeElement !== sw) sw.value = String(w);
     var skw = document.getElementById('sk-w');
@@ -993,6 +1141,16 @@
     if (dashEl && document.activeElement !== dashEl) {
       var d = (a.sel.length && a.sel[0].stroke) ? a.sel[0].stroke.dash : a.strokeDash;
       dashEl.value = (d && d.length) ? d.join(' ') : '';
+    }
+    var sst = (a.sel.length && a.sel[0].stroke) ? a.sel[0].stroke : null;
+    [['sk-a1', 'arrowStart'], ['sk-a2', 'arrowEnd']].forEach(function (o) {
+      var el = document.getElementById(o[0]);
+      if (!el) return;
+      el.value = (sst && sst[o[1]]) || a[o[1]] || 'none';
+    });
+    var asc = document.getElementById('sk-ascale');
+    if (asc && document.activeElement !== asc) {
+      asc.value = String((sst && sst.arrowScale != null) ? sst.arrowScale : (a.arrowScale == null ? 100 : a.arrowScale));
     }
     syncing = false;
   };
@@ -1039,6 +1197,8 @@
     UI.syncStatus(a);
     UI.updateZoom(a);
     UI.syncIsolation(a);
+    UI.syncEffects(a);
+    UI.syncArtboards(a);
     UI.buildLayers(a);
   };
 })(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

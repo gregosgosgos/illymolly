@@ -18,7 +18,7 @@ const vm = require('vm');
 /* 브라우저와 같은 소스를 그대로 읽어 들인다 — 빌드 단계도, 코드 사본도 없다 */
 const CORE = [
   'util', 'color', 'model', 'geom', 'pathfinder', 'history',
-  'render', 'hit', 'view', 'edit', 'io', 'api'
+  'effects', 'render', 'hit', 'view', 'edit', 'trace', 'io', 'api'
 ];
 
 function load() {

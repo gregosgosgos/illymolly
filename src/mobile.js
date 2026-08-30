@@ -396,7 +396,7 @@
       var list = U.el('div', 'm-list');
       [['color', '색상'], ['gradient', '그레이디언트'], ['swatches', '견본'], ['stroke', '획'],
       ['type', '문자'], ['transform', '변형'], ['align', '정렬'], ['pathfinder', '패스파인더'],
-      ['layers', '레이어'], ['properties', '속성']]
+      ['effects', '효과'], ['artboards', '대지'], ['layers', '레이어'], ['properties', '속성']]
         .forEach(function (o) {
           var b = listItem(o[1]);
           U.on(b, 'click', function () { openPanel(o[0], o[1]); });
@@ -450,6 +450,11 @@
       bar.appendChild(chip('문자', { run: function () { openPanel('type', '문자'); } }));
     }
     bar.appendChild(chip('변형', { run: function () { openPanel('transform', '변형'); } }));
+    bar.appendChild(chip('효과', { run: function () { openPanel('effects', '효과 (모양)'); } }));
+    if (app.sel.some(function (x) { return x.type === 'image'; })) {
+      bar.appendChild(chip('이미지 추적', { run: function () { C.run('imageTrace'); } }));
+      bar.appendChild(chip('자르기', { run: function () { C.run('cropImage'); Mob.sync(); } }));
+    }
     bar.appendChild(U.el('span', 'm-sep'));
     bar.appendChild(chip('◀', { run: function () { C.nudge(app, -nudgeStep(), 0); } }));
     bar.appendChild(chip('▶', { run: function () { C.nudge(app, nudgeStep(), 0); } }));

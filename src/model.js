@@ -22,7 +22,11 @@
 
   /* ---------------- 기본 스타일 ---------------- */
   Model.defaultStroke = function () {
-    return { type: 'none', color: '#000000', alpha: 1, width: 1, cap: 'butt', join: 'miter', miter: 10, dash: [], dashOffset: 0, align: 'center' };
+    return {
+      type: 'none', color: '#000000', alpha: 1, width: 1,
+      cap: 'butt', join: 'miter', miter: 10, dash: [], dashOffset: 0, align: 'center',
+      arrowStart: 'none', arrowEnd: 'none', arrowScale: 100
+    };
   };
   Model.mkStroke = function (hex, w) {
     var s = Model.defaultStroke();

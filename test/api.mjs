@@ -296,6 +296,146 @@ check('캔버스 없이도 텍스트 바운딩을 계산한다', () => {
   return `근사 폭 ${b.w}, 높이 ${b.h}`;
 });
 
+/* ---------- 효과 · 대지 · 안내선 · 레이어 (새 연산) ---------- */
+check('applyEffect — 갱신 · SVG 필터 · 기하 경계 불변', () => {
+  const illy = fresh({ width: 300, height: 300 });
+  const id = illy.addRect({ x: 50, y: 50, width: 100, height: 100, fill: '#3366cc' });
+  illy.applyEffect({ query: id, type: 'blur', radius: 4 });
+  illy.applyEffect({ query: id, type: 'blur', radius: 10 });   /* 같은 종류는 갱신 */
+  illy.applyEffect({ query: id, type: 'shadow', dx: 5, dy: 5, blur: 3, alpha: 0.4 });
+  const fx = illy.effects(id)[0].effects;
+  eq(fx.length, 2, '효과 수');
+  eq(fx[0].radius, 10, 'blur 갱신');
+  eq(fx[1].type, 'shadow', '두 번째 효과');
+  const o = illy.get(id);
+  eq([o.geometricBounds.x, o.geometricBounds.w].join(','), '50,100', '기하 경계');
+  eq(o.bounds.w, 160, '미리보기 경계 (blur 10 × 3 × 2 + 100)');
+  const svg = illy.toSVG();
+  if (!/<filter id="fx/.test(svg) || !/feGaussianBlur/.test(svg) || !/feDropShadow/.test(svg)) {
+    throw new Error('SVG 필터 누락');
+  }
+  illy.clearEffects(id);
+  eq(illy.effects(id)[0].effects.length, 0, '효과 제거');
+  eq(illy.get(id).bounds.w, 100, '제거 후 경계');
+  return `blur 갱신 · shadow 추가 · 경계 100→160→100`;
+});
+
+check('setArrowheads — SVG marker 로 출력', () => {
+  const illy = fresh();
+  const id = illy.addLine({ x1: 20, y1: 20, x2: 200, y2: 20, stroke: '#000000', strokeWidth: 3 });
+  illy.setArrowheads({ query: id, start: 'circle', end: 'arrow', scale: 130 });
+  const st = illy.get(id).stroke;
+  eq(st.arrowStart, 'circle', '시작');
+  eq(st.arrowEnd, 'arrow', '끝');
+  eq(st.arrowScale, 130, '비율');
+  const svg = illy.toSVG();
+  if (!/<marker /.test(svg)) throw new Error('marker 정의 없음');
+  if (!/marker-start="url\(/.test(svg) || !/marker-end="url\(/.test(svg)) throw new Error('marker 참조 없음');
+  const bad = illy.batch([{ op: 'setArrowheads', args: { query: id } }]);
+  if (bad.ok) throw new Error('인자 없는 호출이 통과함');
+  return `circle → arrow · 130% · <marker> 출력 · 빈 호출은 ${bad.error.code}`;
+});
+
+check('transformEach — 각자의 기준점으로 변형', () => {
+  const illy = fresh({ width: 600, height: 300 });
+  illy.addRect({ x: 0, y: 0, width: 100, height: 100, name: 'A' });
+  illy.addRect({ x: 200, y: 0, width: 100, height: 100, name: 'B' });
+  illy.transformEach({ query: { type: 'path' }, scaleX: 50, scaleY: 50 });
+  const bs = illy.find({ type: 'path' }).map(id => {
+    const b = illy.get(id).geometricBounds;
+    return [b.x, b.y, b.w].join(',');
+  });
+  eq(bs[0], '25,25,50', 'A');
+  eq(bs[1], '225,25,50', 'B');
+  /* 기준점을 왼쪽 위(0)로 두면 각자의 좌상단이 고정된다 */
+  illy.undo();
+  illy.transformEach({ query: { type: 'path' }, scaleX: 50, scaleY: 50, anchor: 0 });
+  const bs2 = illy.find({ type: 'path' }).map(id => {
+    const b = illy.get(id).geometricBounds;
+    return [b.x, b.y, b.w].join(',');
+  });
+  eq(bs2.join(' | '), '0,0,50 | 200,0,50', '좌상단 고정');
+  return `가운데 ${bs.join(' / ')} · 좌상단 ${bs2.join(' / ')}`;
+});
+
+check('대지 — 추가 · 수정 · 맞추기 · 재정렬 · 삭제', () => {
+  const illy = fresh({ width: 200, height: 200 });
+  illy.addRect({ x: 400, y: 300, width: 120, height: 60 });
+  illy.fitArtboard({ mode: 'artwork' });
+  const ab0 = illy.documentInfo().artboards[0];
+  eq([ab0.x, ab0.y, ab0.width, ab0.height].join(','), '400,300,120,60', '아트웍에 맞춤');
+  illy.addArtboard({ width: 100, height: 100 });
+  illy.setArtboard({ index: 1, name: '두 번째', x: 999, y: 999 });
+  illy.rearrangeArtboards({ columns: 2, gap: 10 });
+  const abs = illy.documentInfo().artboards;
+  eq(abs.length, 2, '대지 수');
+  eq(abs[1].name, '두 번째', '이름');
+  eq([abs[0].x, abs[0].y, abs[1].x, abs[1].y].join(','), '0,0,130,0', '재정렬');
+  illy.removeArtboard({ index: 1 });
+  eq(illy.documentInfo().artboards.length, 1, '삭제 후');
+  const last = illy.batch([{ op: 'removeArtboard', args: {} }]);
+  if (last.ok) throw new Error('마지막 대지가 삭제됨');
+  return `맞춤 400,300,120,60 · 재정렬 0,0/130,0 · 마지막 대지는 ${last.error.code}`;
+});
+
+check('안내선 — 추가 · 조회 · 해제 · 지우기', () => {
+  const illy = fresh({ width: 300, height: 300 });
+  illy.addGuide({ axis: 'v', position: 100 });
+  illy.addGuide({ axis: 'h', position: 250 });
+  eq(illy.guides().length, 2, '안내선 수');
+  eq(illy.guides()[1].axis, 'h', '축');
+  const ids = illy.releaseGuides();
+  eq(ids.length, 2, '해제된 선');
+  eq(illy.guides().length, 0, '해제 후 안내선');
+  eq(illy.get(ids[0]).name, '안내선', '이름');
+  illy.undo();
+  eq(illy.guides().length, 2, '해제 실행 취소');
+  eq(illy.clearGuides(), 2, '지운 개수');
+  eq(illy.guides().length, 0, '지운 뒤');
+  return '추가 2 · 해제 2 · undo 복원 · 지우기 2';
+});
+
+check('레이어 구성 — 모으기 · 배포 · 병합', () => {
+  const illy = fresh();
+  const a = illy.addRect({ x: 0, y: 0, width: 20, height: 20, name: 'A' });
+  const b = illy.addRect({ x: 40, y: 0, width: 20, height: 20, name: 'B' });
+  illy.addRect({ x: 80, y: 0, width: 20, height: 20, name: 'C' });
+  illy.collectInLayer({ query: [a, b], name: '모음' });
+  let L = illy.documentInfo().layers;
+  eq(L.length, 2, '모으기 후 레이어');
+  eq(L[1].name + ':' + L[1].items, '모음:2', '새 레이어');
+  illy.releaseToLayers();
+  eq(illy.documentInfo().layers.length, 3, '배포 후 레이어');
+  illy.mergeLayers();
+  L = illy.documentInfo().layers;
+  eq(L.length, 1, '병합 후 레이어');
+  eq(L[0].items, 3, '병합 후 오브젝트');
+  return '모으기 2개 → 배포 3레이어 → 병합 1레이어(3개)';
+});
+
+check('imageTrace 는 Node 에서 안내와 함께 실패', () => {
+  const illy = fresh();
+  illy.addRect({ x: 0, y: 0, width: 10, height: 10 });
+  const r = illy.batch([{ op: 'imageTrace', args: {} }]);
+  if (r.ok) throw new Error('실패해야 함');
+  if (!/브라우저|이미지/.test(r.error.message)) throw new Error(r.error.message);
+  return r.error.message;
+});
+
+check('패스파인더 오리기는 맨 앞 오브젝트를 틀로만 쓴다', () => {
+  const illy = fresh({ width: 400, height: 400 });
+  illy.addRect({ x: 50, y: 50, width: 100, height: 100, fill: '#ff0000' });
+  illy.addRect({ x: 100, y: 100, width: 100, height: 100, fill: '#0000ff' });
+  illy.pathfinder({ query: { type: 'path' }, operation: 'crop' });
+  const ids = illy.find({ type: 'path' });
+  eq(ids.length, 1, '남은 조각');
+  const o = illy.get(ids[0]);
+  eq([o.geometricBounds.x, o.geometricBounds.y, o.geometricBounds.w, o.geometricBounds.h].join(','),
+    '100,100,50,50', '겹친 영역만');
+  eq(o.fill.color, '#ff0000', '아래 오브젝트의 칠을 이어받는다');
+  return '겹친 50×50 · 칠 #ff0000 (틀은 사라짐)';
+});
+
 /* ---------- 결과 ---------- */
 console.log('\n=== 자동화 API (Node 헤드리스) ===');
 let fail = 0;

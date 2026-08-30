@@ -6,7 +6,7 @@
      buttons:[{id,label,primary}], onChange(values, changedId, api),
      onDone(values, buttonId), onCancel()
    })
-   type: 'num' | 'text' | 'check' | 'select' | 'radio' | 'info' | 'sep' | 'ref'
+   type: 'num' | 'text' | 'check' | 'select' | 'radio' | 'color' | 'info' | 'sep' | 'ref'
    ========================================================================= */
 (function (AI) {
   'use strict';
@@ -69,6 +69,16 @@
       return row;
     }
     row.appendChild(U.el('span', 'dlg-label', f.label));
+    if (f.type === 'color') {
+      var ci = U.el('input', 'dlg-color');
+      ci.type = 'color';
+      ci.id = 'dlgf-' + f.id;
+      ci.value = f.value || '#000000';
+      row.appendChild(ci);
+      U.on(ci, 'input', function () { api.changed(f.id); });
+      U.on(ci, 'change', function () { api.changed(f.id); });
+      return row;
+    }
     if (f.type === 'select') {
       var sel = U.el('select', 'dlg-input');
       sel.id = 'dlgf-' + f.id;
@@ -192,7 +202,7 @@
     document.addEventListener('keydown', cur.key, true);
     U.on(back, 'mousedown', function (ev) { if (ev.target === back) done('cancel'); });
 
-    var first = box.querySelector('input:not([type=checkbox]):not([type=radio]), select');
+    var first = box.querySelector('input:not([type=checkbox]):not([type=radio]):not([type=color]), select');
     if (first) { first.focus(); if (first.select) first.select(); }
     if (opts.onChange) opts.onChange(read(), null, api);
     return api;

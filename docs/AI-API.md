@@ -124,14 +124,54 @@ illy.rotate({ angle: 90 })        // 선택자 없는 인자 객체
 | 조회 | `find` `get` `snapshot` `describe` |
 | 선택 | `select` `deselect` `selection` |
 | 수정 | `set` `remove` `duplicate` `arrange` `group` `ungroup` |
-| 변형 | `move` `setBounds` `rotate` `scale` `reflect` |
+| 변형 | `move` `setBounds` `rotate` `scale` `reflect` `transformEach` |
 | 정렬 | `align` `distribute` |
 | 패스 | `pathfinder` `clipMask` |
-| 레이어 | `addLayer` `setLayer` |
-| 대지 | `addArtboard` `gotoArtboard` |
+| 스타일 | `setArrowheads` |
+| 효과 | `applyEffect` `clearEffects` `effects` |
+| 이미지 | `cropImage` `imageTrace` *(브라우저 전용)* |
+| 레이어 | `addLayer` `setLayer` `mergeLayers` `releaseToLayers` `collectInLayer` |
+| 대지 | `addArtboard` `setArtboard` `removeArtboard` `gotoArtboard` `fitArtboard` `rearrangeArtboards` |
+| 안내선 | `addGuide` `guides` `clearGuides` `releaseGuides` |
 | 히스토리 | `undo` `redo` `history` |
 | 출력 | `toSVG` `toJSON` `loadJSON` `toPNG` |
 | GUI | `setTool` `zoom` *(브라우저 전용)* |
+
+### 효과 (비파괴)
+
+`applyEffect` 는 같은 종류의 효과가 이미 있으면 **새로 쌓지 않고 값을 갱신**합니다.
+따라서 같은 호출을 반복해도 효과가 중복되지 않습니다.
+
+```js
+illy.applyEffect({ query: '로고', type: 'blur', radius: 8 });
+illy.applyEffect({ query: '로고', type: 'shadow', dx: 4, dy: 4, blur: 6, color: '#000', alpha: 0.5 });
+illy.applyEffect({ query: '로고', type: 'glow', blur: 10, color: '#ffd166' });
+illy.effects('로고');       // [{ id, effects: [...] }]
+illy.clearEffects('로고');
+```
+
+효과는 `get(id).bounds`(미리보기 경계)만 넓히고 `geometricBounds` 는 바꾸지 않습니다.
+배치 계산에는 `geometricBounds` 를, 잘림 여부 판단에는 `bounds` 를 쓰세요.
+
+### 개별 변형 vs 일반 변형
+
+`scale` 등은 **선택 전체의 바운딩**을 기준으로 삼고,
+`transformEach` 는 **오브젝트마다 자기 바운딩**을 기준으로 삼습니다.
+
+```js
+illy.transformEach({ query: { type: 'path' }, scaleX: 50, scaleY: 50, anchor: 4 });
+illy.transformEach({ query: '*', angle: 15, random: true });   // 오브젝트마다 다른 값
+```
+
+### 이미지 추적
+
+`imageTrace` 는 캔버스가 필요해 브라우저에서만 동작합니다 (Node 에서는 `NO_DOM`).
+사전 설정 이름은 `bwLogo` `silhouette` `lineArt` `sketch` `gray3`
+`color3` `color6` `color16` `photoLow` `photoHigh` 입니다.
+
+```js
+const groupId = illy.imageTrace({ query: { type: 'image' }, preset: 'bwLogo', curves: true });
+```
 
 ### 색상 표기
 
@@ -176,6 +216,11 @@ illy.run('addRect', { x:0, y:0, width:10, colour:'red' });
 | `NO_LAYER` `NO_TOOL` | 이름으로 찾지 못함 |
 | `PF_EMPTY` | 패스파인더 결과가 비어 있음 |
 | `NO_CANVAS` | Node 에서 `toPNG` 호출 (→ `toSVG` 사용) |
+| `NO_DOM` | Node 에서 `imageTrace` 호출 (브라우저 전용) |
+| `NO_IMAGE` `IMAGE_LOADING` `TRACE_EMPTY` | 이미지 추적 대상/상태 문제 |
+| `CROP_FAILED` | `cropImage` 에 이미지와 자를 도형이 함께 있지 않음 |
+| `LAST_ARTBOARD` | 마지막 대지를 삭제하려 함 |
+| `NO_GUIDES` | 해제할 안내선이 없음 |
 | `GUI_ONLY` | 헤드리스에서 GUI 전용 연산 호출 |
 
 **실패한 연산은 문서를 전혀 건드리지 않습니다.**
@@ -251,7 +296,9 @@ if (ids.length) {
 
 ## 9. 한계
 
-- `toPNG` · `setTool` · `zoom` 은 브라우저 전용입니다 (`NO_CANVAS` / `GUI_ONLY`).
+- `toPNG` · `setTool` · `zoom` · `imageTrace` 는 브라우저 전용입니다
+  (`NO_CANVAS` / `GUI_ONLY` / `NO_DOM`).
+- 효과는 `blur` · `shadow` · `glow` 세 가지이며, 벡터로 확장되지 않는 래스터 효과입니다.
 - Node 에는 캔버스가 없어 **텍스트 바운딩이 근사치**입니다
   (전각 1.0em · 그 외 0.52em). 정확한 계측이 필요하면 브라우저에서 실행하세요.
 - postMessage 브리지는 기본적으로 모든 오리진을 허용합니다.

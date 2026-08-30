@@ -397,4 +397,305 @@
       }
     });
   };
+
+  /* ---------- 개별 변형 (Transform Each) ---------- */
+  Dlg.transformEach = function (app) {
+    if (!app.sel.length) { U.toast('오브젝트를 먼저 선택하세요'); return; }
+    var sel = app.sel.slice();
+    var snap = sel.map(function (it) { return it.m.slice(); });
+    function restore() { for (var i = 0; i < sel.length; i++) sel[i].m = snap[i].slice(); }
+
+    D.open({
+      title: '개별 변형',
+      fields: [
+        { id: 'info1', label: '비율 조절', type: 'info' },
+        { id: 'sx', label: '가로', type: 'num', value: 100, unit: '%' },
+        { id: 'sy', label: '세로', type: 'num', value: 100, unit: '%' },
+        { type: 'sep' },
+        { id: 'info2', label: '이동', type: 'info' },
+        { id: 'dx', label: '가로', type: 'num', value: 0, unit: 'pt' },
+        { id: 'dy', label: '세로', type: 'num', value: 0, unit: 'pt' },
+        { type: 'sep' },
+        { id: 'angle', label: '각도', type: 'num', value: 0, unit: '°' },
+        { id: 'anchor', label: '기준점', type: 'ref', value: 4 },
+        { type: 'sep' },
+        { id: 'reflectX', label: 'X 반사', type: 'check', value: false },
+        { id: 'reflectY', label: 'Y 반사', type: 'check', value: false },
+        { id: 'random', label: '임의', type: 'check', value: false },
+        { id: 'preview', label: '미리 보기', type: 'check', value: true }
+      ],
+      buttons: [{ id: 'copy', label: '복사' }, { id: 'cancel', label: '취소' }, { id: 'ok', label: '확인', primary: true }],
+      onChange: function (v) {
+        restore();
+        if (v.preview !== false) E.transformEach(app, v);
+        app.invalidate();
+        AI.ui.syncSelection(app);
+      },
+      onDone: function (v, btn) {
+        restore();
+        app.history.begin('개별 변형', app.doc);
+        if (btn === 'copy') E.duplicate(app, 0, 0);
+        E.transformEach(app, v);
+        app.history.commit();
+        app.invalidate();
+        AI.ui.syncAll(app);
+      },
+      onCancel: function () { restore(); app.invalidate(); AI.ui.syncAll(app); }
+    });
+  };
+
+  /* ---------- 효과 (흐림 효과 / 스타일화) ---------- */
+  var FX_FIELDS = {
+    blur: function (e) {
+      return [{ id: 'radius', label: '반경', type: 'num', value: e.radius, unit: 'pt', step: 1 }];
+    },
+    shadow: function (e) {
+      return [
+        { id: 'dx', label: 'X 오프셋', type: 'num', value: e.dx, unit: 'pt' },
+        { id: 'dy', label: 'Y 오프셋', type: 'num', value: e.dy, unit: 'pt' },
+        { id: 'blur', label: '흐림 정도', type: 'num', value: e.blur, unit: 'pt' },
+        { id: 'color', label: '색상', type: 'color', value: e.color },
+        { id: 'alpha', label: '불투명도', type: 'num', value: Math.round(e.alpha * 100), unit: '%' }
+      ];
+    },
+    glow: function (e) {
+      return [
+        { id: 'blur', label: '흐림 정도', type: 'num', value: e.blur, unit: 'pt' },
+        { id: 'color', label: '색상', type: 'color', value: e.color },
+        { id: 'alpha', label: '불투명도', type: 'num', value: Math.round(e.alpha * 100), unit: '%' }
+      ];
+    }
+  };
+  var FX_BUILD = {
+    blur: function (v) { return { type: 'blur', radius: Math.max(0, v.radius) }; },
+    shadow: function (v) {
+      return {
+        type: 'shadow', dx: v.dx, dy: v.dy, blur: Math.max(0, v.blur),
+        color: v.color || '#000000', alpha: U.clamp(v.alpha / 100, 0, 1)
+      };
+    },
+    glow: function (v) {
+      return {
+        type: 'glow', blur: Math.max(0, v.blur),
+        color: v.color || '#ffd166', alpha: U.clamp(v.alpha / 100, 0, 1)
+      };
+    }
+  };
+
+  Dlg.effect = function (app, type) {
+    var FX = AI.effects, def = FX.DEFS[type];
+    if (!def || !FX_FIELDS[type]) return;
+    if (!app.sel.length) { U.toast('오브젝트를 먼저 선택하세요'); return; }
+    var sel = app.sel.slice();
+    var snap = sel.map(function (it) { return it.effects ? U.deepCopy(it.effects) : null; });
+    function restore() {
+      sel.forEach(function (it, i) {
+        if (snap[i]) it.effects = U.deepCopy(snap[i]);
+        else delete it.effects;
+      });
+    }
+    /* 이미 같은 종류의 효과가 걸려 있으면 그 값을 시작값으로 — 일러스트레이터처럼 편집이 된다 */
+    var base = null;
+    sel.forEach(function (it) {
+      (it.effects || []).forEach(function (e) { if (!base && e.type === type) base = e; });
+    });
+    base = base ? U.deepCopy(base) : def.make();
+
+    function apply(v) {
+      var e = FX_BUILD[type](v);
+      sel.forEach(function (it) {
+        it.effects = it.effects || [];
+        var idx = -1;
+        for (var k = 0; k < it.effects.length; k++) if (it.effects[k].type === type) { idx = k; break; }
+        if (idx >= 0) it.effects[idx] = U.deepCopy(e);
+        else it.effects.push(U.deepCopy(e));
+      });
+      return e;
+    }
+
+    D.open({
+      title: def.name,
+      fields: FX_FIELDS[type](base).concat([
+        { type: 'sep' },
+        { id: 'preview', label: '미리 보기', type: 'check', value: true }
+      ]),
+      onChange: function (v) {
+        restore();
+        if (v.preview !== false) apply(v);
+        app.invalidate();
+      },
+      onDone: function (v) {
+        restore();
+        app.history.begin(def.name, app.doc);
+        app.lastEffect = apply(v);
+        app.history.commit();
+        app.invalidate();
+        AI.ui.syncAll(app);
+      },
+      onCancel: function () { restore(); app.invalidate(); AI.ui.syncAll(app); }
+    });
+  };
+
+  /* ---------- 이미지 추적 ---------- */
+  Dlg.imageTrace = function (app) {
+    var TR = AI.trace;
+    var img = null;
+    app.sel.forEach(function (it) { if (!img && it.type === 'image') img = it; });
+    if (!img) { U.toast('추적할 이미지를 선택하세요'); return; }
+    var el = Rn.getImage(img.src);
+    if (!el || !el.complete || !el.naturalWidth) { U.toast('이미지를 아직 읽는 중입니다'); return; }
+
+    var presetOpts = Object.keys(TR.PRESETS).map(function (k) { return [k, TR.PRESETS[k].name]; });
+    presetOpts.push(['custom', '사용자 정의']);
+    var P0 = TR.PRESETS.bwLogo;
+    var preview = null;   /* 미리 보기로 넣어 둔 그룹 */
+
+    function clearPreview() {
+      if (!preview) return;
+      var loc = Model.locate(app.doc, preview);
+      if (loc) loc.list.splice(loc.index, 1);
+      preview = null;
+      img.visible = true;
+    }
+    function optsOf(v) {
+      return {
+        mode: v.mode, threshold: v.threshold, colors: Math.round(v.colors),
+        path: v.path, noise: v.noise, curves: v.curves
+      };
+    }
+    function build(v) {
+      var layers = TR.traceImage(el, optsOf(v));
+      return { group: TR.toGroup(app, img, layers, optsOf(v)), layers: layers };
+    }
+    function info(res) {
+      if (!res || !res.group) return '추적 결과 없음';
+      var paths = res.group.children.length, anchors = 0;
+      res.group.children.forEach(function (c) {
+        c.subs.forEach(function (sb) { anchors += sb.pts.length; });
+      });
+      return '패스 ' + paths + ' · 색상 ' + res.layers.length + ' · 앵커 ' + anchors;
+    }
+    function setInfo(txt) {
+      var e = document.querySelector('.dlg-info');
+      if (e) e.textContent = txt;
+    }
+
+    D.open({
+      title: '이미지 추적',
+      fields: [
+        { id: 'preset', label: '사전 설정', type: 'select', value: 'bwLogo', width: 150, options: presetOpts },
+        { id: 'mode', label: '모드', type: 'select', value: P0.mode, width: 110,
+          options: [['bw', '흑백'], ['gray', '회색 음영'], ['color', '색상']] },
+        { id: 'colors', label: '색상 수', type: 'num', value: P0.colors || 6, step: 1 },
+        { id: 'threshold', label: '한계값', type: 'num', value: P0.threshold == null ? 128 : P0.threshold, step: 4 },
+        { type: 'sep' },
+        { id: 'path', label: '패스 단순화', type: 'num', value: P0.path, step: 0.2 },
+        { id: 'noise', label: '노이즈', type: 'num', value: P0.noise, unit: 'px²', step: 5 },
+        { id: 'curves', label: '곡선으로 맞춤', type: 'check', value: true },
+        { type: 'sep' },
+        { id: 'preview', label: '미리 보기', type: 'check', value: false },
+        { id: 'info', label: '사전 설정을 고르고 미리 보기를 켜세요', type: 'info' }
+      ],
+      onChange: function (v, changed, a) {
+        if (changed === 'preset' && TR.PRESETS[v.preset]) {
+          var P = TR.PRESETS[v.preset];
+          a.set('mode', P.mode);
+          if (P.colors != null) a.set('colors', P.colors);
+          if (P.threshold != null) a.set('threshold', P.threshold);
+          a.set('path', P.path);
+          a.set('noise', P.noise);
+          v = a.values();
+        } else if (changed && changed !== 'preview' && changed !== 'info') {
+          a.set('preset', 'custom');
+        }
+        clearPreview();
+        if (v.preview) {
+          var res = build(v);
+          if (res.group) {
+            preview = res.group;
+            img.visible = false;
+            Model.activeLayer(app.doc).children.push(preview);
+          }
+          setInfo(info(res));
+        } else setInfo('미리 보기를 켜면 결과를 확인할 수 있습니다');
+        app.invalidate();
+      },
+      onDone: function (v) {
+        clearPreview();
+        var res = build(v);
+        if (!res.group) { U.toast('추적 결과가 비어 있습니다 — 한계값이나 노이즈를 조정하세요'); app.invalidate(); return; }
+        app.history.begin('이미지 추적', app.doc);
+        var loc = Model.locate(app.doc, img);
+        if (loc) loc.list.splice(loc.index, 1, res.group);
+        else Model.activeLayer(app.doc).children.push(res.group);
+        AI.sel.set(app, [res.group]);
+        app.history.commit();
+        app.invalidate();
+        AI.ui.syncAll(app);
+        U.toast('이미지 추적: ' + info(res));
+      },
+      onCancel: function () { clearPreview(); app.invalidate(); AI.ui.syncAll(app); }
+    });
+  };
+
+  /* ---------- 대지 옵션 ---------- */
+  Dlg.artboardOptions = function (app) {
+    var i = app.doc.activeArtboard, ab = app.doc.artboards[i];
+    D.open({
+      title: '대지 옵션',
+      fields: [
+        { id: 'name', label: '이름', type: 'text', value: ab.name, width: 150 },
+        { id: 'preset', label: '사전 설정', type: 'select', value: 'custom', width: 150, options: [
+          ['custom', '사용자 정의'],
+          ['a4', 'A4 (595 × 842)'], ['a3', 'A3 (842 × 1191)'], ['letter', 'Letter (612 × 792)'],
+          ['fhd', 'Full HD (1920 × 1080)'], ['hd', 'HD (1280 × 720)'], ['square', '정사각 (1080 × 1080)'],
+          ['web', '웹 (1440 × 900)'], ['mobile', '모바일 (390 × 844)']
+        ] },
+        { id: 'w', label: '폭', type: 'num', value: ab.w, unit: 'pt' },
+        { id: 'h', label: '높이', type: 'num', value: ab.h, unit: 'pt' },
+        { id: 'x', label: 'X', type: 'num', value: ab.x, unit: 'pt' },
+        { id: 'y', label: 'Y', type: 'num', value: ab.y, unit: 'pt' },
+        { id: 'orient', label: '방향', type: 'radio', value: ab.w > ab.h ? 'l' : 'p', options: [['p', '세로'], ['l', '가로']] }
+      ],
+      onChange: function (v, changed, a) {
+        if (changed === 'preset' && PRESETS[v.preset]) {
+          a.set('w', PRESETS[v.preset][0]); a.set('h', PRESETS[v.preset][1]);
+          a.set('orient', PRESETS[v.preset][0] > PRESETS[v.preset][1] ? 'l' : 'p');
+        } else if (changed === 'orient') {
+          if ((v.orient === 'l') !== (v.w > v.h)) { a.set('w', v.h); a.set('h', v.w); }
+        } else if (changed === 'w' || changed === 'h') a.set('preset', 'custom');
+      },
+      onDone: function (v) {
+        app.history.begin('대지 옵션', app.doc);
+        ab.name = v.name || ab.name;
+        ab.w = Math.max(1, v.w); ab.h = Math.max(1, v.h);
+        ab.x = v.x; ab.y = v.y;
+        if (i === app.doc.activeArtboard) { app.doc.width = ab.w; app.doc.height = ab.h; }
+        app.history.commit();
+        app.invalidate();
+        AI.ui.syncAll(app);
+      }
+    });
+  };
+
+  /* ---------- 모든 대지 재정렬 ---------- */
+  Dlg.rearrangeArtboards = function (app) {
+    var n = app.doc.artboards.length;
+    D.open({
+      title: '모든 대지 재정렬',
+      fields: [
+        { id: 'cols', label: '가로 개수', type: 'num', value: Math.ceil(Math.sqrt(n)), step: 1 },
+        { id: 'gap', label: '간격', type: 'num', value: 40, unit: 'pt' },
+        { id: 'info', label: '대지 ' + n + '개', type: 'info' }
+      ],
+      onDone: function (v) {
+        app.history.begin('대지 재정렬', app.doc);
+        E.rearrangeArtboards(app, Math.max(1, Math.round(v.cols)), Math.max(0, v.gap));
+        app.history.commit();
+        AI.viewT.fitAll(app);
+        app.invalidate();
+        AI.ui.syncAll(app);
+      }
+    });
+  };
 })(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

@@ -74,10 +74,23 @@
     var cm = document.getElementById('contextmenu');
     cm.innerHTML = '';
     cm.className = 'menu-pop';
-    var items = app.sel.length
-      ? ['undo', 'redo', '-', 'transformAgain', '-', 'bringToFront', 'sendToBack', '-', 'group', 'ungroup', '-',
-        'clipMake', 'compoundMake', '-', 'lock', 'hide', '-', 'cut', 'copy', 'paste']
-      : ['undo', 'redo', '-', 'paste', 'pasteInPlace', '-', 'selectAll', 'showAll', 'unlockAll', '-', 'showRulers', 'showGrid', 'smartGuides'];
+    var items;
+    if (app.sel.length) {
+      items = ['undo', 'redo', '-', 'transformAgain', 'transformEach', '-',
+        'bringToFront', 'sendToBack', '-', 'group', 'ungroup', '-',
+        'clipMake', 'compoundMake', '-'];
+      /* 일러스트레이터처럼 선택 내용에 맞는 항목을 끼워 넣는다 */
+      if (app.sel.some(function (it) { return it.type === 'image'; })) {
+        items = items.concat(['imageTrace', 'cropImage', '-']);
+      }
+      if (app.sel.some(function (it) { return AI.effects.has(it); })) {
+        items = items.concat(['fxClear', '-']);
+      }
+      items = items.concat(['lock', 'hide', '-', 'cut', 'copy', 'paste']);
+    } else {
+      items = ['undo', 'redo', '-', 'paste', 'pasteInPlace', '-', 'selectAll', 'showAll', 'unlockAll', '-',
+        'showRulers', 'showGrid', 'smartGuides', '-', 'showGuides', 'lockGuides'];
+    }
     items.forEach(function (id) {
       if (id === '-') { cm.appendChild(U.el('div', 'sep')); return; }
       var d = C.defs[id];

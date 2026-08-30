@@ -104,11 +104,32 @@
   var PRECISE = ['select', 'groupselect', 'directselect', 'pen', 'addanchor', 'delanchor',
     'convert', 'scissors', 'gradient', 'freetransform', 'rotate', 'scale', 'reflect'];
 
+  /* 잠금이 풀린 안내선은 캔버스에서 직접 끌어 옮길 수 있다 (일러스트레이터와 동일) */
+  var guideDrag = null;
+  function guideAt(e) {
+    if (!app.prefs.guides || app.prefs.guidesLocked !== false) return null;
+    var best = null, bd = 4;
+    app.doc.guides.forEach(function (g) {
+      var sp = AI.viewT.toScreen(app, g.axis === 'v' ? g.pos : 0, g.axis === 'h' ? g.pos : 0);
+      var d = g.axis === 'v' ? Math.abs(sp.x - e.x) : Math.abs(sp.y - e.y);
+      if (d < bd) { bd = d; best = g; }
+    });
+    return best;
+  }
+
   function toolDown(e) {
     AI.ui.closeMenus && AI.ui.closeMenus();
     var cm = document.getElementById('contextmenu');
     if (cm) cm.hidden = true;
     canvas.focus();
+    var g = guideAt(e);
+    if (g) {
+      down = true;
+      e.down = true;
+      guideDrag = g;
+      app.history.begin('안내선 이동', app.doc);
+      return;
+    }
     down = true;
     e.down = true;
     var t = T.current(app);
@@ -117,9 +138,18 @@
   }
   function toolMove(e) {
     e.down = down;
+    if (guideDrag && down) {
+      var d0 = AI.viewT.toDoc(app, e.x, e.y);
+      guideDrag.pos = guideDrag.axis === 'v' ? d0.x : d0.y;
+      app.invalidate();
+      return;
+    }
+    var hoverGuide = down ? null : guideAt(e);
     var t = T.current(app);
     var inCanvas = e.x >= 0 && e.y >= 0 && e.x <= canvas.clientWidth && e.y <= canvas.clientHeight;
     if (down || inCanvas) { if (t && t.onMove) t.onMove(app, e); }
+    /* 도구가 커서를 정한 뒤에 덮어써야 안내선 위 커서가 유지된다 */
+    if (hoverGuide) canvas.style.cursor = hoverGuide.axis === 'v' ? 'ew-resize' : 'ns-resize';
     if (inCanvas) {
       var d = AI.viewT.toDoc(app, e.x, e.y);
       var co = document.getElementById('st-coords');
@@ -132,6 +162,18 @@
     if (!down) return;
     down = false;
     e.down = false;
+    if (guideDrag) {
+      /* 캔버스 밖으로 끌어내면 삭제 — 눈금자에서 만들 때와 같은 규칙 */
+      if (e.x < 0 || e.y < 0) {
+        var gi = app.doc.guides.indexOf(guideDrag);
+        if (gi >= 0) app.doc.guides.splice(gi, 1);
+      }
+      app.history.commit();
+      guideDrag = null;
+      app.invalidate();
+      AI.ui.syncAll(app);
+      return;
+    }
     var t = T.current(app);
     if (t && t.onUp) t.onUp(app, e);
     app.loupe = null;
@@ -153,6 +195,7 @@
   app.cancelDrag = function (restore) {
     if (!down) return;
     down = false;
+    if (guideDrag) { app.history.abort(); guideDrag = null; app.invalidate(); return; }
     var t = T.current(app);
     if (t && t.onUp) t.onUp(app, mk(0, 0, {}, false));
     if (restore && dragSnap) {

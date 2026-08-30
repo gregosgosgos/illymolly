@@ -192,6 +192,13 @@
   R.norm = function (r) { return { x: r.x, y: r.y, w: r.x2 - r.x, h: r.y2 - r.y }; };
 
   /* ---------------------- DOM ---------------------- */
+  /* HTML 삽입용 이스케이프 — 사용자가 붙인 이름이 마크업이 되지 않게 한다 */
+  U.esc = function (s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  };
+
   U.el = function (tag, cls, html) {
     if (!U.hasDOM) return null;
     var e = document.createElement(tag);

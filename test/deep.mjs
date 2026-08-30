@@ -496,6 +496,146 @@ const out = await page.evaluate(() => {
       'subs=' + app.sel[0].subs.length + ' area=' + sum(rings(app.sel[0])).toFixed(0));
   } catch (e) { ok('불리언 강건성', false, e.message); }
 
+  /* ---------- 23b. 효과 · 화살표 · 자르기 · 이미지 추적 ---------- */
+  try {
+    let L = fresh();
+    const r = Mo.newRect(100, 100, 100, 100, 0);
+    L.children.push(r);
+    const wm = () => Mo.worldMatrix(app.doc, r);
+
+    r.effects = [{ type: 'blur', radius: 6 }];
+    let vis = Rn.boundsM(r, wm(), false, 1), geo = Rn.boundsM(r, wm(), true, 1);
+    ok('흐림 효과가 기하 경계를 바꾸지 않는다', near(geo.x, 100) && near(geo.x2 - geo.x, 100),
+      `${geo.x},${geo.x2 - geo.x}`);
+    ok('흐림 효과 미리보기 경계 = 반경×3', near(vis.x, 100 - 18) && near(vis.x2 - vis.x, 136),
+      `${vis.x},${vis.x2 - vis.x}`);
+
+    r.effects = [{ type: 'shadow', dx: 10, dy: -4, blur: 5, color: '#000000', alpha: 0.5 }];
+    vis = Rn.boundsM(r, wm(), false, 1);
+    /* 그림자 여백 = blur*3 + |dx| + |dy| = 29, 사방으로 */
+    ok('그림자 미리보기 경계', near(vis.x, 71) && near(vis.x2 - vis.x, 158), `${vis.x},${vis.x2 - vis.x}`);
+    ok('효과 필터 문자열 (배율 반영)',
+      AI.effects.filterString(r, 2) === 'drop-shadow(20px -8px 10px rgba(0,0,0,0.5))',
+      AI.effects.filterString(r, 2));
+
+    /* 그룹에 걸린 효과도 경계를 넓힌다 */
+    const g = Mo.newGroup([r]);
+    L.children = [g];
+    g.effects = [{ type: 'glow', blur: 4, color: '#ffcc00', alpha: 1 }];
+    const gb = Rn.boundsM(g, Mo.worldMatrix(app.doc, g), false, 1);
+    ok('그룹 효과도 경계에 반영', near(gb.x, 71 - 12), gb.x);
+
+    /* 회전한 상태에서도 렌더가 예외 없이 끝난다 (오프스크린 합성 경로) */
+    g.m = M.mulAll(M.translate(50, 50), M.rotate(0.6));
+    AI.render.scene(app.canvas.getContext('2d'), app);
+    ok('효과가 걸린 회전 그룹 렌더 성공', true);
+  } catch (e) { ok('효과', false, e.message); }
+
+  try {
+    const L = fresh();
+    const line = Mo.newLine(50, 50, 250, 50);
+    line.fill = AI.color.none();
+    line.stroke = Mo.mkStroke('#000000', 4);
+    line.stroke.arrowEnd = 'arrow';
+    line.stroke.arrowScale = 200;
+    L.children.push(line);
+    AI.render.scene(app.canvas.getContext('2d'), app);
+    const svg = AI.io.toSVG(app);
+    ok('화살표가 SVG marker 로 나간다', /<marker /.test(svg) && /marker-end="url\(/.test(svg));
+    ok('화살표 없는 쪽은 marker 를 만들지 않는다', !/marker-start="url\(/.test(svg));
+
+    /* 닫힌 패스에는 화살표가 붙지 않는다 (일러스트레이터와 동일) */
+    const rc = Mo.newRect(300, 300, 50, 50, 0);
+    rc.stroke = Mo.mkStroke('#000000', 4);
+    rc.stroke.arrowEnd = 'arrow';
+    L.children.push(rc);
+    const svg2 = AI.io.toSVG(app);
+    ok('닫힌 패스에는 화살표가 붙지 않는다', (svg2.match(/marker-end="url\(/g) || []).length === 1,
+      (svg2.match(/marker-end="url\(/g) || []).length);
+  } catch (e) { ok('화살표', false, e.message); }
+
+  try {
+    const L = fresh();
+    /* 두 번 자르면 crop 이 누적된다 */
+    const c = document.createElement('canvas');
+    c.width = c.height = 8;
+    const cx = c.getContext('2d');
+    cx.fillStyle = '#ffffff'; cx.fillRect(0, 0, 8, 8);
+    const src = c.toDataURL('image/png');
+    const im = Mo.newImage(src, 0, 0, 200, 200);
+    L.children.push(im);
+    const s1 = Mo.newRect(50, 50, 100, 100, 0);
+    L.children.push(s1);
+    AI.sel.set(app, [im, s1]);
+    E.cropImage(app);
+    const c1 = [im.crop.x, im.crop.y, im.crop.w, im.crop.h].map(v => +v.toFixed(3)).join(',');
+    const s2 = Mo.newRect(75, 75, 50, 50, 0);
+    L.children.push(s2);
+    AI.sel.set(app, [im, s2]);
+    E.cropImage(app);
+    const c2 = [im.crop.x, im.crop.y, im.crop.w, im.crop.h].map(v => +v.toFixed(3)).join(',');
+    const b = Rn.worldBounds(app.doc, im, true);
+    ok('이미지 자르기 1회', c1 === '0.25,0.25,0.5,0.5', c1);
+    ok('이미지 자르기 누적', c2 === '0.375,0.375,0.25,0.25', c2);
+    ok('자른 뒤 배치가 도형과 일치', near(b.x, 75) && near(b.x2 - b.x, 50), `${b.x},${b.x2 - b.x}`);
+  } catch (e) { ok('이미지 자르기', false, e.message); }
+
+  /* ---------- 23c. 개별 변형 · 안내선 · 대지 ---------- */
+  try {
+    const L = fresh();
+    const a = Mo.newRect(0, 0, 100, 100, 0), b = Mo.newRect(300, 0, 100, 100, 0);
+    L.children.push(a, b);
+    AI.sel.set(app, [a, b]);
+    E.transformEach(app, { sx: 100, sy: 100, dx: 0, dy: 0, angle: 90, anchor: 4 });
+    const ba = Rn.worldBounds(app.doc, a, true), bb = Rn.worldBounds(app.doc, b, true);
+    ok('개별 변형 회전 — 각자의 중심 유지',
+      near((ba.x + ba.x2) / 2, 50, 0.001) && near((bb.x + bb.x2) / 2, 350, 0.001),
+      `${((ba.x + ba.x2) / 2).toFixed(1)}, ${((bb.x + bb.x2) / 2).toFixed(1)}`);
+
+    /* 일반 변형(선택 전체 기준)과 다르다 */
+    fresh();
+    const L2 = app.doc.layers[0];
+    const c = Mo.newRect(0, 0, 100, 100, 0), d = Mo.newRect(300, 0, 100, 100, 0);
+    L2.children.push(c, d);
+    AI.sel.set(app, [c, d]);
+    const before = Rn.selectionBounds(app, true);
+    E.transformSelection(app, M.around(M.scale(2, 2), (before.x + before.x2) / 2, (before.y + before.y2) / 2));
+    const after = Rn.selectionBounds(app, true);
+    ok('일반 변형은 선택 전체를 기준으로 한다', near(after.x2 - after.x, (before.x2 - before.x) * 2, 0.001),
+      (after.x2 - after.x).toFixed(0));
+  } catch (e) { ok('개별 변형', false, e.message); }
+
+  try {
+    const L = fresh();
+    app.doc.guides = [{ axis: 'v', pos: 120 }, { axis: 'h', pos: 240 }];
+    E.releaseGuides(app);
+    ok('안내선 해제 → 선 오브젝트', app.doc.guides.length === 0 && L.children.length === 2,
+      `guides=${app.doc.guides.length} items=${L.children.length}`);
+    const v = L.children[0], hb = Rn.worldBounds(app.doc, L.children[1], true);
+    const vb = Rn.worldBounds(app.doc, v, true);
+    ok('세로 안내선은 세로 선이 된다', near(vb.x, 120) && near(vb.x2, 120) && vb.y2 - vb.y > 100,
+      `${vb.x},${vb.y2 - vb.y}`);
+    ok('가로 안내선은 가로 선이 된다', near(hb.y, 240) && hb.x2 - hb.x > 100, `${hb.y},${hb.x2 - hb.x}`);
+  } catch (e) { ok('안내선', false, e.message); }
+
+  try {
+    const L = fresh();
+    const r = Mo.newRect(500, 400, 120, 80, 0);
+    L.children.push(r);
+    AI.sel.set(app, [r]);
+    E.fitArtboardTo(app, 'selection');
+    let ab = app.doc.artboards[app.doc.activeArtboard];
+    ok('대지를 선택 항목에 맞추기', [ab.x, ab.y, ab.w, ab.h].join(',') === '500,400,120,80',
+      [ab.x, ab.y, ab.w, ab.h].join(','));
+
+    app.doc.artboards.push({ id: 'AB2', name: '대지 2', x: 5000, y: 5000, w: 200, h: 100 });
+    app.doc.artboards.push({ id: 'AB3', name: '대지 3', x: -900, y: 20, w: 50, h: 300 });
+    E.rearrangeArtboards(app, 2, 10);
+    const pos = app.doc.artboards.map(a2 => `${a2.x},${a2.y}`).join(' ');
+    /* 1행: 120폭 + 10 간격 → 두 번째가 x=130. 2행은 첫 행 최대 높이(100)+10 아래 */
+    ok('대지 재정렬 격자', pos === '0,0 130,0 0,110', pos);
+  } catch (e) { ok('대지', false, e.message); }
+
   /* ---------- 23. 성능 ---------- */
   try {
     fresh();

@@ -42,7 +42,7 @@
   def('save', '저장', 'Ctrl+S', function (a) { AI.io.save(a); });
   def('saveAs', '다른 이름으로 저장...', 'Ctrl+Shift+S', function (a) { AI.io.save(a, true); });
   def('place', '가져오기(이미지)...', 'Ctrl+Shift+P', function (a) { AI.io.placeImage(a); });
-  def('exportSvg', 'SVG로 내보내기...', 'Ctrl+Shift+E', function (a) { AI.io.exportSVG(a); });
+  def('exportSvg', 'SVG로 내보내기...', 'Ctrl+Alt+Shift+S', function (a) { AI.io.exportSVG(a); });
   def('exportPng', 'PNG로 내보내기...', 'Ctrl+Alt+E', function (a) { AI.io.exportPNG(a); });
   def('docSetup', '문서 설정...', 'Ctrl+Alt+P', function (a) { AI.dialogs.documentSetup(a); });
   def('preferences', '환경 설정...', 'Ctrl+K', function (a) { AI.dialogs.preferences(a); });
@@ -320,6 +320,96 @@
     AI.viewT.fitArtboard(a);
   }));
 
+
+  /* ================= 효과 (비파괴) ================= */
+  function fxDialog(a, type) {
+    if (!a.sel.length) { U.toast('오브젝트를 먼저 선택하세요'); return; }
+    AI.dialogs.effect(a, type);
+  }
+  def('fxBlur', '가우시안 흐림...', null, function (a) { fxDialog(a, 'blur'); }, { enabled: hasSel });
+  def('fxShadow', '그림자 만들기...', null, function (a) { fxDialog(a, 'shadow'); }, { enabled: hasSel });
+  def('fxGlow', '외부 광선...', null, function (a) { fxDialog(a, 'glow'); }, { enabled: hasSel });
+  def('fxLast', '마지막 효과 적용', 'Ctrl+Shift+E', hist('효과 적용', function (a) {
+    if (!a.sel.length) return false;
+    var last = a.lastEffect;
+    if (!last) { U.toast('적용할 효과가 없습니다'); return false; }
+    a.sel.forEach(function (it) {
+      it.effects = (it.effects || []).concat([U.deepCopy(last)]);
+    });
+    U.toast(AI.effects.label(last));
+  }), { enabled: function (a) { return a.sel.length > 0 && !!a.lastEffect; } });
+  def('fxLastDialog', '마지막 효과 옵션...', 'Ctrl+Alt+Shift+E', function (a) {
+    if (!a.lastEffect) { U.toast('적용할 효과가 없습니다'); return; }
+    fxDialog(a, a.lastEffect.type);
+  }, { enabled: function (a) { return a.sel.length > 0 && !!a.lastEffect; } });
+  def('fxClear', '모양 지우기', null, hist('모양 지우기', function (a) {
+    var any = false;
+    a.sel.forEach(function (it) { if (AI.effects.has(it)) { AI.effects.clear(it); any = true; } });
+    if (!any) { U.toast('적용된 효과가 없습니다'); return false; }
+    U.toast('효과 지움');
+  }), { enabled: hasSel });
+  def('expandAppearance', '모양 확장', null, hist('모양 확장', function (a) {
+    /* 흐림·그림자는 래스터 효과라 벡터로 확장할 수 없다 — 일러스트레이터처럼
+       모양을 확정하는 대신, 확장 불가임을 알리고 효과는 그대로 둔다. */
+    var n = a.sel.filter(function (it) { return AI.effects.has(it); }).length;
+    if (!n) { U.toast('확장할 모양이 없습니다'); return false; }
+    U.toast('래스터 효과(흐림·그림자·광선)는 벡터로 확장되지 않습니다');
+    return false;
+  }), { enabled: hasSel });
+
+  /* ================= 이미지 ================= */
+  def('cropImage', '이미지 자르기', null, hist('이미지 자르기', function (a) { return E.cropImage(a); }), {
+    enabled: function (a) { return a.sel.some(function (i) { return i.type === 'image'; }); }
+  });
+  def('imageTrace', '이미지 추적 만들기...', null, function (a) { AI.dialogs.imageTrace(a); }, {
+    enabled: function (a) { return a.sel.some(function (i) { return i.type === 'image'; }); }
+  });
+
+  /* ================= 개별 변형 ================= */
+  def('transformEach', '개별 변형...', 'Ctrl+Alt+Shift+D', function (a) { AI.dialogs.transformEach(a); }, { enabled: hasSel });
+
+  /* ================= 안내선 ================= */
+  def('lockGuides', '안내선 잠금', 'Ctrl+Alt+;', function (a) {
+    a.prefs.guidesLocked = a.prefs.guidesLocked === false;
+    U.toast(a.prefs.guidesLocked ? '안내선 잠금' : '안내선 잠금 해제');
+  }, { checked: function (a) { return a.prefs.guidesLocked !== false; } });
+  def('releaseGuides', '안내선 해제', 'Ctrl+Alt+5', hist('안내선 해제', function (a) { return E.releaseGuides(a); }));
+
+  /* ================= 레이어 ================= */
+  def('mergeLayers', '선택한 레이어 병합', null, hist('레이어 병합', function (a) {
+    if (E.mergeLayers(a) === false) { U.toast('병합할 레이어가 없습니다'); return false; }
+    U.toast('레이어 병합됨');
+  }));
+  def('releaseToLayers', '레이어로 배포(순차)', null, hist('레이어로 배포', function (a) {
+    if (E.releaseToLayers(a) === false) { U.toast('배포할 오브젝트가 2개 이상 필요합니다'); return false; }
+    U.toast('레이어로 배포됨');
+  }));
+  def('collectInNewLayer', '새 레이어로 모으기', null, hist('새 레이어로 모으기', function (a) {
+    if (E.collectInNewLayer(a) === false) { U.toast('오브젝트를 먼저 선택하세요'); return false; }
+  }), { enabled: hasSel });
+
+  /* ================= 대지 (추가) ================= */
+  def('fitArtboardToSelection', '대지를 선택 항목에 맞추기', 'Ctrl+Alt+C', hist('대지 맞추기', function (a) {
+    if (E.fitArtboardTo(a, 'selection') === false) return false;
+    AI.viewT.fitArtboard(a);
+  }), { enabled: hasSel });
+  def('fitArtboardToArtwork', '대지를 아트웍에 맞추기', null, hist('대지 맞추기', function (a) {
+    if (E.fitArtboardTo(a, 'artwork') === false) return false;
+    AI.viewT.fitArtboard(a);
+  }));
+  def('rearrangeArtboards', '모든 대지 재정렬...', null, function (a) { AI.dialogs.rearrangeArtboards(a); });
+  def('artboardOptions', '대지 옵션...', null, function (a) { AI.dialogs.artboardOptions(a); });
+  def('duplicateArtboard', '대지 복제', null, hist('대지 복제', function (a) {
+    var ab = a.doc.artboards[a.doc.activeArtboard];
+    var n = U.deepCopy(ab);
+    n.id = U.uid('AB');
+    n.name = ab.name + ' 복사';
+    n.x = ab.x + ab.w + 40;
+    a.doc.artboards.splice(a.doc.activeArtboard + 1, 0, n);
+    a.doc.activeArtboard++;
+    AI.viewT.fitArtboard(a);
+  }));
+
   /* ================= 단위 ================= */
   def('setUnit', '단위', null, function () { });
   C.setUnit = function (a, u) {
@@ -417,26 +507,52 @@
     },
     {
       title: '오브젝트', items: [
-        'transformAgain', 'moveDialog', 'rotateDialog', 'scaleDialog', 'reflectDialog', 'shearDialog', '-',
+        'transformAgain', 'moveDialog', 'rotateDialog', 'scaleDialog', 'reflectDialog', 'shearDialog', 'transformEach', '-',
         'reflectH', 'reflectV', '-',
         'bringToFront', 'bringForward', 'sendBackward', 'sendToBack', '-',
         'group', 'ungroup', '-', 'lock', 'unlockAll', 'hide', 'showAll', '-',
         'clipMake', 'clipRelease', '-', 'compoundMake', 'compoundRelease', '-',
-        'joinPath', 'averagePath', '-',
-        'pf_unite', 'pf_minusFront', 'pf_intersect', 'pf_exclude', 'pf_divide', 'pf_trim', 'pf_crop', 'pf_outline'
+        'joinPath', 'averagePath', 'outlineStroke', '-',
+        'imageTrace', 'cropImage', '-',
+        'mergeLayers', 'releaseToLayers', 'collectInNewLayer', '-',
+        'fitArtboardToSelection', 'fitArtboardToArtwork', '-',
+        'pf_unite', 'pf_minusFront', 'pf_intersect', 'pf_exclude', 'pf_divide', 'pf_trim', 'pf_merge', 'pf_crop', 'pf_outline', 'pf_minusBack'
       ]
     },
-    { title: '문자', items: ['fontBigger', 'fontSmaller', '-', 'createOutlines'] },
-    { title: '선택', items: ['selectAll', 'deselectAll', 'reselect', 'selectInverse', '-', 'selectSameFill', 'selectSameStroke'] },
+    {
+      title: '문자', items: ['fontBigger', 'fontSmaller', '-', 'createOutlines']
+    },
+    {
+      title: '선택', items: ['selectAll', 'deselectAll', 'reselect', 'selectInverse', '-', 'selectSameFill', 'selectSameStroke']
+    },
+    {
+      title: '효과', items: [
+        'fxLast', 'fxLastDialog', '-',
+        'fxBlur', '-',
+        'fxShadow', 'fxGlow', '-',
+        'expandAppearance', 'fxClear'
+      ]
+    },
     {
       title: '보기', items: [
         'outlineMode', '-', 'zoomIn', 'zoomOut', 'fitArtboard', 'fitAll', 'actualSize', '-',
         'hideEdges', 'showBBox', '-', 'showRulers', 'showGrid', 'snapGrid', 'smartGuides', '-',
-        'showGuides', 'makeGuides', 'clearGuides'
+        'showGuides', 'lockGuides', 'makeGuides', 'releaseGuides', 'clearGuides'
       ]
     },
-    { title: '윈도우', items: ['togglePanels', 'togglePanelsKeepTools'] },
-    { title: '대지', items: ['newArtboard', 'deleteArtboard', '-', 'prevArtboard', 'nextArtboard', 'firstArtboard', 'lastArtboard', '-', 'docSetup'] },
-    { title: '도움말', items: ['shortcutHelp', 'about'] }
+    {
+      title: '윈도우', items: ['togglePanels', 'togglePanelsKeepTools']
+    },
+    {
+      title: '대지', items: [
+        'newArtboard', 'duplicateArtboard', 'deleteArtboard', '-',
+        'artboardOptions', 'rearrangeArtboards', '-',
+        'fitArtboardToSelection', 'fitArtboardToArtwork', '-',
+        'prevArtboard', 'nextArtboard', 'firstArtboard', 'lastArtboard', '-', 'docSetup'
+      ]
+    },
+    {
+      title: '도움말', items: ['shortcutHelp', 'about']
+    }
   ];
 })(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

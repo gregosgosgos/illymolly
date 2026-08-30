@@ -177,6 +177,24 @@ body.no-rulers #ruler-h,body.no-rulers #ruler-v,body.no-rulers #ruler-corner{dis
 .btn.pf svg{fill:#c9c9c9;stroke:none}
 .hint{color:#7d7d7d;font-size:10px;margin-top:6px;line-height:1.5}
 
+/* ---- 효과(모양) 패널 ---- */
+.fx-list{margin-top:6px;border:1px solid var(--line);border-radius:3px;background:#1c1c1c;max-height:132px;overflow:auto}
+.fx-empty{padding:8px;color:#7d7d7d;font-size:10px;text-align:center}
+.fx-row{display:flex;align-items:center;gap:4px;padding:3px 4px;border-bottom:1px solid #262626}
+.fx-row:last-child{border-bottom:none}
+.fx-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default}
+.fx-row .mini-btn{min-width:20px;padding:0 4px}
+
+/* ---- 대지 패널 ---- */
+.ab-list{border:1px solid var(--line);border-radius:3px;background:#1c1c1c;max-height:150px;overflow:auto}
+.ab-row{display:flex;align-items:center;gap:6px;padding:4px 6px;cursor:pointer;border-bottom:1px solid #262626}
+.ab-row:last-child{border-bottom:none}
+.ab-row:hover{background:#242424}
+.ab-row.on{background:#2f4a63}
+.ab-i{min-width:14px;color:#8a8a8a;text-align:right}
+.ab-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ab-size{color:#8a8a8a;font-size:10px;white-space:nowrap}
+
 /* swatches */
 #p-swatches .sw{
   width:100%;aspect-ratio:1/1;border:1px solid #555;cursor:pointer;border-radius:1px;
@@ -269,6 +287,7 @@ body.no-rulers #ruler-h,body.no-rulers #ruler-v,body.no-rulers #ruler-corner{dis
 }
 select.dlg-input{text-align:left;min-width:110px}
 .dlg-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.dlg-color{width:44px;height:24px;padding:0;border:1px solid var(--line);border-radius:3px;background:transparent;cursor:pointer}
 .dlg-unit{color:#8a8a8a;min-width:16px}
 .dlg-sep{height:1px;background:#484848;margin:10px 0}
 .dlg-info{color:#9a9a9a;margin:2px 0 10px;line-height:1.6}
