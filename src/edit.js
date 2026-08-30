@@ -598,6 +598,169 @@
     return true;
   };
 
+  /* ---------------- 유사 항목 선택 (선택 > 동일) ----------------
+     일러스트레이터의 [선택 > 동일] 서브메뉴. 기준이 되는 오브젝트에서 열쇠 값을
+     뽑고, 문서 전체에서 같은 값을 가진 것을 모은다. */
+  function paintKey(p2) {
+    if (!p2 || p2.type === 'none') return 'none';
+    if (p2.type === 'solid') return 'solid:' + p2.color + ':' + (p2.alpha == null ? 1 : p2.alpha);
+    if (p2.type === 'pattern') return 'pattern:' + p2.patternId;
+    if (p2.stops) return 'grad:' + p2.kind + ':' + p2.stops.map(function (st) { return st.color + '@' + U.round(st.t, 3); }).join(',');
+    return p2.type;
+  }
+  E.paintKey = paintKey;
+
+  var SAME = {
+    fill: { name: '칠 색상', key: function (it) { return paintKey(it.fill); } },
+    stroke: { name: '획 색상', key: function (it) { return paintKey(it.stroke); } },
+    fillStroke: {
+      name: '칠 및 획',
+      key: function (it) {
+        return paintKey(it.fill) + '|' + paintKey(it.stroke) + '|' +
+          U.round((it.stroke && it.stroke.width) || 0, 3);
+      }
+    },
+    strokeWeight: {
+      name: '획 두께',
+      key: function (it) { return String(U.round((it.stroke && it.stroke.type !== 'none' && it.stroke.width) || 0, 3)); }
+    },
+    opacity: { name: '불투명도', key: function (it) { return String(U.round(it.opacity == null ? 1 : it.opacity, 3)); } },
+    blend: { name: '혼합 모드', key: function (it) { return it.blend || 'normal'; } },
+    shape: {
+      name: '도형',
+      key: function (it) { return it.shape ? 'shape:' + it.shape.kind : 'type:' + it.type; }
+    },
+    symbol: {
+      name: '심볼 인스턴스',
+      key: function (it) { return it.type === 'symbol' ? 'sym:' + it.symbolId : null; }
+    },
+    appearance: {
+      name: '모양',
+      key: function (it) {
+        return JSON.stringify({
+          a: AI.appearance.list(it).map(function (e) {
+            return e.kind === 'fill' ? ['f', paintKey(e.paint)]
+              : ['s', paintKey(e.stroke), U.round(e.stroke.width || 0, 3), e.stroke.align || 'center'];
+          }),
+          e: (it.effects || []).map(function (e) { return e.type; }),
+          o: U.round(it.opacity == null ? 1 : it.opacity, 3),
+          b: it.blend || 'normal'
+        });
+      }
+    },
+    font: {
+      name: '글꼴 계열',
+      key: function (it) { return it.type === 'text' ? 'font:' + it.text.family : null; }
+    },
+    fontSize: {
+      name: '글꼴 크기',
+      key: function (it) { return it.type === 'text' ? 'size:' + U.round(it.text.size, 3) : null; }
+    },
+    charStyle: {
+      name: '문자 스타일',
+      key: function (it) { return it.type === 'text' && it.text.charStyle ? 'cs:' + it.text.charStyle : null; }
+    }
+  };
+  E.SAME = SAME;
+
+  E.selectSame = function (app, kind) {
+    var def = SAME[kind];
+    if (!def) return 0;
+    if (!app.sel.length) { U.toast('기준이 될 오브젝트를 선택하세요'); return 0; }
+    /* 선택한 것들의 열쇠 값을 모두 기준으로 삼는다 (일러스트레이터와 같다) */
+    var keys = [];
+    app.sel.forEach(function (it) {
+      var k = def.key(it);
+      if (k != null && keys.indexOf(k) < 0) keys.push(k);
+    });
+    if (!keys.length) { U.toast('"' + def.name + '" 기준을 뽑을 수 없는 오브젝트입니다'); return 0; }
+    var found = [];
+    Model.walk(app.doc, function (it, list, i, parent, layer) {
+      if (it.type === 'group') return;
+      if (!it.visible || it.locked) return;
+      if (layer && (!layer.visible || layer.locked)) return;
+      var k = def.key(it);
+      if (k != null && keys.indexOf(k) >= 0) found.push(it);
+    });
+    AI.sel.set(app, found);
+    U.toast('동일 ' + def.name + ' — ' + found.length + '개 선택됨');
+    return found.length;
+  };
+
+  /* ---------------- 선택 > 오브젝트 ---------------- */
+  function pickAll(app, test) {
+    var out = [];
+    Model.walk(app.doc, function (it, list, i, parent, layer) {
+      if (it.type === 'group') return;
+      if (!it.visible || it.locked) return;
+      if (layer && (!layer.visible || layer.locked)) return;
+      if (test(it)) out.push(it);
+    });
+    return out;
+  }
+
+  var OBJSEL = {
+    sameLayer: {
+      name: '같은 레이어의 모든 오브젝트',
+      pick: function (app) {
+        var out = [], want = [];
+        Model.walk(app.doc, function (it, list, i, parent, layer) {
+          if (app.sel.indexOf(it) >= 0 && layer && want.indexOf(layer) < 0) want.push(layer);
+        });
+        if (!want.length) want = [Model.activeLayer(app.doc)];
+        want.forEach(function (ly) {
+          if (!ly.visible || ly.locked) return;
+          ly.children.forEach(function (it) { if (it.visible && !it.locked) out.push(it); });
+        });
+        return out;
+      }
+    },
+    textObjects: {
+      name: '텍스트 오브젝트',
+      pick: function (app) { return pickAll(app, function (it) { return it.type === 'text'; }); }
+    },
+    strayPoints: {
+      name: '분리점',
+      pick: function (app) {
+        return pickAll(app, function (it) {
+          return it.type === 'path' && it.subs.length === 1 && it.subs[0].pts.length < 2;
+        });
+      }
+    },
+    clipMasks: {
+      name: '클리핑 마스크',
+      pick: function (app) {
+        var out = [];
+        Model.walk(app.doc, function (it) {
+          if (it.type === 'group' && it.clip && it.children.length) {
+            var cp = it.children[it.children.length - 1];
+            if (cp.visible && !cp.locked) out.push(cp);
+          }
+        });
+        return out;
+      }
+    },
+    brushStrokes: {
+      name: '브러시 획',
+      pick: function (app) {
+        return pickAll(app, function (it) {
+          return it.type === 'path' && it.stroke &&
+            (it.stroke.brush || (it.stroke.widthProfile && it.stroke.widthProfile.length > 1));
+        });
+      }
+    }
+  };
+  E.OBJSEL = OBJSEL;
+
+  E.selectObject = function (app, kind) {
+    var def = OBJSEL[kind];
+    if (!def) return 0;
+    var found = def.pick(app);
+    AI.sel.set(app, found);
+    U.toast(def.name + ' — ' + found.length + '개 선택됨');
+    return found.length;
+  };
+
   /* ---------------- 산포 브러시 (Scatter Brush) ---------------- */
   /* 패스를 따라 심볼/도형 사본을 뿌린다. 일러스트레이터의 산포 브러시를
      "적용 즉시 확장" 형태로 구현한 것 — 결과가 평범한 아트웍이라 다루기 쉽다. */

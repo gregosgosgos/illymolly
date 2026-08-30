@@ -142,19 +142,24 @@
     a.doc.layers.forEach(function (ly) { ly.children.forEach(function (it) { if (cur.indexOf(it) < 0 && it.visible && !it.locked) all.push(it); }); });
     AI.sel.set(a, all);
   });
-  def('selectSameFill', '같은 칠 색상', null, function (a) {
-    if (!a.sel.length) return;
-    var k = paintKey(a.sel[0].fill), found = [];
-    Model.walk(a.doc, function (it) { if (it.type !== 'group' && paintKey(it.fill) === k) found.push(it); });
-    AI.sel.set(a, found);
-  }, { enabled: hasSel });
-  def('selectSameStroke', '같은 획 색상', null, function (a) {
-    if (!a.sel.length) return;
-    var k = paintKey(a.sel[0].stroke), found = [];
-    Model.walk(a.doc, function (it) { if (it.type !== 'group' && paintKey(it.stroke) === k) found.push(it); });
-    AI.sel.set(a, found);
-  }, { enabled: hasSel });
-  function paintKey(p) { return p ? (p.type + ':' + (p.color || '')) : 'none'; }
+  /* 선택 > 동일 — 기준 오브젝트와 같은 속성을 가진 것을 모두 고른다 */
+  C.SAME_ITEMS = [];
+  Object.keys(E.SAME).forEach(function (kind) {
+    var id = 'selectSame_' + kind;
+    C.SAME_ITEMS.push(id);
+    def(id, E.SAME[kind].name, null, function (a) { E.selectSame(a, kind); }, { enabled: hasSel });
+  });
+  /* 예전 이름도 남겨 둔다 (단축키·자동화 호환) */
+  def('selectSameFill', '같은 칠 색상', null, function (a) { E.selectSame(a, 'fill'); }, { enabled: hasSel });
+  def('selectSameStroke', '같은 획 색상', null, function (a) { E.selectSame(a, 'stroke'); }, { enabled: hasSel });
+
+  /* 선택 > 오브젝트 */
+  C.OBJSEL_ITEMS = [];
+  Object.keys(E.OBJSEL).forEach(function (kind) {
+    var id = 'selectObj_' + kind;
+    C.OBJSEL_ITEMS.push(id);
+    def(id, E.OBJSEL[kind].name, null, function (a) { E.selectObject(a, kind); });
+  });
 
   /* ================= 오브젝트 ================= */
   def('transformAgain', '변형 반복', 'Ctrl+D', hist('변형 반복', function (a) {
@@ -817,7 +822,9 @@
       ]
     },
     {
-      title: '선택', items: ['selectAll', 'deselectAll', 'reselect', 'selectInverse', '-', 'selectSameFill', 'selectSameStroke']
+      title: '선택', items: ['selectAll', 'deselectAll', 'reselect', 'selectInverse', '-',
+        { label: '동일', items: C.SAME_ITEMS },
+        { label: '오브젝트', items: C.OBJSEL_ITEMS }]
     },
     {
       title: '효과', items: [

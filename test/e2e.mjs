@@ -2214,6 +2214,91 @@ await check('라이브 다각형 — 변의 수 위젯을 끌면 변이 늘어�
   return `변 6 → ${up.n} (앵커 ${up.pts}) · 실행 취소로 6 복원`;
 });
 
+/* ---------------- 유사 항목 선택 ---------------- */
+await check('선택 > 동일 — 획 두께 · 불투명도 · 혼합 모드 · 도형', async () => {
+  await ev(() => {
+    const app = AI.app;
+    while (illy.documents().length > 1) AI.docs.close(app, illy.documents().length - 1, true);
+    app.setDoc(AI.model.newDoc(600, 400));
+    app.history.reset(app.doc, '새 문서');
+    /* 획 두께 3 인 사각형 2개, 두께 1 인 원 1개, 반투명 별 1개 */
+    illy.rect({ x: 10, y: 10, width: 50, height: 50, fill: '#ff0000', stroke: '#000000', strokeWidth: 3 });
+    illy.rect({ x: 80, y: 10, width: 50, height: 50, fill: '#00ff00', stroke: '#000000', strokeWidth: 3 });
+    illy.ellipse({ x: 150, y: 10, width: 50, height: 50, fill: '#ff0000', stroke: '#000000', strokeWidth: 1 });
+    illy.addStar({ cx: 250, cy: 40, radius: 25, innerRadius: 12, points: 5, fill: '#0000ff', opacity: 0.5 });
+    illy.set(illy.find({ type: 'path' })[3], { blend: 'multiply' });
+  });
+  const ids = await ev(() => illy.find({ type: 'path' }));
+
+  const r = await page.evaluate((ids) => {
+    const out = {};
+    out.weight = illy.selectSame([ids[0]], { attribute: 'strokeWeight' }).length;
+    out.fill = illy.selectSame([ids[0]], { attribute: 'fill' }).length;
+    out.shape = illy.selectSame([ids[0]], { attribute: 'shape' }).length;
+    out.opacity = illy.selectSame([ids[3]], { attribute: 'opacity' }).length;
+    out.blend = illy.selectSame([ids[3]], { attribute: 'blend' }).length;
+    out.fillStroke = illy.selectSame([ids[0]], { attribute: 'fillStroke' }).length;
+    /* 여러 개를 골라 두면 그 값들이 모두 기준이 된다 */
+    out.multi = illy.selectSame([ids[0], ids[2]], { attribute: 'strokeWeight' }).length;
+    return out;
+  }, ids);
+  if (r.weight !== 2) throw new Error('획 두께 3 = ' + r.weight);
+  if (r.fill !== 2) throw new Error('빨강 칠 = ' + r.fill);
+  if (r.shape !== 2) throw new Error('사각형 = ' + r.shape);
+  if (r.opacity !== 1) throw new Error('불투명도 0.5 = ' + r.opacity);
+  if (r.blend !== 1) throw new Error('multiply = ' + r.blend);
+  if (r.fillStroke !== 1) throw new Error('칠+획 완전 일치 = ' + r.fillStroke);
+  if (r.multi !== 3) throw new Error('두께 3 또는 1 = ' + r.multi);
+
+  /* 잠긴/숨긴 오브젝트는 걸리지 않는다 */
+  const locked = await page.evaluate((ids) => {
+    illy.set(ids[1], { locked: true });
+    const n = illy.selectSame([ids[0]], { attribute: 'strokeWeight' }).length;
+    illy.set(ids[1], { locked: false });
+    return n;
+  }, ids);
+  if (locked !== 1) throw new Error('잠긴 것이 선택됨=' + locked);
+  return `두께 ${r.weight} · 칠 ${r.fill} · 도형 ${r.shape} · 불투명도 ${r.opacity} · 혼합 ${r.blend} · 다중 기준 ${r.multi} · 잠금 제외`;
+});
+
+await check('선택 > 오브젝트 · 메뉴의 동일/오브젝트 서브메뉴', async () => {
+  const r = await ev(() => {
+    illy.text({ x: 300, y: 100, text: '가나다', size: 20 });
+    return {
+      texts: illy.selectObjects({ kind: 'textObjects' }).length,
+      layer: illy.selectObjects({ kind: 'sameLayer' }).length,
+      brush: illy.selectObjects({ kind: 'brushStrokes' }).length
+    };
+  });
+  if (r.texts !== 1) throw new Error('텍스트 오브젝트=' + r.texts);
+  if (r.layer !== 5) throw new Error('같은 레이어=' + r.layer);
+  if (r.brush !== 0) throw new Error('브러시 획=' + r.brush);
+
+  /* 메뉴에 서브메뉴가 뜨고, 항목을 눌러 실제로 선택이 바뀐다
+     (메뉴는 열릴 때 사용 가능 여부를 다시 따지므로 먼저 기준을 골라 둔다) */
+  await ev(() => illy.select(illy.find({ type: 'path' })[0]));
+  const menuIdx = await ev(() => AI.commands.MENUS.findIndex(m => m.title === '선택'));
+  await page.click(`#menus .menu-title >> nth=${menuIdx}`);
+  await page.waitForSelector('.menubar-pop .mi.has-sub');
+  const subs = await page.$$eval('.menubar-pop .mi.has-sub', els => els.map(e => e.textContent.replace('›', '').trim()));
+  if (subs.join(',') !== '동일,오브젝트') throw new Error('서브메뉴=' + subs);
+
+  await page.hover('.menubar-pop .mi.has-sub >> nth=0');
+  await page.waitForTimeout(150);
+  const pops = await page.$$('.menubar-pop');
+  if (pops.length < 2) throw new Error('서브메뉴가 열리지 않음 (' + pops.length + ')');
+  const items = await page.$$eval('.menubar-pop >> nth=1 >> .mi', els => els.map(e => e.textContent.trim()));
+  if (items.indexOf('획 두께') < 0) throw new Error('서브 항목=' + items);
+
+  await page.click('.menubar-pop >> nth=1 >> .mi:has-text("획 두께")');
+  await page.waitForTimeout(100);
+  const sel = await ev(() => AI.app.sel.length);
+  const closed = await page.$$('.menubar-pop');
+  if (sel !== 2) throw new Error('서브메뉴 실행 결과=' + sel);
+  if (closed.length) throw new Error('메뉴가 닫히지 않음');
+  return `텍스트 ${r.texts} · 레이어 ${r.layer} · 서브메뉴 ${subs.join('/')} · 항목 ${items.length}개 · 클릭 실행 ${sel}개 선택`;
+});
+
 /* ---------------- 문자 · 단락 스타일 ---------------- */
 await check('문자 스타일 — 걸어 두면 고칠 때 함께 바뀐다 · 재정의 표시', async () => {
   await ev(() => {

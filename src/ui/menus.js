@@ -10,8 +10,33 @@
 
   function buildPop(app, items) {
     var pop = U.el('div', 'menu-pop menubar-pop');
+    var subPop = null;
+    function closeSub() { if (subPop) { subPop.remove(); subPop = null; } }
+    pop.__closeSub = closeSub;
+
     items.forEach(function (id) {
       if (id === '-') { pop.appendChild(U.el('div', 'sep')); return; }
+      /* 서브메뉴 — { label, items:[…] } (일러스트레이터의 [선택 > 동일 ▸] 같은 것) */
+      if (id && typeof id === 'object' && id.items) {
+        var sm = U.el('div', 'mi has-sub');
+        sm.innerHTML = '<span class="chk"></span><span>' + id.label + '</span><span class="k">›</span>';
+        U.on(sm, 'mousedown', function (ev) { ev.preventDefault(); });
+        U.on(sm, 'mouseenter', function () {
+          closeSub();
+          U.qa('.mi.has-sub', pop).forEach(function (x) { x.classList.remove('open'); });
+          subPop = buildPop(app, id.items);
+          document.body.appendChild(subPop);
+          var r = sm.getBoundingClientRect();
+          subPop.style.left = (r.right - 3) + 'px';
+          subPop.style.top = (r.top - 4) + 'px';
+          /* 화면 밖으로 나가면 왼쪽으로 편다 */
+          var w = subPop.getBoundingClientRect().width;
+          if (r.right + w > window.innerWidth) subPop.style.left = Math.max(0, r.left - w + 3) + 'px';
+          sm.classList.add('open');
+        });
+        pop.appendChild(sm);
+        return;
+      }
       var d = C.defs[id];
       if (!d) return;
       var mi = U.el('div', 'mi');
@@ -22,6 +47,11 @@
       mi.innerHTML = '<span class="chk">' + chk + '</span><span>' + text + '</span>' +
         (d.key ? '<span class="k">' + K.display(d.key) + '</span>' : '');
       U.on(mi, 'mousedown', function (ev) { ev.preventDefault(); });
+      /* 다른 항목으로 넘어가면 열려 있던 서브메뉴를 닫는다 */
+      U.on(mi, 'mouseenter', function () {
+        closeSub();
+        U.qa('.mi.has-sub', pop).forEach(function (x) { x.classList.remove('open'); });
+      });
       U.on(mi, 'click', function () {
         if (!enabled) return;
         close();
@@ -33,7 +63,12 @@
   }
 
   function close() {
-    if (openMenu) { openMenu.pop.remove(); openMenu.el.classList.remove('open'); openMenu = null; }
+    if (openMenu) {
+      if (openMenu.pop.__closeSub) openMenu.pop.__closeSub();
+      openMenu.pop.remove();
+      openMenu.el.classList.remove('open');
+      openMenu = null;
+    }
   }
   UI.closeMenus = close;
 
@@ -63,7 +98,8 @@
       nav.appendChild(el);
     });
     U.on(document, 'mousedown', function (ev) {
-      if (openMenu && !openMenu.pop.contains(ev.target) && !openMenu.el.contains(ev.target)) close();
+      var inSub = ev.target.closest && ev.target.closest('.menu-pop');
+      if (openMenu && !openMenu.pop.contains(ev.target) && !openMenu.el.contains(ev.target) && !inSub) close();
       var cm = document.getElementById('contextmenu');
       if (!cm.hidden && !cm.contains(ev.target)) cm.hidden = true;
     });

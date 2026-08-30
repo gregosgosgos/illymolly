@@ -70,6 +70,8 @@ button,input,select,textarea{font:inherit;color:inherit}
   display:flex;align-items:center;gap:16px;padding:4px 14px;white-space:nowrap;cursor:default;
 }
 .menu-pop .mi:hover:not(.disabled){background:var(--accent2);color:#fff}
+.menu-pop .mi.has-sub.open{background:var(--accent2);color:#fff}
+.menu-pop .mi.has-sub>.k{opacity:.8}
 .menu-pop .mi.disabled{color:#666}
 .menu-pop .mi .k{margin-left:auto;color:#9d9d9d;font-size:10px}
 .menu-pop .mi:hover:not(.disabled) .k{color:#dbeaff}

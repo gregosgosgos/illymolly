@@ -828,6 +828,33 @@
       return ctx.sel.map(function (i) { return i.id; });
     }
   });
+  op('selectSame', {
+    undoable: false, group: '선택',
+    desc: '기준 오브젝트와 같은 속성을 가진 것을 모두 선택합니다 (일러스트레이터의 [선택 > 동일]).',
+    params: {
+      query: Q,
+      attribute: p('string', '기준 속성', {
+        enum: Object.keys(AI.edit.SAME), required: true
+      })
+    },
+    returns: 'id[]',
+    run: function (ctx, a) {
+      if (a.query != null) ctx.sel = items(ctx, a.query, { defaultSelection: false });
+      if (!ctx.sel.length) throw err('NO_SELECTION', '기준이 될 오브젝트를 선택하세요');
+      AI.edit.selectSame(ctx, a.attribute);
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+  op('selectObjects', {
+    undoable: false, group: '선택',
+    desc: '종류로 오브젝트를 선택합니다 (일러스트레이터의 [선택 > 오브젝트]).',
+    params: { kind: p('string', '종류', { enum: Object.keys(AI.edit.OBJSEL), required: true }) },
+    returns: 'id[]',
+    run: function (ctx, a) {
+      AI.edit.selectObject(ctx, a.kind);
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
   op('deselect', {
     undoable: false, group: '선택', desc: '선택을 해제합니다.', params: {},
     run: function (ctx) { ctx.sel = []; ctx.selPts = []; return []; }
