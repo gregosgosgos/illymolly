@@ -845,6 +845,128 @@
     return true;
   };
 
+  /* ---------------- 아트 브러시 · 패턴 브러시 ----------------
+     아트웍을 패스에 맞춰 **휘어 놓는다**. 아트웍의 가로(u)는 패스를 따라가는
+     거리로, 세로(v)는 패스 법선 방향의 거리로 옮긴다.
+       · 아트 브러시   — 아트웍 한 벌을 패스 전체 길이에 맞춰 늘린다
+       · 패턴 브러시   — 같은 방식으로 여러 벌을 이어 붙여 반복한다
+     일러스트레이터의 브러시와 결과가 같고, 산포 브러시처럼 적용 즉시 실제
+     아트웍으로 펼친다 (다루기 쉬운 평범한 패스로 남는다).                   */
+
+  /* 아트웍의 잎 패스들을 (누적 행렬과 함께) 모은다 */
+  function leafPaths(it, m, out) {
+    if (it.type === 'group') {
+      it.children.forEach(function (c) { leafPaths(c, M.mul(m, c.m), out); });
+      return out;
+    }
+    if (it.type === 'path') out.push({ it: it, m: m });
+    return out;
+  }
+
+  /* 아트웍 한 벌을 패스의 [s0, s1] 구간 위로 휘어 놓는다 */
+  function bendArtwork(app, art, walk, s0, s1, bb, o) {
+    var leaves = leafPaths(art, Model.worldMatrix(app.doc, art), []);
+    var w = R.w(bb) || 1, h = R.h(bb) || 1;
+    var across = h * ((o.width == null ? 100 : o.width) / 100);
+    var made = [];
+
+    function map(x, y) {
+      var u = (x - bb.x) / w;
+      var v = (y - bb.y) / h - 0.5;
+      if (o.flipAlong) u = 1 - u;
+      if (o.flipAcross) v = -v;
+      var q = walk.at(U.clamp(s0 + u * (s1 - s0), 0, walk.length));
+      if (!q) return { x: x, y: y };
+      var nx = -Math.sin(q.ang), ny = Math.cos(q.ang);
+      return { x: q.x + nx * v * across, y: q.y + ny * v * across };
+    }
+
+    /* 휘는 변환이라 직선도 곡선이 된다. 패스를 따라가는 방향(u)으로 긴 변은
+       잘게 나눠 두어야 실제로 휘어 보인다. */
+    var span = Math.abs(s1 - s0);
+    function densify(pts, closed) {
+      var out = [], n = pts.length;
+      var last = closed ? n : n - 1;
+      for (var i = 0; i < last; i++) {
+        var a = pts[i], b = pts[(i + 1) % n];
+        var du = Math.abs(b.x - a.x) / w;
+        var k = U.clamp(Math.ceil(du * span / 3), 1, 400);
+        for (var j = 0; j < k; j++) {
+          out.push({ x: a.x + (b.x - a.x) * j / k, y: a.y + (b.y - a.y) * j / k });
+        }
+      }
+      if (!closed) out.push(pts[n - 1]);
+      return out;
+    }
+
+    leaves.forEach(function (lf) {
+      var subs = [];
+      G.flattenItem(lf.it, 0.3, lf.m).forEach(function (poly) {
+        if (poly.pts.length < 2) return;
+        subs.push({
+          closed: poly.closed,
+          pts: densify(poly.pts, poly.closed).map(function (p) {
+            var q = map(p.x, p.y); return { x: q.x, y: q.y };
+          })
+        });
+      });
+      if (!subs.length) return;
+      var c = Model.newPath(subs);
+      c.name = lf.it.name;
+      c.fill = U.deepCopy(lf.it.fill);
+      c.stroke = U.deepCopy(lf.it.stroke);
+      if (lf.it.appearance) c.appearance = U.deepCopy(lf.it.appearance);
+      c.opacity = lf.it.opacity;
+      c.blend = lf.it.blend;
+      made.push(c);
+    });
+    return made;
+  }
+
+  /* 선택한 패스들에 아트웍 브러시를 입힌다.
+     mode: 'art' 한 벌 늘리기 · 'pattern' 여러 벌 이어 붙이기 */
+  E.artBrushAlongPath = function (app, art, o) {
+    o = o || {};
+    var mode = o.mode === 'pattern' ? 'pattern' : 'art';
+    var bb = Rn.worldBounds(app.doc, art, true);
+    if (R.isEmpty(bb) || R.w(bb) < 1e-6) { U.toast('브러시로 쓸 아트웍이 비어 있습니다'); return false; }
+
+    var made = [], usedPaths = [];
+    app.sel.forEach(function (it) {
+      if (it.type !== 'path') return;
+      var wm = Model.worldMatrix(app.doc, it);
+      var walk = G.walker(it.subs, 0.3, wm);
+      if (!walk || walk.length < 1) return;
+      usedPaths.push(it);
+
+      if (mode === 'art') {
+        made = made.concat(bendArtwork(app, art, walk, 0, walk.length, bb, o));
+        return;
+      }
+      /* 패턴 — 타일이 딱 떨어지도록 폭을 미세 조정한다 (일러스트레이터의 기본 '늘이기 맞춤') */
+      var tile = Math.max(1, R.w(bb) * ((o.width == null ? 100 : o.width) / 100));
+      var n = Math.max(1, Math.round(walk.length / tile));
+      var step = walk.length / n;
+      for (var i = 0; i < n; i++) {
+        made = made.concat(bendArtwork(app, art, walk, i * step, (i + 1) * step, bb, o));
+      }
+    });
+
+    if (!made.length) { U.toast('브러시를 입힐 패스를 함께 선택하세요'); return false; }
+    var g = Model.newGroup(made);
+    g.name = mode === 'art' ? '아트 브러시' : '패턴 브러시';
+    Model.activeLayer(app.doc).children.push(g);
+    /* 원본 패스는 일러스트레이터처럼 획이 브러시로 바뀐 셈이므로 지운다 */
+    if (o.keepPath === false) {
+      usedPaths.forEach(function (it) {
+        var loc = Model.locate(app.doc, it);
+        if (loc) loc.list.splice(loc.index, 1);
+      });
+    }
+    AI.sel.set(app, [g]);
+    return true;
+  };
+
   /* ---------------- 아트웍 재색상화 (Recolor Artwork) ---------------- */
   /* 선택 영역에 쓰인 색을 모아 팔레트로 만들고, 색끼리 바꾸거나
      색조 회전 · 채도 · 밝기를 한 번에 조정한다. */

@@ -1205,10 +1205,15 @@
       title: '브러시 옵션',
       fields: [
         { id: 'kind', label: '종류', type: 'radio', value: 'calligraphic',
-          options: [['calligraphic', '서예'], ['scatter', '산포'], ['none', '없음']] },
+          options: [['calligraphic', '서예'], ['scatter', '산포'], ['art', '아트'], ['pattern', '패턴'], ['none', '없음']] },
         { type: 'sep' },
         { id: 'angle', label: '펜촉 각도', type: 'num', value: (app.brushOpts && app.brushOpts.angle) || 30, unit: '°', step: 5 },
         { id: 'roundness', label: '납작함', type: 'num', value: (app.brushOpts && app.brushOpts.roundness) || 20, unit: '%', step: 5 },
+        { type: 'sep' },
+        { id: 'width', label: '브러시 폭 (아트 · 패턴)', type: 'num', value: (app.brushOpts && app.brushOpts.width) || 100, unit: '%' },
+        { id: 'flipAlong', label: '길이 방향 뒤집기', type: 'check', value: !!(app.brushOpts && app.brushOpts.flipAlong) },
+        { id: 'flipAcross', label: '폭 방향 뒤집기', type: 'check', value: !!(app.brushOpts && app.brushOpts.flipAcross) },
+        { id: 'keepPath', label: '원본 패스 남기기', type: 'check', value: !!(app.brushOpts && app.brushOpts.keepPath) },
         { type: 'sep' },
         { id: 'spacing', label: '산포 간격', type: 'num', value: (app.brushOpts && app.brushOpts.spacing) || 30, unit: 'pt' },
         { id: 'sizeJitter', label: '크기 변화', type: 'num', value: (app.brushOpts && app.brushOpts.sizeJitter) || 20, unit: '%' },
@@ -1216,12 +1221,13 @@
         { id: 'offsetJitter', label: '간격 변화', type: 'num', value: (app.brushOpts && app.brushOpts.offsetJitter) || 6, unit: 'pt' },
         { id: 'follow', label: '패스 방향 따라 회전', type: 'check', value: true },
         { type: 'sep' },
-        { id: 'info', label: '산포는 맨 앞 오브젝트를 뿌릴 아트웍으로 씁니다', type: 'info' }
+        { id: 'info', label: '산포 · 아트 · 패턴은 맨 앞 오브젝트를 브러시 아트웍으로 씁니다', type: 'info' }
       ],
       onDone: function (v) {
         app.brushOpts = {
           angle: v.angle, roundness: v.roundness, spacing: v.spacing,
-          sizeJitter: v.sizeJitter, rotationJitter: v.rotationJitter, offsetJitter: v.offsetJitter
+          sizeJitter: v.sizeJitter, rotationJitter: v.rotationJitter, offsetJitter: v.offsetJitter,
+          width: v.width, flipAlong: v.flipAlong, flipAcross: v.flipAcross, keepPath: v.keepPath
         };
         if (v.kind === 'calligraphic' || v.kind === 'none') {
           app.history.begin('브러시', app.doc);
@@ -1237,16 +1243,25 @@
           app.history.commit();
           U.toast(v.kind === 'none' ? '브러시 제거' : '서예 브러시 적용');
         } else {
-          if (app.sel.length < 2) { U.toast('뿌릴 아트웍과 경로를 함께 선택하세요 (맨 앞이 아트웍)'); return; }
+          if (app.sel.length < 2) { U.toast('브러시 아트웍과 경로를 함께 선택하세요 (맨 앞이 아트웍)'); return; }
           var ordered = [];
           Model.walk(app.doc, function (it) { if (app.sel.indexOf(it) >= 0) ordered.push(it); });
           var art = ordered[ordered.length - 1];
-          app.history.begin('산포 브러시', app.doc);
+          var NAME = { scatter: '산포 브러시', art: '아트 브러시', pattern: '패턴 브러시' };
+          app.history.begin(NAME[v.kind], app.doc);
           AI.sel.set(app, ordered.slice(0, -1));
-          var ok = E.scatterAlongPath(app, art, {
-            spacing: v.spacing, sizeJitter: v.sizeJitter,
-            rotationJitter: v.rotationJitter, offsetJitter: v.offsetJitter, follow: v.follow
-          });
+          var ok;
+          if (v.kind === 'scatter') {
+            ok = E.scatterAlongPath(app, art, {
+              spacing: v.spacing, sizeJitter: v.sizeJitter,
+              rotationJitter: v.rotationJitter, offsetJitter: v.offsetJitter, follow: v.follow
+            });
+          } else {
+            ok = E.artBrushAlongPath(app, art, {
+              mode: v.kind, width: v.width,
+              flipAlong: v.flipAlong, flipAcross: v.flipAcross, keepPath: !!v.keepPath
+            });
+          }
           if (ok === false) app.history.abort(); else app.history.commit();
         }
         app.invalidate();

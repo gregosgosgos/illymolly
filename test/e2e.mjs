@@ -2214,6 +2214,112 @@ await check('라이브 다각형 — 변의 수 위젯을 끌면 변이 늘어�
   return `변 6 → ${up.n} (앵커 ${up.pts}) · 실행 취소로 6 복원`;
 });
 
+/* ---------------- 아트 브러시 · 패턴 브러시 ---------------- */
+await check('아트 브러시 — 아트웍이 패스를 따라 휘어진다', async () => {
+  const r = await ev(() => {
+    const app = AI.app;
+    while (illy.documents().length > 1) AI.docs.close(app, illy.documents().length - 1, true);
+    app.setDoc(AI.model.newDoc(600, 400));
+    app.history.reset(app.doc, '새 문서');
+    /* 위로 볼록한 호 */
+    const arc = AI.model.newPath([{ closed: false, pts: [
+      { x: 50, y: 300, ox: 50, oy: 60 },
+      { x: 550, y: 300, ix: 550, iy: 60 }
+    ] }]);
+    arc.fill = AI.color.none();
+    app.doc.layers[0].children.push(arc);
+    /* 브러시 아트웍: 가로로 긴 삼각형 */
+    const artId = illy.addPath({ points: [[0, 0], [100, 10], [0, 20]], closed: true, fill: '#cc3333' });
+    const arcB = AI.render.worldBounds(app.doc, arc, true);
+
+    illy.applyBrush({ kind: 'art', artwork: artId, query: [arc.id, artId] });
+    const kids = app.doc.layers[0].children;
+    const g = kids[kids.length - 1];
+    const gb = AI.render.worldBounds(app.doc, g, true);
+    return {
+      arcH: Math.round(arcB.y2 - arcB.y),
+      name: g.name,
+      leaves: g.children.length,
+      pts: g.children[0].subs[0].pts.length,
+      fill: g.children[0].fill.color,
+      /* 휘었다면 결과 높이가 호 높이만큼 나온다 (안 휘면 납작해진다) */
+      h: Math.round(gb.y2 - gb.y),
+      w: Math.round(gb.x2 - gb.x),
+      left: kids.length          /* 원본 패스는 브러시가 되면서 사라진다 */
+    };
+  });
+  if (r.name !== '아트 브러시') throw new Error('그룹 이름=' + r.name);
+  if (r.h < r.arcH) throw new Error('휘지 않음 — 결과 높이 ' + r.h + ' / 호 높이 ' + r.arcH);
+  if (r.pts < 50) throw new Error('점이 너무 적어 휘어 보이지 않음=' + r.pts);
+  if (r.fill !== '#cc3333') throw new Error('아트웍 색이 안 따라옴=' + r.fill);
+  if (r.left !== 2) throw new Error('원본 패스 정리 실패 — 남은 오브젝트 ' + r.left);
+
+  /* 화면에도 호를 따라 실제로 칠해졌는지 픽셀로 확인 */
+  const px = await ev(() => {
+    const url = illy.toPNG({ scale: 1, background: true });
+    return new Promise(res => {
+      const im = new Image();
+      im.onload = () => {
+        const cv = document.createElement('canvas');
+        cv.width = im.width; cv.height = im.height;
+        const c = cv.getContext('2d');
+        c.drawImage(im, 0, 0);
+        /* 호의 꼭대기 부근(300,125 근처)에 브러시 색이 있어야 한다 */
+        let hit = 0;
+        for (let y = 115; y < 145; y++) {
+          const d = c.getImageData(300, y, 1, 1).data;
+          if (d[0] > 150 && d[1] < 100 && d[2] < 100) hit++;
+        }
+        return res(hit);
+      };
+      im.src = url;
+    });
+  });
+  if (px < 3) throw new Error('호 꼭대기에 브러시가 안 그려짐 (' + px + '픽셀)');
+  return `${r.w}×${r.h} 로 호를 따라 휘어짐 (점 ${r.pts}개) · 꼭대기 ${px}픽셀`;
+});
+
+await check('패턴 브러시 — 타일이 패스 길이에 맞춰 반복된다', async () => {
+  const r = await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(600, 200));
+    app.history.reset(app.doc, '새 문서');
+    /* 길이 400 인 직선 */
+    const line = AI.model.newPath([{ closed: false, pts: [{ x: 100, y: 100 }, { x: 500, y: 100 }] }]);
+    line.fill = AI.color.none();
+    app.doc.layers[0].children.push(line);
+    /* 폭 100 인 타일 → 4개가 딱 맞는다 */
+    const artId = illy.addPath({ points: [[0, 0], [100, 0], [100, 20], [0, 20]], closed: true, fill: '#2288cc' });
+
+    illy.applyBrush({ kind: 'pattern', artwork: artId, query: [line.id, artId], width: 100, keepPath: true });
+    const kids = app.doc.layers[0].children;
+    const g = kids[kids.length - 1];
+    const gb = AI.render.worldBounds(app.doc, g, true);
+    return {
+      tiles: g.children.length,
+      w: Math.round(gb.x2 - gb.x), h: Math.round(gb.y2 - gb.y),
+      kept: kids.some(k => k.id === line.id)        /* 원본 패스 남기기 */
+    };
+  });
+  if (r.tiles !== 4) throw new Error('타일 수=' + r.tiles);
+  if (r.w !== 400) throw new Error('전체 폭=' + r.w);
+  if (r.h !== 20) throw new Error('타일 높이=' + r.h);
+  if (!r.kept) throw new Error('원본 패스 남기기가 동작하지 않음');
+
+  /* 브러시 폭을 절반으로 → 타일이 두 배 */
+  const half = await ev(() => {
+    AI.commands.run('undo');
+    const kids = AI.app.doc.layers[0].children;
+    const line = kids.find(k => k.type === 'path' && k.subs[0].pts.length === 2);
+    const art = kids.find(k => k !== line);
+    illy.applyBrush({ kind: 'pattern', artwork: art.id, query: [line.id, art.id], width: 50 });
+    const g = AI.app.doc.layers[0].children.slice(-1)[0];
+    return g.children.length;
+  });
+  if (half !== 8) throw new Error('폭 50%% 일 때 타일 수=' + half);
+  return `타일 4개(폭 400) · 폭 50%면 ${half}개 · 원본 패스 유지 옵션 확인`;
+});
+
 /* ---------------- 효과 > 3D ---------------- */
 await check('효과 > 3D 돌출과 경사 — 면마다 다르게 음영이 든다', async () => {
   const r = await ev(() => {

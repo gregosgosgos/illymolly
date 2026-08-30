@@ -545,6 +545,67 @@
     }
   });
 
+  /* ---------- 브러시 ---------- */
+  op('applyBrush', {
+    undoable: true, group: '스타일',
+    desc: '패스에 브러시를 입힙니다. 서예는 획 속성으로, 산포 · 아트 · 패턴은 실제 아트웍으로 펼쳐집니다.',
+    params: {
+      query: Q,
+      kind: p('string', '브러시 종류', {
+        enum: ['calligraphic', 'scatter', 'art', 'pattern', 'none'], required: true
+      }),
+      artwork: p('string', '브러시로 쓸 아트웍 (산포 · 아트 · 패턴에서 필수, 선택자)'),
+      angle: p('number', '펜촉 각도 ° (calligraphic)'),
+      roundness: p('number', '납작함 % (calligraphic)'),
+      spacing: p('number', '간격 pt (scatter)'),
+      sizeJitter: p('number', '크기 변화 % (scatter)'),
+      rotationJitter: p('number', '회전 변화 ° (scatter)'),
+      offsetJitter: p('number', '간격 변화 pt (scatter)'),
+      width: p('number', '브러시 폭 % (art · pattern)', { default: 100 }),
+      flipAlong: p('boolean', '길이 방향 뒤집기 (art · pattern)', { default: false }),
+      flipAcross: p('boolean', '폭 방향 뒤집기 (art · pattern)', { default: false }),
+      keepPath: p('boolean', '원본 패스 남기기 (art · pattern)', { default: false })
+    },
+    returns: 'id[]',
+    run: function (ctx, a) {
+      var list = need(ctx, a.query, 'applyBrush');
+      if (a.kind === 'calligraphic' || a.kind === 'none') {
+        list.forEach(function (it) {
+          (function rec(o) {
+            if (o.type === 'group') { o.children.forEach(rec); return; }
+            if (!o.stroke) return;
+            if (a.kind === 'none') delete o.stroke.brush;
+            else {
+              o.stroke.brush = {
+                type: 'calligraphic',
+                angle: a.angle == null ? 30 : a.angle,
+                roundness: a.roundness == null ? 20 : a.roundness
+              };
+            }
+            AI.appearance.pushDown(o);
+          })(it);
+        });
+        return list.map(function (i) { return i.id; });
+      }
+      if (!a.artwork) throw err('NO_ARTWORK', a.kind + ' 브러시에는 artwork 인자가 필요합니다');
+      var art = need(ctx, a.artwork, 'applyBrush')[0];
+      if (!art) throw err('NO_ARTWORK', '브러시로 쓸 아트웍을 찾을 수 없습니다');
+      ctx.sel = list.filter(function (i) { return i !== art; });
+      if (!ctx.sel.length) throw err('NO_PATH', '브러시를 입힐 패스를 지정하세요');
+      var ok = (a.kind === 'scatter')
+        ? AI.edit.scatterAlongPath(ctx, art, {
+          spacing: a.spacing, sizeJitter: a.sizeJitter,
+          rotationJitter: a.rotationJitter, offsetJitter: a.offsetJitter, follow: true
+        })
+        : AI.edit.artBrushAlongPath(ctx, art, {
+          mode: a.kind, width: a.width,
+          flipAlong: a.flipAlong, flipAcross: a.flipAcross, keepPath: !!a.keepPath
+        });
+      if (ok === false) throw err('BRUSH_FAILED', '브러시를 입히지 못했습니다');
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+
   /* ---------- 문자 · 단락 스타일 ---------- */
   var STYLE_KIND = p('string', '스타일 종류', { enum: ['char', 'para'], default: 'char' });
   op('textStyles', {
