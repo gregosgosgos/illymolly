@@ -2214,6 +2214,84 @@ await check('라이브 다각형 — 변의 수 위젯을 끌면 변이 늘어�
   return `변 6 → ${up.n} (앵커 ${up.pts}) · 실행 취소로 6 복원`;
 });
 
+/* ---------------- 컴파운드 패스의 구멍 ---------------- */
+await check('패스파인더가 컴파운드 패스의 구멍을 잃지 않는다', async () => {
+  const setup = () => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 400));
+    app.history.reset(app.doc, '새 문서');
+    /* 도넛: 200×200 사각형 안에 100×100 구멍 */
+    illy.rect({ x: 50, y: 50, width: 200, height: 200, fill: '#3366cc' });
+    illy.rect({ x: 100, y: 100, width: 100, height: 100 });
+    illy.select(illy.find({ type: 'path' }));
+    AI.commands.run('compoundMake');
+  };
+
+  /* 구멍을 건드리지 않는 자리에서 나누기 — 살 부분은 구멍을 그대로 지녀야 한다 */
+  const r = await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 400));
+    app.history.reset(app.doc, '새 문서');
+    illy.rect({ x: 50, y: 50, width: 200, height: 200, fill: '#3366cc' });
+    illy.rect({ x: 100, y: 100, width: 100, height: 100 });
+    illy.select(illy.find({ type: 'path' }));
+    AI.commands.run('compoundMake');
+    illy.rect({ x: 40, y: 140, width: 30, height: 20, fill: '#ff0000' });
+    illy.select(illy.find({ type: 'path' }));
+    AI.commands.run('pf_divide');
+    return illy.find({ type: 'path' }).map(id => {
+      const it = AI.model.find(AI.app.doc, id);
+      const b = illy.get(id).geometricBounds;
+      return {
+        b: [b.x, b.y, b.w, b.h].map(Math.round).join(','),
+        subs: it.subs.length, fill: illy.get(id).fill.color
+      };
+    });
+  });
+  const donut = r.filter(o => o.fill === '#3366cc');
+  if (donut.length !== 1) throw new Error('도넛 조각 수=' + donut.length + ' / ' + JSON.stringify(r));
+  if (donut[0].subs !== 2) throw new Error('구멍이 사라짐 — 서브패스=' + donut[0].subs);
+  if (donut[0].b !== '50,50,200,200') throw new Error('도넛 바운딩=' + donut[0].b);
+  if (r.length !== 3) throw new Error('조각 수=' + r.length);
+
+  /* 구멍 자리가 실제로 비어 있는지 픽셀로 확인 */
+  const px = await ev(() => {
+    const url = illy.toPNG({ scale: 1, background: true });
+    return new Promise(res => {
+      const im = new Image();
+      im.onload = () => {
+        const cv = document.createElement('canvas');
+        cv.width = im.width; cv.height = im.height;
+        const c = cv.getContext('2d');
+        c.drawImage(im, 0, 0);
+        const hole = c.getImageData(150, 150, 1, 1).data;     /* 구멍 한가운데 */
+        const meat = c.getImageData(60, 60, 1, 1).data;       /* 살 부분 */
+        return res([hole[0], hole[1], hole[2], '/', meat[0], meat[1], meat[2]].join(','));
+      };
+      im.src = url;
+    });
+  });
+  if (px !== '255,255,255,/,51,102,204') throw new Error('구멍/살 픽셀=' + px);
+
+  /* 구멍을 가로지르는 경우에도 조각이 제대로 나온다 */
+  const cross = await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 400));
+    app.history.reset(app.doc, '새 문서');
+    illy.rect({ x: 50, y: 50, width: 200, height: 200, fill: '#3366cc' });
+    illy.rect({ x: 100, y: 100, width: 100, height: 100 });
+    illy.select(illy.find({ type: 'path' }));
+    AI.commands.run('compoundMake');
+    illy.rect({ x: 0, y: 130, width: 400, height: 40, fill: '#ff0000' });
+    illy.select(illy.find({ type: 'path' }));
+    AI.commands.run('pf_divide');
+    const parts = illy.find({ type: 'path' }).map(id => illy.get(id).fill.color);
+    return { n: parts.length, blue: parts.filter(c => c === '#3366cc').length };
+  });
+  if (cross.n !== 7 || cross.blue !== 2) throw new Error('가로지르기=' + JSON.stringify(cross));
+  return `살 1조각(서브패스 ${donut[0].subs}) · 구멍 비어 있음 · 가로지르면 ${cross.n}조각(파랑 ${cross.blue})`;
+});
+
 /* ---------------- 유사 항목 선택 ---------------- */
 await check('선택 > 동일 — 획 두께 · 불투명도 · 혼합 모드 · 도형', async () => {
   await ev(() => {

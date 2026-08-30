@@ -1275,21 +1275,22 @@
       for (i = sets.length - 2; i >= 0; i--) res = AI.pathfinder.boolean(res, sets[i], 'minus');
       style = styleFront;
     } else if (op === 'divide' || op === 'trim' || op === 'crop' || op === 'merge') {
-      var faces = AI.pathfinder.faces(sets);
+      /* 구멍이 있는 면(컴파운드 패스의 살)은 바깥 링 + 구멍 링으로 함께 받는다 */
+      var faces = AI.pathfinder.facesWithHoles(sets);
       var top = sets[sets.length - 1];
       var pieces = [];
       /* 오리기(Crop)에서 맨 앞 오브젝트는 잘라 내는 틀일 뿐 결과에 남지 않는다.
          따라서 칠의 주인을 찾을 때 맨 앞 오브젝트는 후보에서 뺀다. */
       var topOwner = (op === 'crop') ? sets.length - 2 : sets.length - 1;
       faces.forEach(function (f) {
-        var rp = AI.pathfinder.repPoint(f);
+        var rp = AI.pathfinder.repPointOf(f);
         if (op === 'crop' && !AI.pathfinder.pointInRings(top, rp.x, rp.y)) return;
         var owner = -1;
         for (var k = topOwner; k >= 0; k--) {
           if (AI.pathfinder.pointInRings(sets[k], rp.x, rp.y)) { owner = k; break; }
         }
         if (owner < 0) return;                       /* 바깥 영역·구멍 · 틀만 덮은 자리 */
-        pieces.push({ ring: f, owner: owner });
+        pieces.push({ rings: f, owner: owner });
       });
       if (op === 'merge') {
         /* 같은 칠을 가진 조각끼리 합친다 */
@@ -1298,7 +1299,7 @@
           var src = items[p.owner];
           var k = paintKey(src.fill);
           if (!groups[k]) { groups[k] = { src: src, rings: [] }; order.push(k); }
-          groups[k].rings.push([p.ring]);
+          groups[k].rings.push(p.rings);
         });
         order.forEach(function (k) {
           var gset = groups[k];
@@ -1317,7 +1318,7 @@
             stroke: (op === 'divide' ? (src.stroke || Model.defaultStroke()) : Model.defaultStroke()),
             opacity: src.opacity
           };
-          produced.push(ringsToItem(app, AI.pathfinder.normalize([p.ring]), st));
+          produced.push(ringsToItem(app, AI.pathfinder.normalize(p.rings), st));
         });
       }
     } else if (op === 'outline') {

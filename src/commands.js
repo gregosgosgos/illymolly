@@ -196,6 +196,18 @@
     var paths = a.sel.filter(function (i) { return i.type === 'path'; });
     if (paths.length < 2) return false;
     var base = paths[paths.length - 1];
+    /* 일러스트레이터: 컴파운드 패스는 맨 뒤 오브젝트의 칠·획을 물려받는다.
+       (자리는 맨 앞 오브젝트 자리를 그대로 쓴다) */
+    var backmost = null;
+    Model.walk(a.doc, function (it) { if (!backmost && paths.indexOf(it) >= 0) backmost = it; });
+    if (backmost && backmost !== base) {
+      base.fill = U.deepCopy(backmost.fill);
+      base.stroke = U.deepCopy(backmost.stroke);
+      base.opacity = backmost.opacity;
+      base.blend = backmost.blend;
+      if (backmost.appearance) base.appearance = U.deepCopy(backmost.appearance);
+      else delete base.appearance;
+    }
     var wmBase = Model.worldMatrix(a.doc, base), inv = M.invert(wmBase);
     var subs = [];
     paths.forEach(function (it) {

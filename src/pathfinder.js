@@ -313,6 +313,69 @@
     return bounded.length ? bounded : faces;
   };
 
+  /* ---------- 구멍을 살린 면 ----------
+     평면 순회는 면을 사이클 하나로만 돌려주므로, 구멍이 있는 면(도넛의 살)은
+     바깥 테두리만 나온다. 사이클끼리의 포함 관계를 세워 "바로 안쪽에 든 사이클"
+     을 그 면의 구멍으로 붙인다.
+
+       PF.facesWithHoles(ringSets) -> [ [바깥링, 구멍링, …], … ]
+
+     사이클마다 면이 하나씩 나오므로 (도넛이면 살 + 안쪽 원판 두 개),
+     어느 것을 남길지는 부르는 쪽이 대표점으로 판단한다.                     */
+  PF.facesWithHoles = function (ringSets) {
+    var cycles = PF.faces(ringSets);
+    if (cycles.length < 2) return cycles.map(function (r) { return [r]; });
+    var info = cycles.map(function (r) {
+      return { ring: r, bb: ringBounds(r), a: Math.abs(area(r)), rp: PF.repPoint(r), parent: -1 };
+    });
+    /* 바로 위 부모 = 나를 품는 사이클 중 가장 작은 것 */
+    for (var i = 0; i < info.length; i++) {
+      var best = -1, bestA = Infinity;
+      for (var j = 0; j < info.length; j++) {
+        if (i === j) continue;
+        if (!AI.rect.contains(info[j].bb, info[i].bb)) continue;
+        if (!pointInRing(info[j].ring, info[i].rp.x, info[i].rp.y)) continue;
+        if (info[j].a < bestA) { bestA = info[j].a; best = j; }
+      }
+      info[i].parent = best;
+    }
+    return info.map(function (o, idx) {
+      var rings = [o.ring];
+      for (var k = 0; k < info.length; k++) if (info[k].parent === idx) rings.push(info[k].ring);
+      return rings;
+    });
+  };
+
+  /* 바깥 링 안쪽이면서 구멍 밖인 한 점 (면의 주인을 찾을 때 쓴다) */
+  PF.repPointOf = function (rings) {
+    if (!rings || !rings.length) return { x: 0, y: 0 };
+    var outer = rings[0], holes = rings.slice(1);
+    if (!holes.length) return PF.repPoint(outer);
+    var bb = ringBounds(outer);
+    for (var k = 1; k <= 19; k++) {
+      var y = bb.y + (bb.y2 - bb.y) * k / 20;
+      var xs = [];
+      rings.forEach(function (r) {
+        for (var i = 0; i < r.length; i++) {
+          var a = r[i], b = r[(i + 1) % r.length];
+          if ((a.y > y) !== (b.y > y)) xs.push(a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y));
+        }
+      });
+      xs.sort(function (p, q) { return p - q; });
+      for (var i2 = 0; i2 + 1 < xs.length; i2++) {
+        if (xs[i2 + 1] - xs[i2] < 1e-6) continue;
+        var mx = (xs[i2] + xs[i2 + 1]) / 2;
+        if (!pointInRing(outer, mx, y)) continue;
+        var inHole = false;
+        for (var h = 0; h < holes.length; h++) {
+          if (pointInRing(holes[h], mx, y)) { inHole = true; break; }
+        }
+        if (!inHole) return { x: mx, y: y };
+      }
+    }
+    return PF.repPoint(outer);
+  };
+
   /* 링들의 대표점 (내부의 한 점) */
   PF.repPoint = function (ring) {
     var bb = ringBounds(ring);
