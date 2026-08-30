@@ -662,5 +662,51 @@
     ctx.restore();
   }
 
+  /* 터치 정밀 조작용 루페 — Shift (Vogel & Baudisch, CHI 2007) 의 콜아웃 방식.
+     손가락에 가려진 영역을 가려지지 않는 위치에 확대해 복제하고
+     실제 선택 지점을 십자선으로 표시한다. 프레임 맨 끝에 그린다. */
+  Rn.loupe = function (ctx, app) {
+    var L = app.loupe;
+    if (!L) return;
+    var dpr = app.dpr, RAD = 46, ZOOM = 2, OFF = 88;
+    var vw = ctx.canvas.width / dpr, vh = ctx.canvas.height / dpr;
+    var lx = L.x, ly = L.y - OFF;
+    if (ly - RAD < 4) ly = L.y + OFF;                 /* 위가 좁으면 아래로 */
+    lx = U.clamp(lx, RAD + 4, vw - RAD - 4);
+    ly = U.clamp(ly, RAD + 4, vh - RAD - 4);
+    if (U.dist(lx, ly, L.x, L.y) < RAD + 6) return;   /* 겹치면 그리지 않는다 */
+
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(lx, ly, RAD, 0, 6.2832);
+    ctx.clip();
+    ctx.fillStyle = '#2b2b2b';
+    ctx.fillRect(lx - RAD, ly - RAD, RAD * 2, RAD * 2);
+    var src = RAD / ZOOM;
+    try {
+      ctx.drawImage(ctx.canvas,
+        (L.x - src) * dpr, (L.y - src) * dpr, src * 2 * dpr, src * 2 * dpr,
+        lx - RAD, ly - RAD, RAD * 2, RAD * 2);
+    } catch (e) { /* 소스 영역이 캔버스 밖 */ }
+    ctx.restore();
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(0,0,0,.45)';
+    ctx.beginPath(); ctx.arc(lx, ly, RAD + 1, 0, 6.2832); ctx.stroke();
+    ctx.strokeStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(lx, ly, RAD, 0, 6.2832); ctx.stroke();
+
+    ctx.strokeStyle = UIC.blue; ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(lx - 10, ly); ctx.lineTo(lx - 3, ly);
+    ctx.moveTo(lx + 3, ly); ctx.lineTo(lx + 10, ly);
+    ctx.moveTo(lx, ly - 10); ctx.lineTo(lx, ly - 3);
+    ctx.moveTo(lx, ly + 3); ctx.lineTo(lx, ly + 10);
+    ctx.stroke();
+    ctx.restore();
+  };
+
   Rn.UIC = UIC;
 })(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

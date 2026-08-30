@@ -1,0 +1,239 @@
+/* =========================================================================
+   mobile.css — 터치 · 좁은 화면 레이아웃
+   -------------------------------------------------------------------------
+   근거
+   · Parhi/Karlson/Bederson (MobileHCI 2006): 한 손 엄지 이산 탭 9.2mm(≈35 CSS px)
+   · Apple HIG 44pt · Material 48dp · WCAG 2.2 SC 2.5.8 최소 24px(바닥값)
+     → 이 파일의 모든 터치 타깃은 최소 44px, 주요 컨트롤은 48px 이상
+   · Hoober (2013, n=1,333): 49% 한 손 조작 → 주 컨트롤을 하단 엄지 영역에
+   ========================================================================= */
+
+:root{
+  --m-appbar: 48px;
+  --m-dock: 60px;
+  --m-context: 46px;
+  --tap: 44px;          /* 최소 터치 타깃 */
+  --tap-lg: 48px;       /* 주요 컨트롤 */
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+}
+
+/* 브라우저 기본 제스처가 캔버스 조작을 가로채지 않게 */
+body.mobile{ overscroll-behavior:none; -webkit-touch-callout:none; touch-action:manipulation; }
+body.mobile #view{ touch-action:none; }
+
+/* ---------------- 모바일 셸 ---------------- */
+body.mobile #menubar,
+body.mobile #controlbar,
+body.mobile #toolbar,
+body.mobile #panels,
+body.mobile #statusbar,
+body.mobile #ruler-h,
+body.mobile #ruler-v,
+body.mobile #ruler-corner{ display:none !important; }
+
+body.mobile #workspace{ grid-template-columns:1fr; grid-template-rows:1fr; }
+body.mobile #canvas-wrap{ grid-column:1; grid-row:1; }
+body.mobile #main{ padding-top:calc(var(--m-appbar) + var(--sat)); padding-bottom:calc(var(--m-dock) + var(--sab)); }
+
+/* ---------------- 상단 앱바 ---------------- */
+#m-appbar{
+  position:fixed; left:0; right:0; top:0; z-index:60;
+  height:calc(var(--m-appbar) + var(--sat));
+  padding:var(--sat) calc(4px + var(--sar)) 0 calc(4px + var(--sal));
+  display:none; align-items:center; gap:2px;
+  background:var(--bg2); border-bottom:1px solid var(--line);
+}
+body.mobile #m-appbar{ display:flex; }
+.m-btn{
+  min-width:var(--tap-lg); height:var(--tap-lg);
+  display:flex; align-items:center; justify-content:center;
+  background:transparent; border:0; color:var(--txt); border-radius:8px;
+  font-size:17px; line-height:1; cursor:pointer; padding:0 6px;
+}
+.m-btn:active{ background:#3d3d3d; }
+.m-btn:disabled{ opacity:.3; }
+.m-btn svg{ width:22px; height:22px; stroke:currentColor; fill:none; stroke-width:1.6;
+  stroke-linecap:round; stroke-linejoin:round; }
+.m-btn.filled svg{ fill:currentColor; stroke:none; }
+#m-title{
+  flex:1; text-align:center; font-weight:600; font-size:13px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:0 4px;
+}
+
+/* ---------------- 하단 도구 독 ---------------- */
+#m-dock{
+  position:fixed; left:0; right:0; bottom:0; z-index:60;
+  height:calc(var(--m-dock) + var(--sab));
+  padding:0 calc(2px + var(--sar)) var(--sab) calc(2px + var(--sal));
+  display:none; align-items:stretch;
+  background:var(--bg2); border-top:1px solid var(--line);
+}
+body.mobile #m-dock{ display:flex; }
+body.mobile.lefty #m-dock{ flex-direction:row-reverse; }
+.m-tool{
+  flex:1; min-width:var(--tap); position:relative;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+  padding:0 2px;
+  background:transparent; border:0; color:var(--txt-dim); cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+}
+.m-tool svg{ width:22px; height:22px; stroke:currentColor; fill:none; stroke-width:1.3;
+  stroke-linecap:round; stroke-linejoin:round; }
+.m-tool .lbl{ font-size:9px; letter-spacing:-.3px; white-space:nowrap; max-width:100%;
+  overflow:hidden; text-overflow:ellipsis; }
+.m-tool.on{ color:#fff; }
+.m-tool.on::before{
+  content:''; position:absolute; top:3px; left:50%; transform:translateX(-50%);
+  width:30px; height:3px; border-radius:2px; background:var(--accent);
+}
+.m-tool .fly{ position:absolute; right:6px; bottom:12px; width:0; height:0;
+  border-left:4px solid transparent; border-bottom:4px solid currentColor; opacity:.7; }
+.m-swatch{ flex:none; width:56px; display:flex; align-items:center; justify-content:center; }
+.m-swatch .fs{ position:relative; width:32px; height:32px; }
+.m-swatch .f,.m-swatch .s{ position:absolute; width:20px; height:20px; border:1px solid #888; border-radius:3px; }
+.m-swatch .f{ left:0; top:0; z-index:2; }
+.m-swatch .s{ right:0; bottom:0; }
+.m-swatch .s::after{ content:''; position:absolute; inset:5px; background:var(--bg2); border-radius:1px; }
+
+/* ---------------- 선택 컨텍스트 바 ---------------- */
+#m-context{
+  position:fixed; left:0; right:0; z-index:59;
+  bottom:calc(var(--m-dock) + var(--sab));
+  height:var(--m-context);
+  display:none; align-items:center; gap:6px;
+  padding:0 calc(8px + var(--sar)) 0 calc(8px + var(--sal));
+  background:var(--bg3); border-top:1px solid var(--line);
+  overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch;
+  scrollbar-width:none;
+}
+#m-context::-webkit-scrollbar{ display:none; }
+body.mobile.has-sel #m-context{ display:flex; }
+body.mobile.has-sel #main{ padding-bottom:calc(var(--m-dock) + var(--m-context) + var(--sab)); }
+.m-chip{
+  flex:none; height:36px; min-width:var(--tap); padding:0 12px; border-radius:18px;
+  display:inline-flex; align-items:center; gap:6px; white-space:nowrap;
+  background:#404040; border:1px solid #4d4d4d; color:var(--txt); font-size:12px; cursor:pointer;
+}
+.m-chip:active{ background:#4d4d4d; }
+.m-chip .dotc{ width:14px; height:14px; border-radius:3px; border:1px solid #777; }
+.m-chip.danger{ color:#ff9a9a; }
+.m-sep{ flex:none; width:1px; height:22px; background:var(--line2); }
+
+/* ---------------- 바텀 시트 ---------------- */
+#m-scrim{
+  position:fixed; inset:0; z-index:70; background:rgba(0,0,0,.45);
+  opacity:0; pointer-events:none; transition:opacity .18s ease;
+}
+#m-scrim.open{ opacity:1; pointer-events:auto; }
+#m-sheet{
+  position:fixed; left:0; right:0; bottom:0; z-index:71;
+  max-height:88vh; display:flex; flex-direction:column;
+  background:var(--bg2); border-top:1px solid var(--line);
+  border-radius:14px 14px 0 0; box-shadow:0 -8px 32px rgba(0,0,0,.5);
+  transform:translateY(102%); transition:transform .22s cubic-bezier(.2,.8,.2,1);
+  padding-bottom:var(--sab);
+}
+#m-sheet.open{ transform:translateY(0); }
+#m-sheet.dragging{ transition:none; }
+.m-grip{ padding:8px 0 4px; display:flex; justify-content:center; flex:none; touch-action:none; }
+.m-grip i{ width:40px; height:4px; border-radius:2px; background:#5c5c5c; display:block; }
+.m-sheet-head{
+  display:flex; align-items:center; gap:8px; padding:2px 12px 8px; flex:none;
+  border-bottom:1px solid var(--line);
+}
+.m-sheet-head h3{ margin:0; font-size:14px; font-weight:700; flex:1; }
+.m-sheet-body{ overflow-y:auto; -webkit-overflow-scrolling:touch; padding-bottom:8px; }
+
+/* 시트 안에서는 데스크톱 패널을 그대로 재사용하되 터치 크기로 키운다 */
+/* id 선택자로 올려 아래의 body.touch 규칙보다 확실히 우선하게 한다 */
+#m-sheet-body .body{ padding:12px; }
+#m-sheet-body .fld,
+#m-sheet-body .ctl-input,
+#m-sheet-body select.fld{ height:var(--tap); font-size:14px; }
+#m-sheet-body .btn,
+#m-sheet-body .mini-btn{ height:var(--tap); font-size:13px; }
+#m-sheet-body .swatch-btn{ width:var(--tap); height:var(--tap); }
+#m-sheet-body .row{ gap:8px; margin-bottom:10px; }
+#m-sheet-body .grid2,
+#m-sheet-body .grid4,
+#m-sheet-body .grid6{ gap:8px; }
+#m-sheet-body .sw{ min-height:var(--tap); }
+#m-sheet-body .refpoint{ grid-template-columns:repeat(3,22px); gap:6px; }
+#m-sheet-body .refpoint .rp{ width:22px; height:22px; }
+#m-sheet-body .hint{ font-size:12px; }
+#m-sheet-body .gradbar{ height:32px; margin-bottom:26px; }
+#m-sheet-body .lyr{ height:var(--tap); }
+#m-sheet-body .lyr .eye,
+#m-sheet-body .lyr .lock,
+#m-sheet-body .lyr .tw,
+#m-sheet-body .lyr .target{ width:30px; font-size:15px; }
+
+/* 시트 목록 */
+.m-list{ padding:6px 8px 12px; }
+.m-item{
+  display:flex; align-items:center; gap:12px; width:100%;
+  min-height:var(--tap-lg); padding:0 12px; border-radius:10px;
+  background:transparent; border:0; color:var(--txt); font-size:14px; text-align:left; cursor:pointer;
+}
+.m-item:active{ background:#3a3a3a; }
+.m-item .ico{ width:26px; display:flex; align-items:center; justify-content:center; }
+.m-item .ico svg{ width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:1.3; }
+.m-item .k{ margin-left:auto; color:#8a8a8a; font-size:11px; }
+.m-item.on{ background:var(--accent2); color:#fff; }
+.m-item.disabled{ opacity:.35; }
+.m-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:6px; padding:8px 10px 14px; }
+.m-grid .m-item{ flex-direction:column; gap:5px; padding:10px 4px; min-height:70px; font-size:11px; text-align:center; }
+.m-grid .m-item .ico svg{ width:24px; height:24px; }
+
+/* ---------------- 마킹 메뉴 (방사형) ---------------- */
+#m-marking{
+  position:fixed; inset:0; z-index:80; display:none;
+}
+#m-marking.open{ display:block; }
+#m-marking .scrim{ position:absolute; inset:0; background:rgba(0,0,0,.35); }
+#m-marking .center{
+  position:absolute; width:14px; height:14px; margin:-7px 0 0 -7px;
+  border-radius:50%; background:rgba(255,255,255,.85); box-shadow:0 0 0 2px rgba(0,0,0,.4);
+}
+#m-marking .mi{
+  position:absolute; min-width:64px; height:var(--tap-lg); padding:0 12px;
+  margin-top:calc(var(--tap-lg) / -2);
+  display:flex; align-items:center; justify-content:center; gap:6px;
+  background:#2f2f2fee; border:1px solid #151515; border-radius:22px;
+  color:var(--txt); font-size:12px; white-space:nowrap;
+  box-shadow:0 6px 20px rgba(0,0,0,.5);
+}
+#m-marking .mi.hot{ background:var(--accent2); border-color:var(--accent); color:#fff; }
+#m-marking .mi svg{ width:18px; height:18px; stroke:currentColor; fill:none; stroke-width:1.3; }
+#m-marking .ray{ position:absolute; height:2px; background:rgba(255,255,255,.5); transform-origin:0 50%; }
+
+/* ---------------- 캔버스 위 플로팅 ---------------- */
+#m-zoom{
+  position:absolute; z-index:20; top:8px; right:8px;
+  height:32px; padding:0 12px; border-radius:16px;
+  display:none; align-items:center; gap:6px;
+  background:rgba(30,30,30,.78); color:#eee; font-size:12px;
+  border:1px solid rgba(255,255,255,.14); cursor:pointer;
+}
+body.mobile #m-zoom{ display:flex; }
+body.mobile.lefty #m-zoom{ right:auto; left:8px; }
+
+/* ---------------- 태블릿 ---------------- */
+body.tablet #panels{ display:none !important; }
+body.tablet #controlbar{ overflow-x:auto; }
+body.tablet .tool{ width:34px; height:34px; }
+body.tablet #toolbar{ width:44px; }
+
+/* 터치 기기 전반: 데스크톱 레이아웃이어도 컨트롤을 키운다 */
+body.touch .tool{ width:36px; height:36px; }
+body.touch .fld,
+body.touch .ctl-input{ height:30px; }
+body.touch .btn,
+body.touch .mini-btn{ height:32px; }
+body.touch .lyr{ height:32px; }
+body.touch .menu-pop .mi{ padding:10px 14px; }
+body.touch .dlg-input{ height:34px; }
+body.touch .dlg-btn{ height:38px; }

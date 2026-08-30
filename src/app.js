@@ -72,67 +72,216 @@
       app.needsDraw = false;
       Rn.scene(ctx, app);
       Rn.ui(ctx, app);
+      Rn.loupe(ctx, app);
       AI.viewT.drawRulers(app);
       if (app.editingText) T.syncTextBox(app);
     }
     requestAnimationFrame(draw);
   }
 
-  /* ---------------- 이벤트 ---------------- */
-  var startPt = { x: 0, y: 0 }, down = false, downButton = 0;
+  /* ---------------- 입력 ----------------
+     마우스와 터치를 하나의 경로로 모은다. 터치는 손가락 수로 갈라진다.
+       1개 — 현재 도구
+       2개 — 캔버스 이동/확대 (도구와 무관, Guiard 의 양손 비대칭 모델)
+       2개 탭 — 실행 취소 / 3개 탭 — 다시 실행 (Procreate 관례)                */
+  var startPt = { x: 0, y: 0 }, down = false;
 
-  function evt(ev, isDown) {
+  function mk(clientX, clientY, mods, isDown) {
     var r = canvas.getBoundingClientRect();
-    var x = ev.clientX - r.left, y = ev.clientY - r.top;
+    var x = clientX - r.left, y = clientY - r.top;
     if (isDown) startPt = { x: x, y: y };
     return {
       x: x, y: y, sx: startPt.x, sy: startPt.y,
-      shift: ev.shiftKey, alt: ev.altKey,
-      ctrl: U.isMac ? ev.metaKey : ev.ctrlKey,
-      meta: ev.metaKey, button: ev.button,
-      down: down, orig: ev
+      shift: !!mods.shiftKey, alt: !!mods.altKey,
+      ctrl: U.isMac ? !!mods.metaKey : !!mods.ctrlKey,
+      meta: !!mods.metaKey, button: mods.button || 0,
+      down: down, orig: mods
     };
   }
+  function evt(ev, isDown) { return mk(ev.clientX, ev.clientY, ev, isDown); }
+
+  /* 정밀 조작이 필요한 도구에서만 터치 루페(Shift, Vogel & Baudisch 2007)를 띄운다 */
+  var PRECISE = ['select', 'groupselect', 'directselect', 'pen', 'addanchor', 'delanchor',
+    'convert', 'scissors', 'gradient', 'freetransform', 'rotate', 'scale', 'reflect'];
+
+  function toolDown(e) {
+    AI.ui.closeMenus && AI.ui.closeMenus();
+    var cm = document.getElementById('contextmenu');
+    if (cm) cm.hidden = true;
+    canvas.focus();
+    down = true;
+    e.down = true;
+    var t = T.current(app);
+    if (t && t.onDown) t.onDown(app, e);
+    app.dirty = true;
+  }
+  function toolMove(e) {
+    e.down = down;
+    var t = T.current(app);
+    var inCanvas = e.x >= 0 && e.y >= 0 && e.x <= canvas.clientWidth && e.y <= canvas.clientHeight;
+    if (down || inCanvas) { if (t && t.onMove) t.onMove(app, e); }
+    if (inCanvas) {
+      var d = AI.viewT.toDoc(app, e.x, e.y);
+      var co = document.getElementById('st-coords');
+      var un = app.prefs.unit || 'pt';
+      if (co) co.textContent = U.fmtUnit(d.x, un) + ' , ' + U.fmtUnit(d.y, un) + ' ' + un;
+    }
+    if (down && app.touchInput && PRECISE.indexOf(app.tool) >= 0) app.loupe = { x: e.x, y: e.y };
+  }
+  function toolUp(e) {
+    if (!down) return;
+    down = false;
+    e.down = false;
+    var t = T.current(app);
+    if (t && t.onUp) t.onUp(app, e);
+    app.loupe = null;
+    app.invalidate();
+    AI.ui.syncAll(app);
+  }
+  /* 손가락이 하나 더 얹히면 진행 중이던 도구 작업을 없던 일로 되돌린다.
+     undo 를 부르면 직전의 다른 작업까지 지워질 수 있으므로,
+     드래그 시작 시점의 스냅샷과 히스토리 깊이로 정확히 복원한다. */
+  var dragSnap = null;
+  function snapForDrag() {
+    dragSnap = {
+      doc: U.deepCopy(app.doc),
+      depth: app.history.stack.length,
+      index: app.history.index,
+      sel: app.sel.map(function (i) { return i.id; })
+    };
+  }
+  app.cancelDrag = function (restore) {
+    if (!down) return;
+    down = false;
+    var t = T.current(app);
+    if (t && t.onUp) t.onUp(app, mk(0, 0, {}, false));
+    if (restore && dragSnap) {
+      app.history.abort();
+      if (app.history.stack.length > dragSnap.depth) {
+        app.history.stack.length = dragSnap.depth;
+        app.history.index = Math.min(dragSnap.index, app.history.stack.length - 1);
+      }
+      app.setDoc(dragSnap.doc);
+      app.sel = dragSnap.sel.map(function (id) { return Model.find(app.doc, id); }).filter(Boolean);
+    }
+    dragSnap = null;
+    app.loupe = null;
+    app.invalidate();
+  };
 
   function bindCanvas() {
     U.on(canvas, 'mousedown', function (ev) {
-      if (ev.button === 2) return;
-      AI.ui.closeMenus && AI.ui.closeMenus();
-      document.getElementById('contextmenu').hidden = true;
-      canvas.focus();
-      down = true; downButton = ev.button;
-      var e = evt(ev, true);
-      e.down = true;
-      var t = T.current(app);
-      if (t && t.onDown) t.onDown(app, e);
-      app.dirty = true;
+      if (ev.button === 2 || app.touchInput) return;
+      toolDown(evt(ev, true));
       ev.preventDefault();
     });
-
     U.on(window, 'mousemove', function (ev) {
-      if (!canvas) return;
-      var e = evt(ev, false);
-      e.down = down;
-      var t = T.current(app);
-      var inCanvas = e.x >= 0 && e.y >= 0 && e.x <= canvas.clientWidth && e.y <= canvas.clientHeight;
-      if (down || inCanvas) { if (t && t.onMove) t.onMove(app, e); }
-      if (inCanvas) {
-        var d = AI.viewT.toDoc(app, e.x, e.y);
-        var co = document.getElementById('st-coords');
-        var un = app.prefs.unit || 'pt';
-        if (co) co.textContent = U.fmtUnit(d.x, un) + ' , ' + U.fmtUnit(d.y, un) + ' ' + un;
-      }
+      if (!canvas || app.touchInput) return;
+      toolMove(evt(ev, false));
+    });
+    U.on(window, 'mouseup', function (ev) {
+      if (app.touchInput) return;
+      toolUp(evt(ev, false));
     });
 
-    U.on(window, 'mouseup', function (ev) {
-      if (!down) return;
-      down = false;
-      var e = evt(ev, false);
-      e.down = false;
-      var t = T.current(app);
-      if (t && t.onUp) t.onUp(app, e);
-      AI.ui.syncAll(app);
-    });
+    /* ---------------- 터치 ---------------- */
+    var touch = null;   /* {mode:'tool'|'canvas', …} */
+    var tapInfo = null; /* 멀티 손가락 탭 판정용 */
+
+    function pts(ev) {
+      var r = canvas.getBoundingClientRect(), out = [];
+      for (var i = 0; i < ev.touches.length; i++) {
+        var t = ev.touches[i];
+        out.push({ x: t.clientX - r.left, y: t.clientY - r.top, id: t.identifier });
+      }
+      return out;
+    }
+    function centroid(list) {
+      var c = { x: 0, y: 0 };
+      list.forEach(function (p) { c.x += p.x; c.y += p.y; });
+      c.x /= list.length; c.y /= list.length;
+      return c;
+    }
+    function spread(list, c) {
+      var d = 0;
+      list.forEach(function (p) { d += U.dist(p.x, p.y, c.x, c.y); });
+      return d / list.length;
+    }
+
+    U.on(canvas, 'touchstart', function (ev) {
+      app.touchInput = true;
+      document.body.classList.add('touch');
+      var list = pts(ev);
+      if (list.length === 1) {
+        touch = { mode: 'tool' };
+        var t0 = ev.touches[0];
+        snapForDrag();
+        toolDown(mk(t0.clientX, t0.clientY, {}, true));
+        tapInfo = { n: 1, t: Date.now(), moved: false };
+      } else {
+        /* 두 손가락 이상 = 캔버스 조작. 진행 중이던 도구 작업은 없던 일로 */
+        var wasDrawing = down || (tapInfo && tapInfo.moved);
+        if (down) app.cancelDrag(true);
+        var c = centroid(list);
+        touch = { mode: 'canvas', c: c, d: spread(list, c), scale: app.view.scale, n: list.length };
+        /* 그리다가 손가락을 얹은 경우는 탭이 아니다 — 취소 위에 실행 취소가 겹치면 안 된다 */
+        tapInfo = {
+          n: Math.max(tapInfo ? tapInfo.n : 0, list.length),
+          t: Date.now(),
+          moved: !!wasDrawing
+        };
+        app.loupe = null;
+      }
+      ev.preventDefault();
+    }, { passive: false });
+
+    U.on(canvas, 'touchmove', function (ev) {
+      var list = pts(ev);
+      if (!touch) return;
+      if (touch.mode === 'tool' && list.length === 1) {
+        var t0 = ev.touches[0];
+        toolMove(mk(t0.clientX, t0.clientY, {}, false));
+        if (tapInfo && U.dist(startPt.x, startPt.y, list[0].x, list[0].y) > 8) tapInfo.moved = true;
+      } else if (touch.mode === 'canvas' && list.length >= 2) {
+        var c = centroid(list), d = spread(list, c);
+        if (tapInfo && (U.dist(c.x, c.y, touch.c.x, touch.c.y) > 8 || Math.abs(d - touch.d) > 8)) tapInfo.moved = true;
+        AI.viewT.pan(app, c.x - touch.c.x, c.y - touch.c.y);
+        if (touch.d > 12 && d > 12) {
+          var k = d / touch.d;
+          AI.viewT.setZoom(app, app.view.scale * k, c.x, c.y);
+        }
+        touch.c = c; touch.d = d;
+      }
+      ev.preventDefault();
+    }, { passive: false });
+
+    function endTouch(ev) {
+      var remaining = ev.touches.length;
+      if (remaining === 0) {
+        /* 멀티 손가락 탭 = 실행 취소 / 다시 실행 */
+        if (tapInfo && !tapInfo.moved && Date.now() - tapInfo.t < 400 && tapInfo.n >= 2) {
+          AI.commands.run(tapInfo.n === 2 ? 'undo' : 'redo');
+          U.toast(tapInfo.n === 2 ? '실행 취소' : '다시 실행');
+        } else if (touch && touch.mode === 'tool') {
+          var ct = ev.changedTouches[0];
+          toolUp(mk(ct.clientX, ct.clientY, {}, false));
+          dragSnap = null;
+        }
+        if (down) app.cancelDrag(true);
+        dragSnap = null;
+        touch = null; tapInfo = null;
+        app.loupe = null;
+        app.invalidate();
+        AI.ui.syncAll(app);
+      } else if (touch && touch.mode === 'canvas') {
+        var list = pts(ev);
+        var c = centroid(list);
+        touch.c = c; touch.d = spread(list, c); touch.n = list.length;
+      }
+      ev.preventDefault();
+    }
+    U.on(canvas, 'touchend', endTouch, { passive: false });
+    U.on(canvas, 'touchcancel', endTouch, { passive: false });
 
     U.on(canvas, 'dblclick', function (ev) {
       var e = evt(ev, false);
@@ -224,9 +373,11 @@
     });
 
     app.resize();
-    AI.viewT.fitArtboard(app);
     T.setTool(app, 'select', true);
     AI.ui.syncAll(app);
+    AI.mobile.init(app);        /* 레이아웃이 확정된 뒤 */
+    app.resize();
+    AI.viewT.fitArtboard(app);
     app.invalidate();
     draw();
 
