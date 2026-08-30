@@ -501,6 +501,9 @@
     /* 자동화 / AI 에이전트 진입점 — 사람이 쓰는 GUI 와 같은 문서를 공유한다 */
     window.illy = AI.api.create(app);
     AI.bridge.install(window.illy, window);
+
+    /* 자동 저장 — 남은 복구 기록이 있으면 물어본다 */
+    AI.autosave.init(app);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

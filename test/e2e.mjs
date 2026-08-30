@@ -2214,6 +2214,53 @@ await check('라이브 다각형 — 변의 수 위젯을 끌면 변이 늘어�
   return `변 6 → ${up.n} (앵커 ${up.pts}) · 실행 취소로 6 복원`;
 });
 
+/* ---------------- 자동 저장 · 복구 ----------------
+   (페이지를 새로 고치므로 다른 테스트 뒤에 둔다) */
+await check('자동 저장 · 복구 — 새로 고쳐도 작업이 살아남는다', async () => {
+  const wrote = await ev(() => {
+    const app = AI.app;
+    while (illy.documents().length > 1) AI.docs.close(app, illy.documents().length - 1, true);
+    app.setDoc(AI.model.newDoc(400, 400));
+    app.history.reset(app.doc, '새 문서');
+    app.doc.name = '작업중';
+    illy.rect({ x: 10, y: 10, width: 100, height: 100, fill: '#ff0000' });
+    illy.ellipse({ x: 150, y: 20, width: 80, height: 80, fill: '#0000ff' });
+    app.dirty = true;
+    return { ok: AI.autosave.save(app, true), has: !!localStorage.getItem(AI.autosave.KEY) };
+  });
+  if (!wrote.ok || !wrote.has) throw new Error('자동 저장 실패=' + JSON.stringify(wrote));
+
+  /* 브라우저가 죽었다 살아난 것과 같은 상황 */
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForSelector('.dlg-title', { timeout: 3000 });
+  const title = await page.textContent('.dlg-title');
+  const body = await page.textContent('.dlg-body');
+  if (title !== '문서 복구') throw new Error('대화상자=' + title);
+  if (body.indexOf('작업중') < 0) throw new Error('문서 이름이 안 보임');
+
+  await page.click('.dlg-btn:has-text("복구")');
+  await page.waitForTimeout(150);
+  const r = await ev(() => ({
+    docs: illy.documents().map(d => d.name + ':' + d.objects),
+    modified: illy.documents()[0].modified,
+    left: localStorage.getItem(AI.autosave.KEY),
+    fills: AI.app.doc.layers[0].children.map(c => c.fill.color).join(',')
+  }));
+  if (r.docs.length !== 1 || r.docs[0] !== '작업중 [복구됨]:2') throw new Error('복구 결과=' + JSON.stringify(r.docs));
+  if (!r.modified) throw new Error('복구본은 아직 저장되지 않은 상태여야 한다');
+  if (r.left) throw new Error('복구 후 기록이 남음');
+  if (r.fills !== '#ff0000,#0000ff') throw new Error('칠 색이 안 살아남음=' + r.fills);
+
+  /* 다시 새로 고치면 더 묻지 않는다 (복구본은 dirty 지만 기록은 지워졌다) */
+  await ev(() => { AI.autosave.clear(); AI.app.dirty = false; AI.docs.current(AI.app).dirty = false; });
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForTimeout(400);
+  const again = await page.$('.dlg-title');
+  if (again) throw new Error('복구할 게 없는데 다시 물어봄');
+  await refreshBox();
+  return `2개 오브젝트 · 색상 유지 · "작업중 [복구됨]" · 기록 정리`;
+});
+
 /* ---------------- 결과 ---------------- */
 console.log('\n=== Illymolly E2E ===');
 for (const [n, s, d] of results) console.log(`${s === 'OK' ? '✔' : '✘'} ${n}${d ? ' — ' + d : ''}`);

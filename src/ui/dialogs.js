@@ -129,6 +129,11 @@
         { id: 'sx', label: '가로', type: 'num', value: 100, unit: '%' },
         { id: 'sy', label: '세로', type: 'num', value: 100, unit: '%' },
         { type: 'sep' },
+        { id: 'autoSave', label: '복구 정보 자동 저장', type: 'check', value: app.prefs.autoSave !== false },
+        { id: 'autoSaveMin', label: '자동 저장 간격', type: 'select', width: 110,
+          value: String(app.prefs.autoSaveMin || AI.autosave.DEFAULT_MIN),
+          options: [['1', '1분'], ['2', '2분'], ['5', '5분'], ['10', '10분'], ['15', '15분'], ['30', '30분']] },
+        { type: 'sep' },
         { id: 'scaleStrokes', label: '획 두께와 효과 크기 조절', type: 'check', value: !!app.prefs.scaleStrokes },
         { id: 'preview', label: '미리 보기', type: 'check', value: true }
       ],
@@ -395,6 +400,9 @@
         app.shapeOpts.roundrect.r = Math.max(0, v.corner);
         app.prefs.gridSize = U.clamp(v.gridSize, 1, 10000);
         app.prefs.gridDiv = U.clamp(Math.round(v.gridDiv), 1, 100);
+        app.prefs.autoSave = v.autoSave;
+        app.prefs.autoSaveMin = Math.max(1, +v.autoSaveMin || AI.autosave.DEFAULT_MIN);
+        AI.autosave.restart(app);
         app.prefs.scaleStrokes = v.scaleStrokes;
         app.prefs.smart = v.smart;
         app.prefs.previewBounds = v.previewBounds;

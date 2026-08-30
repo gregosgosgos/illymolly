@@ -58,7 +58,10 @@
     var data = JSON.stringify({ format: 'illymolly', version: 1, doc: app.doc }, null, 1);
     download(name.replace(/\.[a-z]+$/i, '') + '.illy.json', new Blob([data], { type: 'application/json' }));
     app.dirty = false;
+    if (AI.docs && AI.docs.current(app)) AI.docs.current(app).dirty = false;
+    if (AI.autosave) AI.autosave.save(app, true);   /* 남은 문서가 없으면 기록을 지운다 */
     AI.ui.syncStatus(app);
+    AI.ui.syncDocTabs && AI.ui.syncDocTabs(app);
     U.toast('저장됨: ' + name);
   }
   IO.save = function (app, asNew) {
