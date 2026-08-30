@@ -115,6 +115,7 @@
         <div class="pgroup-tabs">
           <button class="ptab on" data-tab="stroke">획</button>
           <button class="ptab" data-tab="type">문자</button>
+          <button class="ptab" data-tab="styles">스타일</button>
           <b class="fold" title="패널 그룹 접기/펴기"></b>
         </div>
         <section class="panel" data-panel="stroke">
@@ -122,6 +123,9 @@
         </section>
         <section class="panel tab-hidden" data-panel="type">
           <div class="body" id="p-type"></div>
+        </section>
+        <section class="panel tab-hidden" data-panel="styles">
+          <div class="body" id="p-styles"></div>
         </section>
       </div>
       <div class="pgroup" data-group="3">
@@ -211,6 +215,7 @@
 <script src="src/cursors.js"></script>
 <script src="src/view.js"></script>
 <script src="src/edit.js"></script>
+<script src="src/styles.js"></script>
 <script src="src/docs.js"></script>
 <script src="src/autosave.js"></script>
 <script src="src/tools/base.js"></script>

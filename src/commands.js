@@ -267,6 +267,46 @@
     a.sel.forEach(function (it) { if (it.type === 'text') { it.text.size = Math.max(1, it.text.size + d); any = true; } });
     return any ? undefined : false;
   }
+  /* ---- 문자 · 단락 스타일 ---- */
+  var textSel = function (a) { return a.sel.some(function (i) { return i.type === 'text'; }); };
+  function selTexts(a) { return a.sel.filter(function (i) { return i.type === 'text'; }); }
+
+  def('newCharStyle', '새 문자 스타일', null, hist('문자 스타일 만들기', function (a) {
+    var t = selTexts(a);
+    var attrs = AI.styles.attrsFrom('char', t.length ? t[0].text : (a.typeOpts || {}));
+    var st = AI.styles.create(a.doc, 'char', null, attrs);
+    t.forEach(function (it) { AI.styles.applyTo(it, 'char', st); });
+    AI.ui && AI.ui.showPanel && AI.ui.showPanel('styles');
+    U.toast('문자 스타일 "' + st.name + '" 만듦');
+  }));
+  def('newParaStyle', '새 단락 스타일', null, hist('단락 스타일 만들기', function (a) {
+    var t = selTexts(a);
+    var attrs = AI.styles.attrsFrom('para', t.length ? t[0].text : (a.typeOpts || {}));
+    var st = AI.styles.create(a.doc, 'para', null, attrs);
+    t.forEach(function (it) { AI.styles.applyTo(it, 'para', st); });
+    AI.ui && AI.ui.showPanel && AI.ui.showPanel('styles');
+    U.toast('단락 스타일 "' + st.name + '" 만듦');
+  }));
+  def('redefineStyle', '스타일 재정의', null, hist('스타일 재정의', function (a) {
+    var t = selTexts(a);
+    if (!t.length) { U.toast('텍스트를 선택하세요'); return false; }
+    var n = 0;
+    ['char', 'para'].forEach(function (kind) {
+      var st = AI.styles.styleOf(a.doc, t[0], kind);
+      if (st) n += AI.styles.redefine(a.doc, kind, st, t[0]);
+    });
+    if (!n) { U.toast('스타일이 걸린 텍스트가 아닙니다'); return false; }
+    U.toast(n + '개 텍스트에 반영');
+  }), { enabled: textSel });
+  def('clearTextStyle', '스타일 연결 끊기', null, hist('스타일 연결 끊기', function (a) {
+    var t = selTexts(a), n = 0;
+    t.forEach(function (it) {
+      if (AI.styles.unlink(it, 'char')) n++;
+      if (AI.styles.unlink(it, 'para')) n++;
+    });
+    if (!n) { U.toast('연결된 스타일이 없습니다'); return false; }
+  }), { enabled: textSel });
+
   /* ---- 패스 상의 문자 ---- */
   var pathTextSel = function (a) {
     return a.sel.some(function (it) { return it.type === 'text' && it.text.path; });
@@ -653,7 +693,7 @@
   C.PANELS = [
     ['properties', '속성'], ['transform', '변형'],
     ['color', '색상'], ['gradient', '그레이디언트'], ['swatches', '견본'],
-    ['stroke', '획'], ['type', '문자'],
+    ['stroke', '획'], ['type', '문자'], ['styles', '문자 · 단락 스타일'],
     ['align', '정렬'], ['pathfinder', '패스파인더'],
     ['appearance', '모양'], ['effects', '효과'], ['symbols', '심볼 · 패턴'],
     ['layers', '레이어'], ['artboards', '대지']
@@ -772,6 +812,7 @@
       title: '문자', items: [
         'fontBigger', 'fontSmaller', '-',
         'typeOnPath', 'typePathOptions', 'typePathFlip', 'releaseTypePath', '-',
+        'newCharStyle', 'newParaStyle', 'redefineStyle', 'clearTextStyle', '-',
         'createOutlines'
       ]
     },

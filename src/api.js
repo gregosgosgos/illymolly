@@ -545,6 +545,109 @@
     }
   });
 
+  /* ---------- 문자 · 단락 스타일 ---------- */
+  var STYLE_KIND = p('string', '스타일 종류', { enum: ['char', 'para'], default: 'char' });
+  op('textStyles', {
+    undoable: false, group: '문자', desc: '문서의 문자 · 단락 스타일 목록을 반환합니다.',
+    params: { kind: STYLE_KIND },
+    run: function (ctx, a) {
+      return AI.styles.list(ctx.doc, a.kind).map(function (st) {
+        return {
+          id: st.id, name: st.name, attrs: U.deepCopy(st.attrs),
+          used: AI.styles.textsUsing(ctx.doc, a.kind, st.id).length
+        };
+      });
+    }
+  });
+  op('addTextStyle', {
+    undoable: true, group: '문자',
+    desc: '문자 · 단락 스타일을 만듭니다. 대상 텍스트를 주면 그 서식으로, 아니면 인자로 정의합니다.',
+    params: {
+      query: Q, kind: STYLE_KIND, name: p('string', '스타일 이름'),
+      font: p('string', 'CSS font-family (char)'), size: p('number', '글꼴 크기 (char)'),
+      weight: p('number', '굵기 (char)'), italic: p('boolean', '기울임 (char)'),
+      tracking: p('number', '자간 (char)'),
+      leading: p('number', '행간 배수 (para)'),
+      align: p('string', '정렬 (para)', { enum: ['left', 'center', 'right'] }),
+      apply: p('boolean', '대상 텍스트에 바로 적용', { default: true })
+    },
+    returns: 'string',
+    run: function (ctx, a) {
+      var texts = [];
+      try {
+        texts = need(ctx, a.query, 'addTextStyle').filter(function (it) { return it.type === 'text'; });
+      } catch (e) { texts = []; }
+      var attrs = texts.length ? AI.styles.attrsFrom(a.kind, texts[0].text) : {};
+      if (a.font != null) attrs.family = a.font;
+      if (a.size != null) attrs.size = a.size;
+      if (a.weight != null) attrs.weight = a.weight;
+      if (a.italic != null) attrs.italic = !!a.italic;
+      if (a.tracking != null) attrs.tracking = a.tracking;
+      if (a.leading != null) attrs.leading = a.leading;
+      if (a.align != null) attrs.align = a.align;
+      var st = AI.styles.create(ctx.doc, a.kind, a.name, attrs);
+      if (a.apply !== false) texts.forEach(function (it) { AI.styles.applyTo(it, a.kind, st); });
+      return st.id;
+    }
+  });
+  op('applyTextStyle', {
+    undoable: true, group: '문자', desc: '문자 · 단락 스타일을 텍스트에 적용합니다.',
+    params: { query: Q, kind: STYLE_KIND, style: p('string', '스타일 이름 또는 id', { required: true }) },
+    returns: 'id[]',
+    run: function (ctx, a) {
+      var st = AI.styles.find(ctx.doc, a.kind, a.style);
+      if (!st) {
+        throw err('NO_STYLE', "스타일을 찾을 수 없습니다: '" + a.style + "'. 있는 것: " +
+          (AI.styles.list(ctx.doc, a.kind).map(function (s2) { return s2.name; }).join(', ') || '(없음)'));
+      }
+      var out = [];
+      withSel(ctx, a.query, 'applyTextStyle', function (list) {
+        list.forEach(function (it) {
+          if (it.type === 'text' && AI.styles.applyTo(it, a.kind, st)) out.push(it.id);
+        });
+      });
+      if (!out.length) throw err('NO_TEXT', '텍스트 오브젝트를 선택하세요');
+      return out;
+    }
+  });
+  op('updateTextStyle', {
+    undoable: true, group: '문자',
+    desc: '스타일의 정의를 바꿉니다 — 그 스타일을 쓰는 텍스트가 모두 따라 바뀝니다.',
+    params: {
+      kind: STYLE_KIND, style: p('string', '스타일 이름 또는 id', { required: true }),
+      name: p('string', '새 이름'),
+      font: p('string', 'CSS font-family'), size: p('number', '글꼴 크기'),
+      weight: p('number', '굵기'), italic: p('boolean', '기울임'), tracking: p('number', '자간'),
+      leading: p('number', '행간 배수'), align: p('string', '정렬', { enum: ['left', 'center', 'right'] }),
+      fromText: p('string', '이 텍스트의 현재 서식으로 재정의 (선택자)')
+    },
+    returns: 'number',
+    run: function (ctx, a) {
+      var st = AI.styles.find(ctx.doc, a.kind, a.style);
+      if (!st) throw err('NO_STYLE', "스타일을 찾을 수 없습니다: '" + a.style + "'");
+      if (a.name) st.name = a.name;
+      if (a.fromText) {
+        var t = need(ctx, a.fromText, 'updateTextStyle').filter(function (i) { return i.type === 'text'; })[0];
+        if (!t) throw err('NO_TEXT', '기준이 될 텍스트를 찾을 수 없습니다');
+        return AI.styles.redefine(ctx.doc, a.kind, st, t);
+      }
+      var map = { font: 'family', size: 'size', weight: 'weight', italic: 'italic',
+        tracking: 'tracking', leading: 'leading', align: 'align' };
+      Object.keys(map).forEach(function (k) { if (a[k] != null) st.attrs[map[k]] = a[k]; });
+      return AI.styles.sync(ctx.doc, a.kind, st);
+    }
+  });
+  op('removeTextStyle', {
+    undoable: true, group: '문자', desc: '스타일을 지웁니다. 텍스트의 서식은 그대로 두고 연결만 끊습니다.',
+    params: { kind: STYLE_KIND, style: p('string', '스타일 이름 또는 id', { required: true }) },
+    returns: 'boolean',
+    run: function (ctx, a) {
+      var st = AI.styles.find(ctx.doc, a.kind, a.style);
+      if (!st) throw err('NO_STYLE', "스타일을 찾을 수 없습니다: '" + a.style + "'");
+      return AI.styles.remove(ctx.doc, a.kind, st);
+    }
+  });
+
   op('typeOnPath', {
     undoable: true, group: '문자',
     desc: '선택한 패스를 기준선 삼아 글을 흘립니다 (패스 상의 문자). 원본 패스는 문자 오브젝트가 됩니다.',

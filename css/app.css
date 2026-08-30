@@ -327,6 +327,8 @@ select.fld{padding-right:2px;cursor:pointer}
 .list-row:last-child{border-bottom:none}
 .list-row:hover{background:#262626}
 .list-row.on{background:var(--accent2);color:#fff}
+.list-row .ovr{color:var(--accent);font-weight:700}
+.list-row.on .ovr{color:#ffe08a}
 .list-row.on .list-sub{color:#cfe4ff}
 .list-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .list-sub{color:var(--txt-dim);font-size:10px;white-space:nowrap;flex:none}

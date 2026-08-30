@@ -1742,7 +1742,7 @@ await check('패널 탭 도크 — 전환 · 접기 · 윈도우 메뉴', async 
     };
   });
   if (r0.groups !== 6) throw new Error('그룹 수=' + r0.groups);
-  if (r0.panels !== 14) throw new Error('패널 수=' + r0.panels);
+  if (r0.panels !== 15) throw new Error('패널 수=' + r0.panels);
   if (r0.badGroups) throw new Error('한 번에 하나만 보여야 함 — 어긋난 그룹 ' + r0.badGroups);
   if (!r1.shown || !r1.hidden || !r1.tabOn) throw new Error('탭 전환=' + JSON.stringify(r1));
   if (!collapsed) throw new Error('접기 실패');
@@ -2212,6 +2212,106 @@ await check('라이브 다각형 — 변의 수 위젯을 끌면 변이 늘어�
   const undone = await ev(() => AI.app.doc.layers[0].children[0].shape.n);
   if (undone !== 6) throw new Error('실행 취소=' + undone);
   return `변 6 → ${up.n} (앵커 ${up.pts}) · 실행 취소로 6 복원`;
+});
+
+/* ---------------- 문자 · 단락 스타일 ---------------- */
+await check('문자 스타일 — 걸어 두면 고칠 때 함께 바뀐다 · 재정의 표시', async () => {
+  await ev(() => {
+    const app = AI.app;
+    while (illy.documents().length > 1) AI.docs.close(app, illy.documents().length - 1, true);
+    app.setDoc(AI.model.newDoc(400, 400));
+    app.history.reset(app.doc, '새 문서');
+    illy.text({ x: 20, y: 40, text: '제목', size: 32, weight: 700 });
+    illy.text({ x: 20, y: 100, text: '본문', size: 12 });
+  });
+  const ids = await ev(() => illy.find({ type: 'text' }));
+  const [a, b2] = ids;
+
+  const made = await page.evaluate(([a, b2]) => {
+    illy.select([a]);
+    illy.addTextStyle({ kind: 'char', name: '제목 스타일' });
+    illy.applyTextStyle([b2], { kind: 'char', style: '제목 스타일' });
+    return { size: illy.get(b2).text.size, weight: illy.get(b2).text.weight };
+  }, [a, b2]);
+  if (made.size !== 32 || made.weight !== 700) throw new Error('적용=' + JSON.stringify(made));
+
+  /* 스타일을 고치면 걸린 텍스트가 모두 따라 바뀐다 */
+  const upd = await page.evaluate(([a, b2]) => {
+    const n = illy.updateTextStyle({ kind: 'char', style: '제목 스타일', size: 40 });
+    return { n, sizes: [illy.get(a).text.size, illy.get(b2).text.size] };
+  }, [a, b2]);
+  if (upd.n !== 2 || upd.sizes.join(',') !== '40,40') throw new Error('갱신=' + JSON.stringify(upd));
+
+  /* 텍스트를 직접 고치면 재정의(+) 로 표시된다 */
+  const over = await page.evaluate(([a, b2]) => {
+    illy.set(b2, { size: 99 });
+    illy.select([b2]);
+    AI.ui.syncAll(AI.app);
+    AI.ui.showPanel('styles');
+    return {
+      flag: AI.styles.hasOverride(AI.app.doc, AI.model.find(AI.app.doc, b2), 'char'),
+      mark: !!document.querySelector('#sty-char .list-row.on .ovr'),
+      rows: document.querySelectorAll('#sty-char .list-row').length
+    };
+  }, [a, b2]);
+  if (!over.flag || !over.mark) throw new Error('재정의 표시=' + JSON.stringify(over));
+  if (over.rows !== 1) throw new Error('패널 행=' + over.rows);
+
+  /* 스타일 재정의: 지금 텍스트의 서식을 스타일의 새 정의로 */
+  const redef = await page.evaluate(([a, b2]) => {
+    AI.commands.run('redefineStyle');
+    return {
+      sizes: [illy.get(a).text.size, illy.get(b2).text.size],
+      attr: illy.textStyles({ kind: 'char' })[0].attrs.size,
+      mark: !!document.querySelector('#sty-char .list-row.on .ovr')
+    };
+  }, [a, b2]);
+  if (redef.sizes.join(',') !== '99,99' || redef.attr !== 99) throw new Error('재정의=' + JSON.stringify(redef));
+  if (redef.mark) throw new Error('재정의 후에도 + 가 남아 있음');
+  return `2개 텍스트에 스타일 · 32→40 동시 반영 · 재정의 + 표시 · 재정의로 99 확정`;
+});
+
+await check('단락 스타일 · 패널에서 만들고 적용 · 연결 끊기', async () => {
+  const r = await ev(() => {
+    const app = AI.app;
+    illy.select(illy.find({ type: 'text' }));
+    AI.ui.showPanel('styles');
+    /* 패널의 [새로] 버튼 — 선택한 텍스트의 서식으로 단락 스타일을 만든다 */
+    document.querySelector('#p-styles [data-sty="para:new"]').click();
+    const first = illy.find({ type: 'text' })[0];
+    illy.updateTextStyle({ kind: 'para', style: illy.textStyles({ kind: 'para' })[0].name, align: 'center' });
+    return {
+      styles: illy.textStyles({ kind: 'para' }).map(s => s.name + ':' + s.used),
+      aligns: illy.find({ type: 'text' }).map(id => illy.get(id).text.align).join(','),
+      rows: document.querySelectorAll('#sty-para .list-row').length
+    };
+  });
+  if (r.styles.length !== 1 || !/:2$/.test(r.styles[0])) throw new Error('단락 스타일=' + JSON.stringify(r.styles));
+  if (r.aligns !== 'center,center') throw new Error('정렬 반영=' + r.aligns);
+  if (r.rows !== 1) throw new Error('패널 행=' + r.rows);
+
+  /* 연결 끊기 — 서식은 남고 연결만 사라진다 */
+  const un = await ev(() => {
+    document.querySelector('#p-styles [data-sty="para:unlink"]').click();
+    const ids = illy.find({ type: 'text' });
+    return {
+      linked: ids.map(id => !!AI.model.find(AI.app.doc, id).text.paraStyle).join(','),
+      aligns: ids.map(id => illy.get(id).text.align).join(','),
+      used: illy.textStyles({ kind: 'para' })[0].used
+    };
+  });
+  if (un.linked !== 'false,false') throw new Error('연결 끊기 실패=' + un.linked);
+  if (un.aligns !== 'center,center') throw new Error('서식이 함께 사라짐=' + un.aligns);
+  if (un.used !== 0) throw new Error('사용 수=' + un.used);
+
+  /* 저장·불러오기에도 스타일이 남는다 */
+  const rt = await ev(() => {
+    const json = illy.toJSON();
+    illy.loadJSON({ json });
+    return illy.textStyles({ kind: 'char' }).length + ',' + illy.textStyles({ kind: 'para' }).length;
+  });
+  if (rt !== '1,1') throw new Error('저장 왕복=' + rt);
+  return `패널에서 생성 · 2개에 적용 · 정렬 동시 반영 · 연결 끊어도 서식 유지 · 저장 왕복 ${rt}`;
 });
 
 /* ---------------- 대지별 내보내기 ---------------- */

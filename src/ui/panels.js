@@ -17,6 +17,7 @@
     buildProperties();
     buildTransform();
     buildType();
+    buildStyles();
     buildColor();
     buildGradient();
     buildSwatches();
@@ -367,7 +368,7 @@
   }
 
   /* ================= 문자 ================= */
-  var FONTS = [
+  var FONTS = UI.FONTS = [
     ['Noto Sans KR, sans-serif', 'Noto Sans KR'],
     ['Malgun Gothic, sans-serif', '맑은 고딕'],
     ['Nanum Gothic, sans-serif', '나눔고딕'],
@@ -456,6 +457,134 @@
     });
     U.qa('[data-cmd]', p).forEach(function (b) { U.on(b, 'click', function () { C.run(b.dataset.cmd); }); });
   }
+
+  /* ---------------- 문자 · 단락 스타일 ---------------- */
+  function styleCmd(kind, cmd, arg) {
+    var ST = AI.styles, doc = app.doc;
+    var texts = selectedTexts(app);
+    var st = arg != null ? ST.list(doc, kind)[arg] : null;
+
+    if (cmd === 'new') {
+      app.history.begin(ST.LABEL[kind] + ' 만들기', doc);
+      var base = texts.length ? ST.attrsFrom(kind, texts[0].text)
+        : ST.attrsFrom(kind, app.typeOpts || {});
+      var made = ST.create(doc, kind, null, base);
+      texts.forEach(function (it) { ST.applyTo(it, kind, made); });
+      app.history.commit();
+      U.toast(ST.LABEL[kind] + ' "' + made.name + '" 만듦');
+    } else if (cmd === 'apply') {
+      if (!texts.length) { U.toast('텍스트를 먼저 선택하세요'); return; }
+      app.history.begin(ST.LABEL[kind] + ' 적용', doc);
+      texts.forEach(function (it) { ST.applyTo(it, kind, st); });
+      app.history.commit();
+      U.toast('"' + st.name + '" 적용 (' + texts.length + '개)');
+    } else if (cmd === 'redefine') {
+      if (!texts.length) { U.toast('기준이 될 텍스트를 선택하세요'); return; }
+      app.history.begin(ST.LABEL[kind] + ' 재정의', doc);
+      var n = ST.redefine(doc, kind, st, texts[0]);
+      app.history.commit();
+      U.toast('"' + st.name + '" 재정의 — ' + n + '개 텍스트에 반영');
+    } else if (cmd === 'edit') {
+      AI.dialogs.styleOptions(app, kind, st);
+      return;
+    } else if (cmd === 'del') {
+      app.history.begin(ST.LABEL[kind] + ' 삭제', doc);
+      ST.remove(doc, kind, st);
+      app.history.commit();
+    } else if (cmd === 'unlink') {
+      if (!texts.length) { U.toast('텍스트를 먼저 선택하세요'); return; }
+      app.history.begin('스타일 연결 끊기', doc);
+      texts.forEach(function (it) { ST.unlink(it, kind); });
+      app.history.commit();
+    }
+    app.invalidate();
+    UI.syncAll(app);
+  }
+
+  function buildStyles() {
+    var p = document.getElementById('p-styles');
+    if (!p) return;
+    p.innerHTML =
+      '<div class="sec">문자 스타일</div>' +
+      '<div id="sty-char" class="list"></div>' +
+      '<div class="grid3" style="margin-top:var(--gap-s)">' +
+      UI.btn({ icon: 'plus', label: '새로', title: '선택한 텍스트의 서식으로 문자 스타일 만들기', data: { sty: 'char:new' } }) +
+      UI.btn({ icon: 'fxRepeat', label: '재정의', title: '선택한 텍스트의 서식으로 스타일 다시 정의', data: { sty: 'char:redefine' } }) +
+      UI.btn({ icon: 'unlink', label: '연결 끊기', title: '스타일 연결만 끊기 (서식은 유지)', data: { sty: 'char:unlink' } }) +
+      '</div>' +
+      '<div class="sec" style="margin-top:var(--gap)">단락 스타일</div>' +
+      '<div id="sty-para" class="list"></div>' +
+      '<div class="grid3" style="margin-top:var(--gap-s)">' +
+      UI.btn({ icon: 'plus', label: '새로', title: '선택한 텍스트의 서식으로 단락 스타일 만들기', data: { sty: 'para:new' } }) +
+      UI.btn({ icon: 'fxRepeat', label: '재정의', title: '선택한 텍스트의 서식으로 스타일 다시 정의', data: { sty: 'para:redefine' } }) +
+      UI.btn({ icon: 'unlink', label: '연결 끊기', title: '스타일 연결만 끊기 (서식은 유지)', data: { sty: 'para:unlink' } }) +
+      '</div>' +
+      '<div class="hint">행을 눌러 적용, 두 번 눌러 편집합니다. 스타일을 고치면 그 스타일을 쓰는 텍스트가 모두 따라 바뀝니다. 텍스트를 직접 고쳐 스타일과 달라지면 <b>+</b> 가 붙습니다.</div>';
+  }
+
+  function styleRows(a, kind, host) {
+    var ST = AI.styles;
+    var list = ST.list(a.doc, kind);
+    var texts = selectedTexts(a);
+    var cur = texts.length ? texts[0].text[ST.field(kind)] : null;
+    var over = texts.length && ST.hasOverride(a.doc, texts[0], kind);
+    if (!list.length) {
+      host.innerHTML = '<div class="list-empty">' + ST.LABEL[kind] + ' 없음 — [새로] 로 만드세요</div>';
+      return;
+    }
+    host.innerHTML = list.map(function (st, i) {
+      var on = st.id === cur;
+      return '<div class="list-row' + (on ? ' on' : '') + '" data-i="' + i + '" title="눌러 적용 · 두 번 눌러 편집">' +
+        '<span class="list-name">' + U.esc(st.name) + (on && over ? ' <b class="ovr">+</b>' : '') + '</span>' +
+        '<span class="list-sub">' + U.esc(ST.summary(kind, st)) + '</span>' +
+        '<button class="mini-btn" data-styedit="' + i + '" title="편집">' + UI.icon('pencil', 12) + '</button>' +
+        '<button class="mini-btn" data-stydel="' + i + '" title="삭제">' + UI.icon('close', 12) + '</button>' +
+        '</div>';
+    }).join('');
+    U.qa('.list-row', host).forEach(function (row) {
+      U.on(row, 'click', function (ev) {
+        if (ev.target.closest('[data-styedit],[data-stydel]')) return;
+        styleCmd(kind, 'apply', +row.dataset.i);
+      });
+      U.on(row, 'dblclick', function () { styleCmd(kind, 'edit', +row.dataset.i); });
+    });
+    U.qa('[data-styedit]', host).forEach(function (b) {
+      U.on(b, 'click', function (ev) { ev.stopPropagation(); styleCmd(kind, 'edit', +b.dataset.styedit); });
+    });
+    U.qa('[data-stydel]', host).forEach(function (b) {
+      U.on(b, 'click', function (ev) { ev.stopPropagation(); styleCmd(kind, 'del', +b.dataset.stydel); });
+    });
+  }
+
+  UI.syncStyles = function (a) {
+    var p = document.getElementById('p-styles');
+    if (!p) return;
+    if (!p.firstChild) buildStyles();
+    ['char', 'para'].forEach(function (kind) {
+      var host = document.getElementById('sty-' + (kind === 'char' ? 'char' : 'para'));
+      if (host) styleRows(a, kind, host);
+    });
+    U.qa('[data-sty]', p).forEach(function (b) {
+      if (b.__wired) return;
+      b.__wired = true;
+      U.on(b, 'click', function () {
+        var parts = b.dataset.sty.split(':');
+        var texts = selectedTexts(app);
+        var kind = parts[0], cmd = parts[1];
+        if (cmd === 'redefine' || cmd === 'unlink') {
+          var st = texts.length ? AI.styles.styleOf(app.doc, texts[0], kind) : null;
+          if (cmd === 'redefine' && !st) { U.toast('스타일이 걸린 텍스트를 선택하세요'); return; }
+          var i = st ? AI.styles.list(app.doc, kind).indexOf(st) : null;
+          styleCmd(kind, cmd, i);
+        } else styleCmd(kind, cmd, null);
+      });
+    });
+    /* 텍스트가 없으면 재정의·연결 끊기는 쓸 수 없다 */
+    var hasText = selectedTexts(a).length > 0;
+    U.qa('[data-sty$=":redefine"],[data-sty$=":unlink"]', p).forEach(function (b) {
+      if (hasText) b.removeAttribute('disabled'); else b.setAttribute('disabled', '');
+    });
+  };
 
   UI.syncType = function (a) {
     var p = document.getElementById('p-type');
@@ -1609,6 +1738,7 @@
     UI.syncTool(a);
     UI.syncSelection(a);
     UI.syncType(a);
+    UI.syncStyles(a);
     UI.syncGradient(a);
     UI.syncStatus(a);
     UI.updateZoom(a);

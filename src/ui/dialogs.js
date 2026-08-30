@@ -366,6 +366,57 @@
     });
   };
 
+  /* ---------- 문자 · 단락 스타일 옵션 ---------- */
+  Dlg.styleOptions = function (app, kind, st) {
+    var ST = AI.styles;
+    if (!st) { U.toast('스타일을 선택하세요'); return; }
+    var a0 = st.attrs || {};
+    var fields = [{ id: 'name', label: '스타일 이름', type: 'text', value: st.name, width: 160 }, { type: 'sep' }];
+    if (kind === 'char') {
+      fields.push(
+        { id: 'family', label: '글꼴', type: 'select', width: 160,
+          value: a0.family || 'Noto Sans KR, sans-serif',
+          options: (AI.ui.FONTS || []).map(function (f) { return [f[0], f[1]]; }) },
+        { id: 'size', label: '크기', type: 'num', value: a0.size == null ? 24 : a0.size, unit: 'pt' },
+        { id: 'weight', label: '두께', type: 'select', width: 110, value: String(a0.weight || 400),
+          options: [['300', 'Light'], ['400', 'Regular'], ['500', 'Medium'], ['700', 'Bold'], ['900', 'Black']] },
+        { id: 'italic', label: '기울임', type: 'check', value: !!a0.italic },
+        { id: 'tracking', label: '자간', type: 'num', value: a0.tracking || 0, unit: 'px' }
+      );
+    } else {
+      fields.push(
+        { id: 'leading', label: '행간 (배수)', type: 'num', value: a0.leading == null ? 1.2 : a0.leading, step: 0.1 },
+        { id: 'align', label: '정렬', type: 'radio', value: a0.align || 'left',
+          options: [['left', '왼쪽'], ['center', '가운데'], ['right', '오른쪽']] }
+      );
+    }
+    fields.push({ type: 'sep' },
+      { id: 'info', type: 'info',
+        label: '이 스타일을 쓰는 텍스트 ' + ST.textsUsing(app.doc, kind, st.id).length + '개에 곧바로 반영됩니다.' });
+
+    D.open({
+      title: ST.LABEL[kind] + ' 옵션',
+      fields: fields,
+      onDone: function (v) {
+        app.history.begin(ST.LABEL[kind] + ' 옵션', app.doc);
+        st.name = (v.name || st.name).trim() || st.name;
+        if (kind === 'char') {
+          st.attrs = {
+            family: v.family, size: U.clamp(v.size, 1, 1200),
+            weight: +v.weight || 400, italic: !!v.italic, tracking: v.tracking
+          };
+        } else {
+          st.attrs = { leading: U.clamp(v.leading, 0.2, 10), align: v.align };
+        }
+        var n = ST.sync(app.doc, kind, st);
+        app.history.commit();
+        app.invalidate();
+        AI.ui.syncAll(app);
+        U.toast('"' + st.name + '" — ' + n + '개 텍스트에 반영');
+      }
+    });
+  };
+
   /* ---------- 대지별 내보내기 ---------- */
   Dlg.exportArtboards = function (app, format, run) {
     var n = app.doc.artboards.length;

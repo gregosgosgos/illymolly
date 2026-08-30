@@ -285,6 +285,8 @@
       layers: [Model.newLayer('레이어 1')],
       activeLayer: 0,
       guides: [],        /* {axis:'h'|'v', pos:number} */
+      charStyles: [],    /* 문자 스타일 */
+      paraStyles: [],    /* 단락 스타일 */
       rulerOrigin: { x: 0, y: 0 },   /* 눈금자 0 위치 (문서 좌표의 반대 부호) */
       bg: '#ffffff'
     };
