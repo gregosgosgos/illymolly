@@ -383,18 +383,46 @@
     } else if (op === 'divide' || op === 'trim' || op === 'crop' || op === 'merge') {
       var faces = AI.pathfinder.faces(sets);
       var top = sets[sets.length - 1];
+      var pieces = [];
       faces.forEach(function (f) {
         var rp = AI.pathfinder.repPoint(f);
         var owner = -1;
         for (var k = sets.length - 1; k >= 0; k--) {
           if (AI.pathfinder.pointInRings(sets[k], rp.x, rp.y)) { owner = k; break; }
         }
-        if (owner < 0) return;
+        if (owner < 0) return;                       /* 바깥 영역·구멍 */
         if (op === 'crop' && !AI.pathfinder.pointInRings(top, rp.x, rp.y)) return;
-        var src = items[owner];
-        var st = { fill: src.fill || Col.solid('#000'), stroke: (op === 'divide' ? (src.stroke || Model.defaultStroke()) : Model.defaultStroke()), opacity: src.opacity };
-        produced.push(ringsToItem(app, AI.pathfinder.normalize([f]), st));
+        pieces.push({ ring: f, owner: owner });
       });
+      if (op === 'merge') {
+        /* 같은 칠을 가진 조각끼리 합친다 */
+        var groups = {}, order = [];
+        pieces.forEach(function (p) {
+          var src = items[p.owner];
+          var k = paintKey(src.fill);
+          if (!groups[k]) { groups[k] = { src: src, rings: [] }; order.push(k); }
+          groups[k].rings.push([p.ring]);
+        });
+        order.forEach(function (k) {
+          var gset = groups[k];
+          var merged = AI.pathfinder.uniteAll(gset.rings.map(function (r) { return AI.pathfinder.normalize(r); }));
+          if (!merged.length) return;
+          produced.push(ringsToItem(app, merged, {
+            fill: gset.src.fill || Col.solid('#000'),
+            stroke: Model.defaultStroke(), opacity: gset.src.opacity
+          }));
+        });
+      } else {
+        pieces.forEach(function (p) {
+          var src = items[p.owner];
+          var st = {
+            fill: src.fill || Col.solid('#000'),
+            stroke: (op === 'divide' ? (src.stroke || Model.defaultStroke()) : Model.defaultStroke()),
+            opacity: src.opacity
+          };
+          produced.push(ringsToItem(app, AI.pathfinder.normalize([p.ring]), st));
+        });
+      }
     } else if (op === 'outline') {
       items.forEach(function (it) {
         var rings = itemRings(app, it);
@@ -406,6 +434,11 @@
     }
 
     function colorOf(p) { return p && p.type === 'solid' ? p.color : (p && p.stops ? p.stops[0].color : '#000000'); }
+    function paintKey(p) {
+      if (!p || p.type === 'none') return 'none';
+      if (p.type === 'solid') return 'solid:' + p.color + ':' + (p.alpha == null ? 1 : p.alpha);
+      return p.type + ':' + p.stops.map(function (s) { return s.t + s.color; }).join('|');
+    }
 
     if (res) {
       if (!res.length) { U.toast('결과가 비어 있습니다'); return false; }

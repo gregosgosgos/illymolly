@@ -279,7 +279,21 @@
       }
     }
 
-    walk(svg, layer.children);
+    /* 최상위 <g id="..."> (transform 없음) 는 레이어로 취급 — 자체 SVG 왕복 시 구조 보존 */
+    var tops = Array.prototype.filter.call(svg.children, function (c) { return c.nodeType === 1; });
+    var asLayers = tops.length > 0 && tops.every(function (c) {
+      return c.nodeName.toLowerCase() === 'g' && c.getAttribute('id') && !c.getAttribute('transform');
+    });
+    if (asLayers) {
+      doc.layers = tops.map(function (g, i) {
+        var ly = Model.newLayer(g.getAttribute('id') || ('레이어 ' + (i + 1)));
+        walk(g, ly.children);
+        return ly;
+      });
+      doc.activeLayer = doc.layers.length - 1;
+    } else {
+      walk(svg, layer.children);
+    }
     app.setDoc(doc);
     app.history.reset(doc, 'SVG 가져오기');
     AI.viewT.fitArtboard(app);

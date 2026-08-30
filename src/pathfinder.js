@@ -256,37 +256,44 @@
     var vmap = Object.create(null);
     half.forEach(function (h, idx) { (vmap[key(h.a)] || (vmap[key(h.a)] = [])).push(idx); });
 
+    /* 반쪽 에지 e 다음에 오는 면 경계 에지:
+       도착점에서 "들어온 방향의 역"으로부터 반시계 최소각을 갖는 나가는 에지.
+       used 여부를 보지 않는 완전한 순열이어야 각 면이 정확히 한 번 순회된다. */
+    var TAU = Math.PI * 2;
+    function nextOf(idx) {
+      var e = half[idx];
+      var outs = vmap[key(e.b)] || [];
+      var inAng = Math.atan2(e.a.y - e.b.y, e.a.x - e.b.x);
+      var best = -1, bestAng = Infinity;
+      for (var o = 0; o < outs.length; o++) {
+        var f = half[outs[o]];
+        var ang = Math.atan2(f.b.y - f.a.y, f.b.x - f.a.x) - inAng;
+        while (ang <= 1e-12) ang += TAU;
+        while (ang > TAU) ang -= TAU;
+        if (ang < bestAng) { bestAng = ang; best = outs[o]; }
+      }
+      return best;
+    }
+
     var faces = [];
     for (var h = 0; h < half.length; h++) {
       if (half[h].used) continue;
       var ring = [], cur = h, guard = 0;
-      while (guard++ < 100000) {
-        var e = half[cur];
-        if (e.used) break;
-        e.used = true;
-        ring.push({ x: e.a.x, y: e.a.y });
-        var outs = vmap[key(e.b)] || [];
-        var inAng = Math.atan2(e.a.y - e.b.y, e.a.x - e.b.x); /* 들어온 방향의 역 */
-        var best = -1, bestAng = Infinity;
-        for (var o = 0; o < outs.length; o++) {
-          var f = half[outs[o]];
-          if (f.used) continue;
-          var ang = Math.atan2(f.b.y - f.a.y, f.b.x - f.a.x) - inAng;
-          while (ang <= 0) ang += Math.PI * 2;
-          while (ang > Math.PI * 2) ang -= Math.PI * 2;
-          if (ang < bestAng) { bestAng = ang; best = outs[o]; }
-        }
-        if (best < 0) break;
-        cur = best;
-        if (cur === h) break;
+      while (guard++ < 200000) {
+        half[cur].used = true;
+        ring.push({ x: half[cur].a.x, y: half[cur].a.y });
+        var nx = nextOf(cur);
+        if (nx < 0) break;
+        if (nx === h) break;              /* 면 완성 */
+        if (half[nx].used) break;         /* 퇴화 그래프 방어 */
+        cur = nx;
       }
       if (ring.length > 2 && Math.abs(area(ring)) > 1e-4) faces.push(ring);
     }
-    /* 가장 바깥 면(전체를 감싸는 면) 제거 : 면적 부호가 반대이면서 최대 */
-    var maxA = 0, outer = -1;
-    faces.forEach(function (f, i) { var a = area(f); if (a < maxA) { maxA = a; outer = i; } });
-    if (outer >= 0) faces.splice(outer, 1);
-    return faces;
+    /* 위 각도 규칙에서 유계(bounded) 면은 항상 음수 면적, 무한 면·구멍 경계 사이클은
+       양수 면적으로 나온다. 유계 면만 남긴다. */
+    var bounded = faces.filter(function (f) { return area(f) < 0; });
+    return bounded.length ? bounded : faces;
   };
 
   /* 링들의 대표점 (내부의 한 점) */
