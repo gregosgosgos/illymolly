@@ -119,4 +119,4 @@
     }
     ruler(rh, true); ruler(rv, false);
   };
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

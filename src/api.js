@@ -1,0 +1,1208 @@
+/* =========================================================================
+   api.js — 자동화 / AI 에이전트용 스크립팅 API
+   -------------------------------------------------------------------------
+   설계 원칙
+   1. 모든 인자와 반환값은 JSON 직렬화 가능 — 라이브 객체 참조를 노출하지 않는다.
+      (RPC · postMessage · 원격 호출 그대로 통과)
+   2. 연산은 선언형 OPS 테이블 한 곳에 정의하고, 호출 가능한 메서드와
+      도구 매니페스트(illy.ops())를 같은 테이블에서 생성한다 — 문서와 구현이
+      어긋날 수 없다.
+   3. 식별자는 결정적(sequential) — 같은 스크립트는 같은 결과를 낸다.
+   4. batch() 는 원자적 — 하나라도 실패하면 전부 되돌리고 실패 지점을 알려 준다.
+   5. 브라우저에서는 살아 있는 GUI 를, Node 에서는 헤드리스 세션을 같은 API 로 다룬다.
+   ========================================================================= */
+(function (AI) {
+  'use strict';
+  var U = AI.util, M = AI.mat, R = AI.rect, G = AI.geom,
+    Model = AI.model, Rn = AI.render, E = AI.edit, Col = AI.color;
+
+  var API = AI.api = {};
+  API.VERSION = '1.0';
+
+  /* ===================== 헬퍼 ===================== */
+  function err(code, msg, extra) {
+    var e = new Error(msg);
+    e.code = code;
+    if (extra) for (var k in extra) e[k] = extra[k];
+    return e;
+  }
+  function rect(b) {
+    if (!b || R.isEmpty(b)) return null;
+    return { x: U.round(b.x, 4), y: U.round(b.y, 4), w: U.round(R.w(b), 4), h: U.round(R.h(b), 4) };
+  }
+
+  /* 색 입력 정규화: '#f00' | 'none' | 'red' | {r,g,b} | 그레이디언트 스펙 */
+  function paint(v, fallback) {
+    if (v === undefined) return fallback === undefined ? undefined : fallback;
+    if (v === null || v === 'none' || v === false) return Col.none();
+    if (typeof v === 'string') {
+      var hex = normalizeHex(v);
+      if (!hex) throw err('BAD_COLOR', '색상을 해석할 수 없습니다: ' + v);
+      return Col.solid(hex);
+    }
+    if (typeof v === 'object') {
+      if (v.r !== undefined && v.g !== undefined && v.b !== undefined) {
+        return Col.solid(Col.rgbToHex(v.r, v.g, v.b), v.a == null ? 1 : v.a);
+      }
+      if (v.type === 'linear' || v.type === 'radial') {
+        var g = Col.gradient(v.type);
+        if (v.stops && v.stops.length) {
+          g.stops = v.stops.map(function (s, i) {
+            if (Array.isArray(s)) return { t: s[0], color: normalizeHex(s[1]) || '#000000', alpha: s[2] == null ? 1 : s[2] };
+            return { t: s.t == null ? i : s.t, color: normalizeHex(s.color) || '#000000', alpha: s.alpha == null ? 1 : s.alpha };
+          }).sort(function (a, b) { return a.t - b.t; });
+        }
+        if (v.angle != null) g.angle = v.angle;
+        if (v.cx != null) g.cx = v.cx;
+        if (v.cy != null) g.cy = v.cy;
+        if (v.r != null) g.r = v.r;
+        return g;
+      }
+      if (v.color) return Col.solid(normalizeHex(v.color) || '#000000', v.alpha);
+    }
+    throw err('BAD_COLOR', '색상 형식을 알 수 없습니다: ' + JSON.stringify(v));
+  }
+
+  var NAMED = {
+    black: '#000000', white: '#ffffff', red: '#ff0000', green: '#008000', lime: '#00ff00',
+    blue: '#0000ff', yellow: '#ffff00', cyan: '#00ffff', magenta: '#ff00ff', gray: '#808080',
+    grey: '#808080', orange: '#ffa500', purple: '#800080', pink: '#ffc0cb', brown: '#a52a2a',
+    navy: '#000080', teal: '#008080', olive: '#808000', silver: '#c0c0c0', gold: '#ffd700'
+  };
+  function normalizeHex(v) {
+    if (typeof v !== 'string') return null;
+    var s = v.trim().toLowerCase();
+    if (NAMED[s]) return NAMED[s];
+    if (s[0] !== '#') s = '#' + s;
+    if (/^#[0-9a-f]{3}$/.test(s)) return '#' + s[1] + s[1] + s[2] + s[2] + s[3] + s[3];
+    if (/^#[0-9a-f]{6}$/.test(s)) return s;
+    return null;
+  }
+  API.normalizeHex = normalizeHex;
+
+  function paintOut(p) {
+    if (!p || p.type === 'none') return { type: 'none' };
+    if (p.type === 'solid') return { type: 'solid', color: p.color, alpha: p.alpha == null ? 1 : p.alpha };
+    return {
+      type: p.type, angle: p.angle || 0,
+      stops: p.stops.map(function (s) { return { t: U.round(s.t, 4), color: s.color, alpha: s.alpha == null ? 1 : s.alpha }; })
+    };
+  }
+  function strokeOut(s) {
+    if (!s || s.type === 'none') return { type: 'none' };
+    return {
+      type: s.type, color: s.color, alpha: s.alpha == null ? 1 : s.alpha,
+      width: s.width, cap: s.cap, join: s.join, align: s.align || 'center',
+      dash: (s.dash || []).slice()
+    };
+  }
+
+  /* ===================== 컨텍스트(세션) ===================== */
+  /* 브라우저: 살아 있는 GUI app. Node: 최소 app 유사 객체. */
+  API.headless = function (opts) {
+    opts = opts || {};
+    var ctx = {
+      headless: true,
+      doc: Model.newDoc(opts.width || 595.28, opts.height || 841.89),
+      sel: [], selPts: [],
+      view: { scale: 1, tx: 0, ty: 0 }, dpr: 1, canvas: null,
+      fill: Col.solid('#ffffff'), stroke: Col.solid('#000000'),
+      strokeWidth: 1, fillFocus: true, refPoint: 0,
+      prefs: {
+        unit: opts.unit || 'pt', smart: false, snapGrid: false, outline: false,
+        previewBounds: false, keyIncrement: 1, gridSize: 72, gridDiv: 8
+      },
+      history: new AI.History(80),
+      invalidate: function () { },
+      resize: function () { }
+    };
+    if (opts.name) ctx.doc.name = opts.name;
+    ctx.setDoc = function (d) {
+      var ids = ctx.sel.map(function (i) { return i.id; });
+      ctx.doc = d;
+      ctx.sel = [];
+      ctx.selPts = [];
+      ids.forEach(function (id) { var it = Model.find(d, id); if (it) ctx.sel.push(it); });
+    };
+    ctx.history.reset(ctx.doc, '새 문서');
+    return ctx;
+  };
+
+  /* ===================== 선택자 ===================== */
+  /* q: string | id | [ids] | {…조건} — 문서 순서(뒤→앞)로 id 배열 반환 */
+  function resolve(ctx, q, opts) {
+    opts = opts || {};
+    if (q === undefined || q === null) {
+      if (opts.defaultSelection !== false) return ctx.sel.map(function (i) { return i.id; });
+      return [];
+    }
+    if (Array.isArray(q)) {
+      return q.map(function (x) { return typeof x === 'string' ? x : (x && x.id); }).filter(Boolean);
+    }
+    if (typeof q === 'string') {
+      if (q === '*' || q === 'all') return allIds(ctx);
+      if (q === 'selection' || q === 'selected') return ctx.sel.map(function (i) { return i.id; });
+      if (Model.find(ctx.doc, q)) return [q];
+      return match(ctx, { name: q });
+    }
+    if (typeof q === 'object') {
+      if (q.id) return Model.find(ctx.doc, q.id) ? [q.id] : [];
+      if (q.ids) return q.ids.filter(function (id) { return !!Model.find(ctx.doc, id); });
+      return match(ctx, q);
+    }
+    return [];
+  }
+
+  function allIds(ctx) {
+    var out = [];
+    Model.walk(ctx.doc, function (it) { out.push(it.id); });
+    return out;
+  }
+
+  function match(ctx, q) {
+    var out = [];
+    var selIds = ctx.sel.map(function (i) { return i.id; });
+    var re = null;
+    if (q.name && /^\/.*\/[a-z]*$/.test(q.name)) {
+      var m = /^\/(.*)\/([a-z]*)$/.exec(q.name);
+      re = new RegExp(m[1], m[2]);
+    }
+    Model.walkWorld(ctx.doc, function (it, info) {
+      if (q.topLevel && info.depth !== 0) return;
+      if (q.type && it.type !== q.type) return;
+      if (q.name) {
+        var nm = it.name || '';
+        if (re ? !re.test(nm) : nm !== q.name) return;
+      }
+      if (q.shape && !(it.shape && it.shape.kind === q.shape)) return;
+      if (q.layer && (!info.layer || info.layer.name !== q.layer)) return;
+      if (q.selected !== undefined && (selIds.indexOf(it.id) >= 0) !== !!q.selected) return;
+      if (q.visible !== undefined && !!it.visible !== !!q.visible) return;
+      if (q.locked !== undefined && !!it.locked !== !!q.locked) return;
+      if (q.fill) {
+        var want = normalizeHex(q.fill) || q.fill;
+        if (!(it.fill && ((it.fill.type === 'solid' && it.fill.color === want) || it.fill.type === want))) return;
+      }
+      if (q.stroke) {
+        var ws = normalizeHex(q.stroke) || q.stroke;
+        if (!(it.stroke && it.stroke.type !== 'none' && it.stroke.color === ws)) return;
+      }
+      if (q.text !== undefined) {
+        if (it.type !== 'text' || String(it.text.content).indexOf(q.text) < 0) return;
+      }
+      var b = null;
+      if (q.within || q.at || q.intersects) b = Rn.boundsM(it, info.m, false, 1);
+      if (q.within) {
+        var w = q.within;
+        if (!b || !R.contains({ x: w.x, y: w.y, x2: w.x + w.w, y2: w.y + w.h }, b)) return;
+      }
+      if (q.intersects) {
+        var iq = q.intersects;
+        if (!b || !R.hit({ x: iq.x, y: iq.y, x2: iq.x + iq.w, y2: iq.y + iq.h }, b)) return;
+      }
+      if (q.at) {
+        if (!b || !R.has(b, q.at.x, q.at.y)) return;
+      }
+      out.push(it.id);
+    });
+    if (q.limit) out = out.slice(0, q.limit);
+    return out;
+  }
+
+  function items(ctx, q, opts) {
+    return resolve(ctx, q, opts).map(function (id) { return Model.find(ctx.doc, id); }).filter(Boolean);
+  }
+  function need(ctx, q, opName) {
+    var list = items(ctx, q);
+    if (!list.length) throw err('NO_TARGET', opName + ': 대상이 없습니다 (선택도 비어 있음)');
+    return list;
+  }
+
+  /* ===================== 아이템 직렬화 ===================== */
+  function itemInfo(ctx, it, info) {
+    var loc = info || Model.locate(ctx.doc, it);
+    var wm = Model.worldMatrix(ctx.doc, it);
+    var o = {
+      id: it.id,
+      type: it.type,
+      name: it.name || '',
+      layer: loc && loc.layer ? loc.layer.name : null,
+      visible: it.visible !== false,
+      locked: !!it.locked,
+      opacity: it.opacity == null ? 1 : it.opacity,
+      blend: it.blend || 'normal',
+      bounds: rect(Rn.boundsM(it, wm, false, 1)),
+      geometricBounds: rect(Rn.boundsM(it, wm, true, 1)),
+      rotation: U.round(M.angle(wm), 3)
+    };
+    if (it.type !== 'group') {
+      o.fill = paintOut(it.fill);
+      o.stroke = strokeOut(it.stroke);
+    }
+    if (it.type === 'path') {
+      o.closed = it.subs.every(function (s) { return s.closed; });
+      o.subpaths = it.subs.length;
+      o.points = Model.countPts(it);
+      if (it.shape) o.shape = U.deepCopy(it.shape);
+    } else if (it.type === 'text') {
+      o.text = {
+        content: it.text.content, font: it.text.family, size: it.text.size,
+        weight: it.text.weight, italic: !!it.text.italic,
+        leading: it.text.leading, tracking: it.text.tracking, align: it.text.align
+      };
+    } else if (it.type === 'image') {
+      o.image = { width: it.w, height: it.h, srcLength: (it.src || '').length, srcKind: /^data:/.test(it.src || '') ? 'dataURL' : 'url' };
+    } else if (it.type === 'group') {
+      o.clip = !!it.clip;
+      o.children = it.children.map(function (c) { return c.id; });
+    }
+    return o;
+  }
+
+  /* ===================== 연산 테이블 ===================== */
+  /* p(): 파라미터 스펙 축약 */
+  function p(type, desc, o) {
+    var d = { type: type, description: desc };
+    if (o) for (var k in o) d[k] = o[k];
+    return d;
+  }
+  var Q = p('selector', '대상 선택자. 생략하면 현재 선택. id · 이름 · {type,name,fill,layer,at,within,…} · id 배열');
+
+  var OPS = {};
+  function op(name, spec) {
+    if (typeof spec.undoable !== 'boolean') {
+      throw new Error("api.js: '" + name + "' 이(가) undoable 플래그를 선언하지 않았습니다 " +
+        '(읽기 전용 연산이 실행 취소 스택을 오염시키는 것을 막기 위한 필수 표시)');
+    }
+    spec.name = name;
+    OPS[name] = spec;
+  }
+
+  /* ---------- 문서 ---------- */
+  op('newDocument', {
+    undoable: false, group: '문서', desc: '새 문서를 만들고 기존 내용을 대체합니다.',
+    params: {
+      width: p('number', '대지 폭 (pt)', { default: 595.28 }),
+      height: p('number', '대지 높이 (pt)', { default: 841.89 }),
+      name: p('string', '문서 이름', { default: '무제-1' }),
+      unit: p('string', '표시 단위', { enum: ['pt', 'px', 'mm', 'cm', 'in'], default: 'pt' }),
+      background: p('color', '대지 배경색', { default: '#ffffff' })
+    },
+    run: function (ctx, a) {
+      var d = Model.newDoc(a.width || 595.28, a.height || 841.89);
+      if (a.name) d.name = a.name;
+      if (a.background) d.bg = normalizeHex(a.background) || '#ffffff';
+      ctx.setDoc(d);
+      ctx.history.reset(ctx.doc, '새 문서');
+      if (a.unit) ctx.prefs.unit = a.unit;
+      if (!ctx.headless && AI.viewT) AI.viewT.fitArtboard(ctx);
+      return documentInfo(ctx);
+    }
+  });
+
+  function documentInfo(ctx) {
+    return {
+      name: ctx.doc.name,
+      unit: ctx.prefs.unit || 'pt',
+      background: ctx.doc.bg || '#ffffff',
+      artboards: ctx.doc.artboards.map(function (a, i) {
+        return { index: i, name: a.name, x: a.x, y: a.y, width: a.w, height: a.h, active: i === ctx.doc.activeArtboard };
+      }),
+      layers: ctx.doc.layers.map(function (l, i) {
+        return { index: i, name: l.name, color: l.color, visible: l.visible, locked: l.locked, items: l.children.length, active: i === ctx.doc.activeLayer };
+      }),
+      itemCount: allIds(ctx).length,
+      selection: ctx.sel.map(function (i) { return i.id; })
+    };
+  }
+
+  op('documentInfo', { undoable: false, group: '문서', desc: '문서 · 대지 · 레이어 요약을 반환합니다.', params: {}, run: documentInfo });
+
+  op('setDocument', {
+    undoable: true, group: '문서', desc: '활성 대지 크기 · 문서 이름 · 단위 · 배경을 변경합니다.',
+    params: {
+      width: p('number', '활성 대지 폭'), height: p('number', '활성 대지 높이'),
+      name: p('string', '문서 이름'), unit: p('string', '표시 단위', { enum: ['pt', 'px', 'mm', 'cm', 'in'] }),
+      background: p('color', '대지 배경색')
+    },
+    run: function (ctx, a) {
+      var ab = ctx.doc.artboards[ctx.doc.activeArtboard];
+      if (a.width != null) { ab.w = Math.max(1, a.width); ctx.doc.width = ab.w; }
+      if (a.height != null) { ab.h = Math.max(1, a.height); ctx.doc.height = ab.h; }
+      if (a.name) ctx.doc.name = a.name;
+      if (a.unit) ctx.prefs.unit = a.unit;
+      if (a.background) ctx.doc.bg = normalizeHex(a.background) || ctx.doc.bg;
+      return documentInfo(ctx);
+    }
+  });
+
+  /* ---------- 생성 ---------- */
+  var STYLE_PARAMS = {
+    fill: p('color', "칠. '#ff0000' · 'red' · 'none' · {type:'linear',stops:[[0,'#fff'],[1,'#000']],angle:45}"),
+    stroke: p('color', '획 색. 없으면 획 없음'),
+    strokeWidth: p('number', '획 두께 (pt). 획이 없는 오브젝트에는 색을 함께 지정해야 보입니다'),
+    strokeAlign: p('string', '획 정렬', { enum: ['center', 'inside', 'outside'] }),
+    strokeDash: p('number[]', '점선 패턴 (예: [4,2])'),
+    opacity: p('number', '불투명도 0~1'),
+    blend: p('string', '혼합 모드'),
+    name: p('string', '오브젝트 이름'),
+    layer: p('string', '넣을 레이어 이름 (없으면 활성 레이어)')
+  };
+
+  /* 지정한 속성만 건드린다 — 넘기지 않은 값은 절대 덮어쓰지 않는다.
+     (set() 으로 칠만 바꿀 때 불투명도나 획이 초기화되면 안 된다) */
+  function applyStyle(ctx, it, a) {
+    if (a.fill !== undefined) it.fill = paint(a.fill);
+    if (a.stroke !== undefined) {
+      var sp = paint(a.stroke);
+      var s = Model.defaultStroke();
+      var old = it.stroke || {};
+      s.cap = old.cap || s.cap; s.join = old.join || s.join;
+      s.align = old.align || s.align; s.dash = (old.dash || []).slice();
+      if (sp.type === 'none') s.type = 'none';
+      else if (sp.type === 'solid') { s.type = 'solid'; s.color = sp.color; s.alpha = sp.alpha; }
+      else { Object.keys(sp).forEach(function (k) { s[k] = U.deepCopy(sp[k]); }); }
+      s.width = a.strokeWidth != null ? a.strokeWidth : (old.width == null ? 1 : old.width);
+      it.stroke = s;
+    } else if (a.strokeWidth != null && it.stroke) {
+      it.stroke.width = a.strokeWidth;
+    }
+    if (a.strokeAlign && it.stroke) it.stroke.align = a.strokeAlign;
+    if (a.strokeDash && it.stroke) it.stroke.dash = a.strokeDash.slice();
+    if (a.opacity != null) it.opacity = U.clamp(a.opacity, 0, 1);
+    if (a.blend) it.blend = a.blend;
+    if (a.name) it.name = a.name;
+    return it;
+  }
+
+  function place(ctx, it, a) {
+    var layer = null;
+    if (a && a.layer) {
+      layer = ctx.doc.layers.filter(function (l) { return l.name === a.layer; })[0];
+      if (!layer) throw err('NO_LAYER', "레이어를 찾을 수 없습니다: '" + a.layer + "'");
+    }
+    (layer || Model.activeLayer(ctx.doc)).children.push(it);
+    ctx.sel = [it];
+    ctx.selPts = [];
+    return it.id;
+  }
+
+  function shapeOp(name, group, desc, params, build) {
+    var all = {};
+    for (var k in params) all[k] = params[k];
+    for (var k2 in STYLE_PARAMS) all[k2] = STYLE_PARAMS[k2];
+    op(name, {
+      undoable: true, group: group, desc: desc, params: all, returns: 'id',
+      run: function (ctx, a) { return place(ctx, applyStyle(ctx, build(ctx, a), a), a); }
+    });
+  }
+
+  shapeOp('addRect', '생성', '사각형(라이브 셰이프)을 추가합니다.', {
+    x: p('number', '왼쪽 좌표', { required: true }), y: p('number', '위쪽 좌표', { required: true }),
+    width: p('number', '폭', { required: true }), height: p('number', '높이', { required: true }),
+    radius: p('number', '모퉁이 반경', { default: 0 })
+  }, function (ctx, a) { return Model.newRect(a.x, a.y, a.width, a.height, a.radius || 0); });
+
+  shapeOp('addEllipse', '생성', '타원을 추가합니다.', {
+    x: p('number', '바운딩 왼쪽', { required: true }), y: p('number', '바운딩 위쪽', { required: true }),
+    width: p('number', '폭', { required: true }), height: p('number', '높이', { required: true })
+  }, function (ctx, a) { return Model.newEllipse(a.x, a.y, a.width, a.height); });
+
+  shapeOp('addPolygon', '생성', '정다각형을 추가합니다.', {
+    cx: p('number', '중심 x', { required: true }), cy: p('number', '중심 y', { required: true }),
+    radius: p('number', '반경', { required: true }), sides: p('number', '변의 수', { default: 6 })
+  }, function (ctx, a) { return Model.newPolygon(a.cx, a.cy, a.radius, Math.max(3, a.sides || 6)); });
+
+  shapeOp('addStar', '생성', '별을 추가합니다.', {
+    cx: p('number', '중심 x', { required: true }), cy: p('number', '중심 y', { required: true }),
+    radius: p('number', '바깥 반경', { required: true }),
+    innerRadius: p('number', '안쪽 반경 (기본: 바깥의 절반)'),
+    points: p('number', '점 개수', { default: 5 })
+  }, function (ctx, a) {
+    return Model.newStar(a.cx, a.cy, a.radius, a.innerRadius == null ? a.radius / 2 : a.innerRadius, Math.max(3, a.points || 5));
+  });
+
+  shapeOp('addLine', '생성', '선분을 추가합니다.', {
+    x1: p('number', '시작 x', { required: true }), y1: p('number', '시작 y', { required: true }),
+    x2: p('number', '끝 x', { required: true }), y2: p('number', '끝 y', { required: true })
+  }, function (ctx, a) { return Model.newLine(a.x1, a.y1, a.x2, a.y2); });
+
+  shapeOp('addPath', '생성', "패스를 추가합니다. SVG 의 d 문자열 또는 점 배열을 받습니다.", {
+    d: p('string', "SVG path d 문자열 (예: 'M0 0 L100 0 C120 40 80 60 0 60 Z')"),
+    points: p('number[][]', '점 배열 [[x,y],…] — d 대신 사용'),
+    closed: p('boolean', 'points 사용 시 닫힌 패스 여부', { default: false })
+  }, function (ctx, a) {
+    var it = null;
+    if (a.d) it = AI.io.pathFromD(a.d);
+    else if (a.points && a.points.length > 1) {
+      it = Model.newPath([{
+        closed: !!a.closed,
+        pts: a.points.map(function (q) { return { x: q[0], y: q[1] }; })
+      }]);
+    }
+    if (!it) throw err('BAD_PATH', 'd 또는 points 중 하나가 필요합니다');
+    return it;
+  });
+
+  shapeOp('addText', '생성', '점 문자(포인트 텍스트)를 추가합니다. 원점은 첫 줄 베이스라인입니다.', {
+    x: p('number', '기준 x', { required: true }), y: p('number', '베이스라인 y', { required: true }),
+    text: p('string', '내용 (\\n 으로 줄바꿈)', { required: true }),
+    font: p('string', 'CSS font-family', { default: 'Noto Sans KR, sans-serif' }),
+    size: p('number', '글꼴 크기 (pt)', { default: 24 }),
+    weight: p('number', '굵기 100~900', { default: 400 }),
+    italic: p('boolean', '기울임', { default: false }),
+    leading: p('number', '행간 배수', { default: 1.2 }),
+    tracking: p('number', '자간 (px)', { default: 0 }),
+    align: p('string', '정렬', { enum: ['left', 'center', 'right'], default: 'left' })
+  }, function (ctx, a) {
+    var it = Model.newText(a.x, a.y, a.text);
+    var t = it.text;
+    if (a.font) t.family = a.font;
+    if (a.size != null) t.size = a.size;
+    if (a.weight != null) t.weight = a.weight;
+    if (a.italic != null) t.italic = !!a.italic;
+    if (a.leading != null) t.leading = a.leading;
+    if (a.tracking != null) t.tracking = a.tracking;
+    if (a.align) t.align = a.align;
+    if (a.fill === undefined) it.fill = Col.solid('#000000');
+    return it;
+  });
+
+  shapeOp('addImage', '생성', '이미지를 배치합니다. src 는 data URL 또는 URL.', {
+    src: p('string', 'data URL 또는 이미지 URL', { required: true }),
+    x: p('number', '왼쪽', { required: true }), y: p('number', '위쪽', { required: true }),
+    width: p('number', '폭', { required: true }), height: p('number', '높이', { required: true })
+  }, function (ctx, a) { return Model.newImage(a.src, a.x, a.y, a.width, a.height); });
+
+  /* ---------- 조회 ---------- */
+  op('find', {
+    undoable: false, group: '조회', desc: '선택자에 맞는 오브젝트 id 목록을 문서 순서(뒤→앞)로 반환합니다.',
+    params: { query: Q }, returns: 'id[]',
+    run: function (ctx, a) { return resolve(ctx, a.query, { defaultSelection: false }); }
+  });
+
+  op('get', {
+    undoable: false, group: '조회', desc: '오브젝트 상세 정보를 반환합니다.',
+    params: { query: Q },
+    run: function (ctx, a) {
+      var list = items(ctx, a.query);
+      if (!list.length) return null;
+      return list.length === 1 ? itemInfo(ctx, list[0]) : list.map(function (i) { return itemInfo(ctx, i); });
+    }
+  });
+
+  op('snapshot', {
+    undoable: false, group: '조회', desc: '문서 전체를 기계가 읽을 수 있는 구조로 반환합니다 (AI 가 화면 없이 상태를 파악할 때).',
+    params: { includeGeometry: p('boolean', '패스 좌표까지 포함', { default: false }) },
+    run: function (ctx, a) {
+      var byLayer = ctx.doc.layers.map(function (l) {
+        return {
+          name: l.name, color: l.color, visible: l.visible, locked: l.locked,
+          items: l.children.map(function (c) { return node(c); })
+        };
+      });
+      function node(it) {
+        var o = itemInfo(ctx, it);
+        if (it.type === 'group') o.items = it.children.map(node);
+        if (a.includeGeometry && it.type === 'path') o.d = G.toSvgD(it, null);
+        return o;
+      }
+      return {
+        version: API.VERSION,
+        document: documentInfo(ctx),
+        layers: byLayer,
+        selection: ctx.sel.map(function (i) { return i.id; })
+      };
+    }
+  });
+
+  op('describe', {
+    undoable: false, group: '조회', desc: '문서를 사람이 읽는 짧은 텍스트로 요약합니다 (LLM 컨텍스트용).',
+    params: {}, returns: 'string',
+    run: function (ctx) {
+      var un = ctx.prefs.unit || 'pt';
+      var ab = ctx.doc.artboards[ctx.doc.activeArtboard];
+      var lines = [];
+      lines.push('문서 "' + ctx.doc.name + '" · 대지 ' + ctx.doc.artboards.length + '개 · 활성 대지 ' +
+        U.fmtUnit(ab.w, un) + '×' + U.fmtUnit(ab.h, un) + un + ' · 레이어 ' + ctx.doc.layers.length + '개');
+      var selIds = ctx.sel.map(function (i) { return i.id; });
+      ctx.doc.layers.forEach(function (l) {
+        lines.push('[' + l.name + ']' + (l.visible ? '' : ' (숨김)') + (l.locked ? ' (잠금)' : ''));
+        (function rec(list, ind) {
+          list.forEach(function (it) {
+            var b = Rn.boundsM(it, Model.worldMatrix(ctx.doc, it), true, 1);
+            var parts = [ind + (selIds.indexOf(it.id) >= 0 ? '▶ ' : '  ') + it.id, typeLabel(it)];
+            if (b && !R.isEmpty(b)) {
+              parts.push('x' + U.fmtUnit(b.x, un) + ' y' + U.fmtUnit(b.y, un) +
+                ' w' + U.fmtUnit(R.w(b), un) + ' h' + U.fmtUnit(R.h(b), un));
+            }
+            if (it.type !== 'group') {
+              parts.push('칠 ' + paintLabel(it.fill));
+              if (it.stroke && it.stroke.type !== 'none') parts.push('획 ' + it.stroke.color + ' ' + U.fmt(it.stroke.width) + 'pt');
+            }
+            if (it.type === 'text') parts.push('"' + String(it.text.content).replace(/\n/g, '\\n').slice(0, 40) + '"');
+            if (it.opacity != null && it.opacity < 1) parts.push('불투명 ' + Math.round(it.opacity * 100) + '%');
+            if (!it.visible) parts.push('숨김');
+            if (it.locked) parts.push('잠금');
+            lines.push(parts.join('  '));
+            if (it.type === 'group') rec(it.children, ind + '    ');
+          });
+        })(l.children, '  ');
+      });
+      lines.push('선택: ' + (selIds.length ? selIds.join(', ') : '없음'));
+      return lines.join('\n');
+    }
+  });
+
+  function typeLabel(it) {
+    if (it.type === 'group') return it.clip ? '클립그룹' : '그룹';
+    if (it.type === 'text') return '텍스트';
+    if (it.type === 'image') return '이미지';
+    if (it.shape) return { rect: '사각형', ellipse: '타원', polygon: '다각형', star: '별', line: '선분' }[it.shape.kind] || '패스';
+    return '패스';
+  }
+  function paintLabel(p2) {
+    if (!p2 || p2.type === 'none') return '없음';
+    if (p2.type === 'solid') return p2.color;
+    return p2.stops.map(function (s) { return s.color; }).join('→') + '(' + (p2.type === 'radial' ? '방사형' : '선형') + ')';
+  }
+
+  /* ---------- 선택 ---------- */
+  op('select', {
+    undoable: false, group: '선택', desc: '선택자에 맞는 오브젝트를 선택합니다.',
+    params: { query: Q, add: p('boolean', '기존 선택에 추가', { default: false }) },
+    returns: 'id[]',
+    run: function (ctx, a) {
+      var list = items(ctx, a.query, { defaultSelection: false });
+      ctx.sel = a.add ? ctx.sel.concat(list.filter(function (i) { return ctx.sel.indexOf(i) < 0; })) : list;
+      ctx.selPts = [];
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+  op('deselect', {
+    undoable: false, group: '선택', desc: '선택을 해제합니다.', params: {},
+    run: function (ctx) { ctx.sel = []; ctx.selPts = []; return []; }
+  });
+  op('selection', {
+    undoable: false, group: '선택', desc: '현재 선택된 id 와 합친 바운딩을 반환합니다.', params: {},
+    run: function (ctx) {
+      return { ids: ctx.sel.map(function (i) { return i.id; }), bounds: rect(Rn.selectionBounds(ctx, true)) };
+    }
+  });
+
+  /* ---------- 수정 ---------- */
+  op('set', {
+    undoable: true, group: '수정', desc: '오브젝트 속성을 변경합니다 (칠·획·불투명도·이름·표시/잠금·텍스트·라이브 셰이프).',
+    params: (function () {
+      var o = { query: Q };
+      for (var k in STYLE_PARAMS) o[k] = STYLE_PARAMS[k];
+      delete o.layer;
+      o.visible = p('boolean', '표시 여부');
+      o.locked = p('boolean', '잠금 여부');
+      o.text = p('string', '텍스트 내용 (텍스트 오브젝트)');
+      o.size = p('number', '글꼴 크기');
+      o.font = p('string', '글꼴');
+      o.align = p('string', '문단 정렬', { enum: ['left', 'center', 'right'] });
+      o.radius = p('number', '모퉁이 반경 (라이브 사각형)');
+      o.sides = p('number', '변/점 개수 (다각형·별)');
+      return o;
+    })(),
+    returns: 'id[]',
+    run: function (ctx, a) {
+      var list = need(ctx, a.query, 'set');
+      list.forEach(function (it) {
+        (function rec(o) {
+          if (o.type === 'group' && (a.fill !== undefined || a.stroke !== undefined || a.strokeWidth != null)) {
+            o.children.forEach(rec);
+          }
+          if (o.type !== 'group') applyStyle(ctx, o, a);
+        })(it);
+        if (a.name) it.name = a.name;
+        if (a.opacity != null) it.opacity = U.clamp(a.opacity, 0, 1);
+        if (a.blend) it.blend = a.blend;
+        if (a.visible != null) it.visible = !!a.visible;
+        if (a.locked != null) it.locked = !!a.locked;
+        if (it.type === 'text') {
+          if (a.text != null) it.text.content = String(a.text);
+          if (a.size != null) it.text.size = a.size;
+          if (a.font) it.text.family = a.font;
+          if (a.align) it.text.align = a.align;
+        }
+        if (it.shape) {
+          var changed = false;
+          if (a.radius != null && it.shape.kind === 'rect') { it.shape.r = Math.max(0, a.radius); changed = true; }
+          if (a.sides != null && (it.shape.kind === 'polygon' || it.shape.kind === 'star')) {
+            it.shape.n = Math.max(3, Math.round(a.sides)); changed = true;
+          }
+          if (changed) Model.buildShape(it);
+        }
+      });
+      return list.map(function (i) { return i.id; });
+    }
+  });
+
+  op('remove', {
+    undoable: true, group: '수정', desc: '오브젝트를 삭제합니다.', params: { query: Q }, returns: 'number',
+    run: function (ctx, a) {
+      var list = need(ctx, a.query, 'remove');
+      list.forEach(function (it) {
+        var loc = Model.locate(ctx.doc, it);
+        if (loc) loc.list.splice(loc.index, 1);
+      });
+      ctx.sel = ctx.sel.filter(function (i) { return !!Model.locate(ctx.doc, i); });
+      return list.length;
+    }
+  });
+
+  op('duplicate', {
+    undoable: true, group: '수정', desc: '오브젝트를 복제하고 복제본을 선택합니다.',
+    params: { query: Q, dx: p('number', '가로 이동', { default: 0 }), dy: p('number', '세로 이동', { default: 0 }) },
+    returns: 'id[]',
+    run: function (ctx, a) {
+      withSel(ctx, a.query, 'duplicate', function () { E.duplicate(ctx, a.dx || 0, a.dy || 0); });
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+
+  /* 선택을 일시적으로 바꿔 기존 edit 연산을 재사용 */
+  function withSel(ctx, q, opName, fn) {
+    var prev = ctx.sel;
+    var list = need(ctx, q, opName);
+    ctx.sel = list;
+    try { fn(list); } finally {
+      if (ctx.sel === list) ctx.sel = ctx.sel.filter(function (i) { return !!Model.locate(ctx.doc, i); });
+    }
+    return ctx.sel;
+  }
+
+  op('move', {
+    undoable: true, group: '변형', desc: '상대 이동합니다.',
+    params: { query: Q, dx: p('number', '가로 이동', { default: 0 }), dy: p('number', '세로 이동', { default: 0 }) },
+    run: function (ctx, a) {
+      withSel(ctx, a.query, 'move', function () { E.move(ctx, a.dx || 0, a.dy || 0); });
+      return rect(Rn.selectionBounds(ctx, true));
+    }
+  });
+
+  op('setBounds', {
+    undoable: true, group: '변형', desc: '바운딩 박스를 지정한 위치·크기로 맞춥니다. anchor 는 기준점(0~8, 0=좌상단).',
+    params: {
+      query: Q, x: p('number', '기준점 x'), y: p('number', '기준점 y'),
+      width: p('number', '폭'), height: p('number', '높이'),
+      anchor: p('number', '기준점 0~8 (0=좌상 4=중앙 8=우하)', { default: 0 })
+    },
+    run: function (ctx, a) {
+      withSel(ctx, a.query, 'setBounds', function () {
+        E.setBounds(ctx, a.x == null ? null : a.x, a.y == null ? null : a.y,
+          a.width == null ? null : a.width, a.height == null ? null : a.height, a.anchor || 0);
+      });
+      return rect(Rn.selectionBounds(ctx, true));
+    }
+  });
+
+  op('rotate', {
+    undoable: true, group: '변형', desc: '회전합니다 (반시계 양수). 기준점을 지정하지 않으면 바운딩 중심.',
+    params: { query: Q, angle: p('number', '각도(도)', { required: true }), cx: p('number', '기준 x'), cy: p('number', '기준 y'), anchor: p('number', '기준점 0~8') },
+    run: function (ctx, a) {
+      withSel(ctx, a.query, 'rotate', function () {
+        var o = origin(ctx, a);
+        E.rotate(ctx, -a.angle, o.x, o.y);
+      });
+      return rect(Rn.selectionBounds(ctx, true));
+    }
+  });
+
+  op('scale', {
+    undoable: true, group: '변형', desc: '크기를 배율로 조절합니다.',
+    params: {
+      query: Q, sx: p('number', '가로 배율 (1=100%)', { default: 1 }), sy: p('number', '세로 배율 (기본: sx 와 동일)'),
+      cx: p('number', '기준 x'), cy: p('number', '기준 y'), anchor: p('number', '기준점 0~8'),
+      scaleStrokes: p('boolean', '획 두께도 함께 조절', { default: false })
+    },
+    run: function (ctx, a) {
+      var sx = a.sx == null ? 1 : a.sx, sy = a.sy == null ? sx : a.sy;
+      withSel(ctx, a.query, 'scale', function (list) {
+        var o = origin(ctx, a);
+        E.scale(ctx, sx, sy, o.x, o.y);
+        if (a.scaleStrokes) {
+          var k = Math.sqrt(Math.abs(sx * sy)) || 1;
+          list.forEach(function (it) {
+            (function rec(x) {
+              if (x.type === 'group') { x.children.forEach(rec); return; }
+              if (x.stroke && x.stroke.type !== 'none') x.stroke.width *= k;
+            })(it);
+          });
+        }
+      });
+      return rect(Rn.selectionBounds(ctx, true));
+    }
+  });
+
+  op('reflect', {
+    undoable: true, group: '변형', desc: '가로축 또는 세로축으로 반사합니다.',
+    params: { query: Q, axis: p('string', '반사 축', { enum: ['horizontal', 'vertical'], default: 'vertical' }), cx: p('number', '기준 x'), cy: p('number', '기준 y'), anchor: p('number', '기준점 0~8') },
+    run: function (ctx, a) {
+      withSel(ctx, a.query, 'reflect', function () {
+        var o = origin(ctx, a);
+        E.reflect(ctx, a.axis === 'horizontal' ? 'h' : 'v', o.x, o.y);
+      });
+      return rect(Rn.selectionBounds(ctx, true));
+    }
+  });
+
+  function origin(ctx, a) {
+    if (a.cx != null && a.cy != null) return { x: a.cx, y: a.cy };
+    var b = Rn.selectionBounds(ctx, true);
+    if (R.isEmpty(b)) return { x: 0, y: 0 };
+    return a.anchor != null ? E.refPointOf(b, a.anchor) : { x: R.cx(b), y: R.cy(b) };
+  }
+
+  op('arrange', {
+    undoable: true, group: '수정', desc: '쌓임 순서를 바꿉니다.',
+    params: { query: Q, order: p('string', '순서', { enum: ['front', 'forward', 'backward', 'back'], required: true }) },
+    run: function (ctx, a) {
+      withSel(ctx, a.query, 'arrange', function () { E.arrange(ctx, a.order); });
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+
+  op('group', {
+    undoable: true, group: '수정', desc: '선택한 오브젝트를 그룹으로 묶습니다.', params: { query: Q, name: p('string', '그룹 이름') },
+    returns: 'id',
+    run: function (ctx, a) {
+      var list = need(ctx, a.query, 'group');
+      if (list.length < 2) throw err('NEED_TWO', 'group: 2개 이상이 필요합니다');
+      ctx.sel = list;
+      E.group(ctx);
+      if (a.name && ctx.sel[0]) ctx.sel[0].name = a.name;
+      return ctx.sel[0] ? ctx.sel[0].id : null;
+    }
+  });
+  op('ungroup', {
+    undoable: true, group: '수정', desc: '그룹을 해제합니다.', params: { query: Q }, returns: 'id[]',
+    run: function (ctx, a) {
+      withSel(ctx, a.query, 'ungroup', function () { E.ungroup(ctx); });
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+
+  op('align', {
+    undoable: true, group: '정렬', desc: '정렬합니다.',
+    params: {
+      query: Q,
+      mode: p('string', '정렬 기준', { enum: ['left', 'hcenter', 'right', 'top', 'vcenter', 'bottom'], required: true }),
+      relativeTo: p('string', '기준', { enum: ['selection', 'artboard'], default: 'selection' })
+    },
+    run: function (ctx, a) {
+      withSel(ctx, a.query, 'align', function () { E.align(ctx, a.mode, a.relativeTo || 'selection'); });
+      return rect(Rn.selectionBounds(ctx, true));
+    }
+  });
+  op('distribute', {
+    undoable: true, group: '정렬', desc: '균등 배분합니다 (3개 이상).',
+    params: { query: Q, axis: p('string', '축', { enum: ['h', 'v'], required: true }), spacing: p('number', '간격을 지정하면 간격 기준 배분') },
+    run: function (ctx, a) {
+      withSel(ctx, a.query, 'distribute', function () {
+        if (a.spacing != null) E.distributeSpacing(ctx, a.axis, a.spacing);
+        else E.distribute(ctx, a.axis);
+      });
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+
+  op('pathfinder', {
+    undoable: true, group: '패스', desc: '패스파인더 연산을 적용합니다.',
+    params: {
+      query: Q,
+      operation: p('string', '연산', {
+        enum: ['unite', 'minusFront', 'minusBack', 'intersect', 'exclude', 'divide', 'trim', 'merge', 'crop', 'outline'],
+        required: true
+      })
+    },
+    returns: 'id[]',
+    run: function (ctx, a) {
+      var okRes;
+      withSel(ctx, a.query, 'pathfinder', function () { okRes = E.pathfinder(ctx, a.operation); });
+      if (okRes === false) throw err('PF_EMPTY', 'pathfinder: 결과가 비어 있습니다');
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+
+  op('clipMask', {
+    undoable: true, group: '패스', desc: '맨 앞 오브젝트를 마스크로 클리핑 그룹을 만듭니다.', params: { query: Q }, returns: 'id',
+    run: function (ctx, a) {
+      withSel(ctx, a.query, 'clipMask', function () { E.makeClipMask(ctx); });
+      return ctx.sel[0] ? ctx.sel[0].id : null;
+    }
+  });
+
+  /* ---------- 레이어 · 대지 ---------- */
+  op('addLayer', {
+    undoable: true, group: '레이어', desc: '레이어를 추가하고 활성화합니다.',
+    params: { name: p('string', '레이어 이름'), color: p('color', '레이어 색상') }, returns: 'string',
+    run: function (ctx, a) {
+      var l = Model.newLayer(a.name || ('레이어 ' + (ctx.doc.layers.length + 1)), ctx.doc.layers.length);
+      if (a.color) l.color = normalizeHex(a.color) || l.color;
+      ctx.doc.layers.push(l);
+      ctx.doc.activeLayer = ctx.doc.layers.length - 1;
+      return l.name;
+    }
+  });
+  op('setLayer', {
+    undoable: true, group: '레이어', desc: '활성 레이어를 바꾸거나 레이어 속성을 변경합니다.',
+    params: { name: p('string', '레이어 이름', { required: true }), visible: p('boolean', '표시'), locked: p('boolean', '잠금'), rename: p('string', '새 이름') },
+    run: function (ctx, a) {
+      var i = -1;
+      ctx.doc.layers.forEach(function (l, k) { if (l.name === a.name) i = k; });
+      if (i < 0) throw err('NO_LAYER', "레이어를 찾을 수 없습니다: '" + a.name + "'");
+      ctx.doc.activeLayer = i;
+      var l2 = ctx.doc.layers[i];
+      if (a.visible != null) l2.visible = !!a.visible;
+      if (a.locked != null) l2.locked = !!a.locked;
+      if (a.rename) l2.name = a.rename;
+      return documentInfo(ctx).layers;
+    }
+  });
+  op('addArtboard', {
+    undoable: true, group: '대지', desc: '대지를 추가하고 활성화합니다.',
+    params: {
+      name: p('string', '이름'), x: p('number', 'x'), y: p('number', 'y'),
+      width: p('number', '폭', { required: true }), height: p('number', '높이', { required: true })
+    },
+    run: function (ctx, a) {
+      var last = ctx.doc.artboards[ctx.doc.artboards.length - 1];
+      ctx.doc.artboards.push({
+        id: U.uid('AB'), name: a.name || ('대지 ' + (ctx.doc.artboards.length + 1)),
+        x: a.x == null ? last.x + last.w + 40 : a.x, y: a.y == null ? last.y : a.y,
+        w: a.width, h: a.height
+      });
+      ctx.doc.activeArtboard = ctx.doc.artboards.length - 1;
+      return documentInfo(ctx).artboards;
+    }
+  });
+  op('gotoArtboard', {
+    undoable: true, group: '대지', desc: '활성 대지를 바꿉니다.', params: { index: p('number', '0부터 시작하는 인덱스', { required: true }) },
+    run: function (ctx, a) {
+      ctx.doc.activeArtboard = U.clamp(Math.round(a.index), 0, ctx.doc.artboards.length - 1);
+      if (!ctx.headless && AI.viewT) AI.viewT.fitArtboard(ctx);
+      return ctx.doc.activeArtboard;
+    }
+  });
+
+  /* ---------- 히스토리 ---------- */
+  op('undo', {
+    undoable: false, group: '히스토리', desc: '실행을 취소합니다.', params: {}, 
+    run: function (ctx) {
+      var s = ctx.history.undo(ctx.doc);
+      if (!s) return { ok: false, message: '취소할 항목이 없습니다' };
+      ctx.setDoc(s);
+      return { ok: true, next: ctx.history.undoLabel() };
+    }
+  });
+  op('redo', {
+    undoable: false, group: '히스토리', desc: '취소한 작업을 다시 실행합니다.', params: {}, 
+    run: function (ctx) {
+      var s = ctx.history.redo(ctx.doc);
+      if (!s) return { ok: false, message: '다시 실행할 항목이 없습니다' };
+      ctx.setDoc(s);
+      return { ok: true, next: ctx.history.redoLabel() };
+    }
+  });
+  op('history', {
+    undoable: false, group: '히스토리', desc: '실행 취소 스택 상태를 반환합니다.', params: {}, 
+    run: function (ctx) {
+      return {
+        canUndo: ctx.history.canUndo(), canRedo: ctx.history.canRedo(),
+        undoLabel: ctx.history.undoLabel(), redoLabel: ctx.history.redoLabel(),
+        depth: ctx.history.stack.length
+      };
+    }
+  });
+
+  /* ---------- 출력 ---------- */
+  op('toSVG', {
+    undoable: false, group: '출력', desc: '활성 대지를 SVG 문자열로 반환합니다.', params: {}, returns: 'string', 
+    run: function (ctx) { return AI.io.toSVG(ctx); }
+  });
+  op('toJSON', {
+    undoable: false, group: '출력', desc: '문서 전체를 저장 형식(JSON 문자열)으로 반환합니다.', params: {}, returns: 'string', 
+    run: function (ctx) { return JSON.stringify({ format: 'illymolly', version: 1, doc: ctx.doc }); }
+  });
+  op('loadJSON', {
+    undoable: false, group: '출력', desc: '저장 형식 JSON 을 불러옵니다.', params: { json: p('string', 'toJSON 이 만든 문자열', { required: true }) },
+    run: function (ctx, a) {
+      var o = JSON.parse(a.json);
+      var d = o.doc || o;
+      AI.io.normalizeDoc(d);
+      ctx.setDoc(d);
+      ctx.history.reset(ctx.doc, '불러오기');
+      return documentInfo(ctx);
+    }
+  });
+  op('toPNG', {
+    undoable: false, group: '출력', desc: '활성 대지를 PNG data URL 로 반환합니다 (브라우저 전용).',
+    params: { scale: p('number', '배율', { default: 2 }), background: p('boolean', '대지 배경 포함', { default: true }) },
+    returns: 'string', 
+    run: function (ctx, a) {
+      if (!U.hasDOM) throw err('NO_CANVAS', 'toPNG 는 브라우저에서만 사용할 수 있습니다. Node 에서는 toSVG 를 쓰세요.');
+      var ab = ctx.doc.artboards[ctx.doc.activeArtboard];
+      var scale = U.clamp(a.scale == null ? 2 : a.scale, 0.05, 20);
+      var cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round(ab.w * scale));
+      cv.height = Math.max(1, Math.round(ab.h * scale));
+      Rn.scene(cv.getContext('2d'), {
+        doc: ctx.doc, dpr: 1, exporting: true, exportBg: a.background !== false,
+        view: { scale: scale, tx: -ab.x * scale, ty: -ab.y * scale },
+        prefs: {}, canvas: cv, sel: [], selPts: [], invalidate: function () { }
+      });
+      return cv.toDataURL('image/png');
+    }
+  });
+
+  /* ---------- GUI 연동 (브라우저 전용) ---------- */
+  op('setTool', {
+    undoable: false, group: 'GUI', desc: '도구를 전환합니다 (브라우저 전용).',
+    params: { tool: p('string', '도구 id', { required: true }) }, 
+    run: function (ctx, a) {
+      if (ctx.headless || !AI.tools) throw err('GUI_ONLY', 'setTool 은 브라우저에서만 사용할 수 있습니다');
+      if (!AI.tools.get(a.tool)) throw err('NO_TOOL', "도구를 찾을 수 없습니다: '" + a.tool + "'. illy.ops() 의 setTool 설명을 참고하세요.");
+      AI.tools.setTool(ctx, a.tool, true);
+      return ctx.tool;
+    }
+  });
+  op('zoom', {
+    undoable: false, group: 'GUI', desc: '확대/축소 또는 대지 맞춤 (브라우저 전용).',
+    params: { scale: p('number', '배율 (1=100%)'), fit: p('string', '맞춤', { enum: ['artboard', 'all'] }) },
+    
+    run: function (ctx, a) {
+      if (ctx.headless || !AI.viewT) throw err('GUI_ONLY', 'zoom 은 브라우저에서만 사용할 수 있습니다');
+      if (a.fit === 'all') AI.viewT.fitAll(ctx);
+      else if (a.fit) AI.viewT.fitArtboard(ctx);
+      else if (a.scale) AI.viewT.setZoom(ctx, a.scale);
+      return { scale: U.round(ctx.view.scale, 4) };
+    }
+  });
+
+  /* ===================== 실행기 ===================== */
+  function coerce(spec, v, name, opName) {
+    if (v === undefined || v === null) return v;
+    switch (spec.type) {
+      case 'number':
+        var n = typeof v === 'number' ? v : parseFloat(v);
+        if (!isFinite(n)) throw err('BAD_ARG', opName + '.' + name + ': 숫자가 필요합니다 (받은 값: ' + JSON.stringify(v) + ')');
+        return n;
+      case 'boolean': return !!v;
+      case 'string':
+        var s = String(v);
+        if (spec.enum && spec.enum.indexOf(s) < 0) {
+          throw err('BAD_ARG', opName + '.' + name + ": '" + s + "' 은(는) 허용되지 않습니다. 가능한 값: " + spec.enum.join(', '));
+        }
+        return s;
+      case 'number[]':
+        if (!Array.isArray(v)) throw err('BAD_ARG', opName + '.' + name + ': 배열이 필요합니다');
+        return v.map(Number);
+      default: return v;
+    }
+  }
+
+  function execute(ctx, opName, args) {
+    var spec = OPS[opName];
+    if (!spec) throw err('NO_OP', "알 수 없는 연산: '" + opName + "'. 비슷한 것: " + suggest(opName).join(', ') || '(없음)');
+    args = args || {};
+    var a = {};
+    Object.keys(spec.params).forEach(function (k) {
+      var ps = spec.params[k];
+      var v = args[k];
+      if (v === undefined && ps.default !== undefined) v = ps.default;
+      if (v === undefined && ps.required) {
+        throw err('MISSING_ARG', opName + ': 필수 인자 누락 — ' + k + ' (' + ps.description + ')');
+      }
+      a[k] = coerce(ps, v, k, opName);
+    });
+    /* 알 수 없는 인자는 조용히 무시하지 않고 알려 준다 */
+    var unknown = Object.keys(args).filter(function (k) { return !(k in spec.params); });
+    if (unknown.length) {
+      throw err('UNKNOWN_ARG', opName + ': 알 수 없는 인자 — ' + unknown.join(', ') +
+        '. 사용 가능: ' + Object.keys(spec.params).join(', '));
+    }
+    return spec.run(ctx, a);
+  }
+
+  function suggest(name) {
+    var lower = String(name).toLowerCase();
+    return Object.keys(OPS).filter(function (k) {
+      return k.toLowerCase().indexOf(lower.slice(0, 4)) >= 0 || lower.indexOf(k.toLowerCase().slice(0, 4)) >= 0;
+    }).slice(0, 4);
+  }
+
+  /* ===================== illy 객체 생성 ===================== */
+  /* 인자 정규화 — 에이전트가 자연스럽게 쓰는 형태를 모두 받는다.
+       illy.find({type:'path'})        선택자만
+       illy.remove('박스')             문자열 선택자
+       illy.set('박스', {fill:'red'})  (선택자, 인자)
+       illy.rotate({angle:90})         선택자 생략 = 현재 선택
+     판정 규칙: op 에 query 파라미터가 있고, 넘긴 객체의 키 중 실제 파라미터
+     이름이 하나도 없으면 그 객체 전체를 선택자로 본다. 모호함이 없다. */
+  function normArgs(opName, a, b) {
+    var spec = OPS[opName];
+    if (!spec) return a || {};
+    var hasQuery = 'query' in spec.params;
+    if (b !== undefined && b !== null) {
+      var merged = {};
+      Object.keys(b).forEach(function (k) { merged[k] = b[k]; });
+      if (hasQuery) merged.query = a;
+      return merged;
+    }
+    if (a === undefined || a === null) return {};
+    if (typeof a === 'string' || Array.isArray(a)) return hasQuery ? { query: a } : {};
+    if (typeof a === 'object') {
+      var keys = Object.keys(a);
+      var known = keys.some(function (k) { return k in spec.params; });
+      if (hasQuery && keys.length && !known) return { query: a };
+      return a;
+    }
+    return {};
+  }
+  API.normArgs = normArgs;
+
+  API.create = function (ctx) {
+    var inBatch = false;
+
+    function refresh() {
+      ctx.invalidate && ctx.invalidate();
+      if (!ctx.headless && AI.ui && AI.ui.syncAll) AI.ui.syncAll(ctx);
+    }
+
+    function call(opName, args) {
+      var spec = OPS[opName];
+      var mutating = spec && spec.undoable;
+      if (mutating && !inBatch) ctx.history.begin(opName, ctx.doc);
+      try {
+        var r = execute(ctx, opName, args);
+        if (mutating && !inBatch) ctx.history.commit();
+        if (!inBatch) refresh();
+        return r;
+      } catch (e) {
+        if (mutating && !inBatch) ctx.history.abort();
+        throw e;
+      }
+    }
+
+    var illy = {
+      version: API.VERSION,
+      /* 저수준 진입점 — RPC 는 이걸 쓴다 */
+      run: function (opName, args, args2) {
+        try { return { ok: true, result: call(opName, normArgs(opName, args, args2)) }; }
+        catch (e) { return { ok: false, error: { code: e.code || 'ERROR', message: e.message } }; }
+      },
+      /* 원자적 배치 — 하나라도 실패하면 전부 되돌린다 */
+      batch: function (ops, label) {
+        if (!Array.isArray(ops)) throw err('BAD_ARG', 'batch: 배열이 필요합니다');
+        var before = U.deepCopy(ctx.doc);
+        var selIds = ctx.sel.map(function (i) { return i.id; });
+        ctx.history.begin(label || ('batch(' + ops.length + ')'), ctx.doc);
+        inBatch = true;
+        var results = [];
+        try {
+          for (var i = 0; i < ops.length; i++) {
+            var o = ops[i];
+            var nm = o.op || o.name;
+            results.push(execute(ctx, nm, normArgs(nm, o.args || o.params || o.query, o.args && o.query ? o.args : undefined)));
+          }
+          inBatch = false;
+          ctx.history.commit();
+          refresh();
+          return { ok: true, results: results };
+        } catch (e) {
+          inBatch = false;
+          ctx.history.abort();
+          ctx.setDoc(before);
+          ctx.sel = selIds.map(function (id) { return Model.find(ctx.doc, id); }).filter(Boolean);
+          refresh();
+          return {
+            ok: false,
+            failedAt: results.length,
+            failedOp: ops[results.length] && (ops[results.length].op || ops[results.length].name),
+            error: { code: e.code || 'ERROR', message: e.message },
+            rolledBack: true
+          };
+        }
+      },
+      /* 여러 변경을 하나의 실행 취소 단위로 묶는다 */
+      transaction: function (label, fn) {
+        ctx.history.begin(label || 'transaction', ctx.doc);
+        inBatch = true;
+        try {
+          var r = fn(illy);
+          inBatch = false;
+          ctx.history.commit();
+          refresh();
+          return r;
+        } catch (e) {
+          inBatch = false;
+          ctx.history.abort();
+          throw e;
+        }
+      },
+      /* 도구 매니페스트 — LLM 함수 정의로 그대로 넘길 수 있다 */
+      ops: function (filter) {
+        return Object.keys(OPS)
+          .filter(function (k) { return !filter || OPS[k].group === filter || k.indexOf(filter) >= 0; })
+          .map(function (k) {
+            var s = OPS[k];
+            var props = {}, required = [];
+            Object.keys(s.params).forEach(function (n) {
+              var ps = s.params[n];
+              var t = { type: ps.type, description: ps.description };
+              if (ps.enum) t.enum = ps.enum;
+              if (ps.default !== undefined) t.default = ps.default;
+              props[n] = t;
+              if (ps.required) required.push(n);
+            });
+            return {
+              name: k, group: s.group, description: s.desc,
+              parameters: { type: 'object', properties: props, required: required },
+              returns: s.returns || 'object',
+              undoable: !!s.undoable
+            };
+          });
+      },
+      help: function (name) {
+        if (!name) {
+          var by = {};
+          Object.keys(OPS).forEach(function (k) { (by[OPS[k].group] = by[OPS[k].group] || []).push(k); });
+          return Object.keys(by).map(function (g) { return g + ': ' + by[g].join(', '); }).join('\n');
+        }
+        var s = OPS[name];
+        if (!s) return "알 수 없는 연산: '" + name + "'. 비슷한 것: " + suggest(name).join(', ');
+        var lines = [name + ' — ' + s.desc];
+        Object.keys(s.params).forEach(function (k) {
+          var ps = s.params[k];
+          lines.push('  ' + k + ' (' + ps.type + (ps.required ? ', 필수' : '') +
+            (ps.default !== undefined ? ', 기본 ' + JSON.stringify(ps.default) : '') + ') — ' + ps.description +
+            (ps.enum ? ' [' + ps.enum.join('|') + ']' : ''));
+        });
+        return lines.join('\n');
+      },
+      /* 내부 접근 (고급) */
+      _context: function () { return ctx; }
+    };
+
+    /* OPS 를 그대로 메서드로 노출 — 실패 시 예외를 던진다 */
+    Object.keys(OPS).forEach(function (k) {
+      illy[k] = function (a, b) { return call(k, normArgs(k, a, b)); };
+    });
+
+    /* 자주 쓰는 축약 */
+    illy.rect = illy.addRect;
+    illy.ellipse = illy.addEllipse;
+    illy.text = illy.addText;
+    illy.path = illy.addPath;
+    illy.image = illy.addImage;
+
+    return illy;
+  };
+
+  API.OPS = OPS;
+  API.execute = execute;
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

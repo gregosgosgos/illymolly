@@ -59,4 +59,4 @@
   };
 
   AI.History = History;
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

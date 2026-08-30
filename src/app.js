@@ -229,8 +229,12 @@
     AI.ui.syncAll(app);
     app.invalidate();
     draw();
+
+    /* 자동화 / AI 에이전트 진입점 — 사람이 쓰는 GUI 와 같은 문서를 공유한다 */
+    window.illy = AI.api.create(app);
+    AI.bridge.install(window.illy, window);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

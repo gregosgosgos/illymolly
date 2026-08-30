@@ -787,6 +787,115 @@ await check('환경 설정의 격자 간격이 실제 격자에 반영', async (
   return `분할 8 → ${px.a}줄, 분할 4 → ${px.b}줄`;
 });
 
+/* ---------------- 자동화 API (브라우저) ---------------- */
+await check('window.illy 가 GUI 와 같은 문서를 공유', async () => {
+  const r = await ev(() => {
+    AI.app.setDoc(AI.model.newDoc(400, 300));
+    const id = illy.addRect({ x: 20, y: 20, width: 120, height: 80, fill: '#ff3366', name: 'API 사각형' });
+    return {
+      id,
+      selected: AI.app.sel.map(i => i.id),
+      inDoc: !!AI.model.find(AI.app.doc, id),
+      layerRows: document.querySelectorAll('#p-layers .lyr').length,
+      panelName: document.getElementById('pr-info').textContent
+    };
+  });
+  if (!r.inDoc) throw new Error('문서에 없음');
+  if (r.selected[0] !== r.id) throw new Error('선택 반영 안 됨');
+  if (r.layerRows < 2) throw new Error('레이어 패널 미갱신 ' + r.layerRows);
+  if (!/API 사각형/.test(r.panelName)) throw new Error('속성 패널 미갱신: ' + r.panelName);
+  return `${r.id} · 패널 "${r.panelName}"`;
+});
+
+await check('API 변경을 GUI 단축키로 실행 취소', async () => {
+  const before = await count();
+  await ev(() => illy.addEllipse({ x: 200, y: 100, width: 80, height: 80, fill: 'blue' }));
+  const mid = await count();
+  await page.keyboard.press('Control+KeyZ');
+  await page.waitForTimeout(80);
+  const after = await count();
+  if (mid !== before + 1 || after !== before) throw new Error(`${before}/${mid}/${after}`);
+  return `${before} → ${mid} → Ctrl+Z → ${after}`;
+});
+
+await check('GUI 조작을 API 로 되돌리기', async () => {
+  await ev(() => { AI.app.setDoc(AI.model.newDoc(400, 300)); });
+  await page.keyboard.press('KeyM');
+  await drag(at(0.3, 0.3), at(0.5, 0.5));
+  const n1 = await count();
+  const r = await ev(() => illy.undo());
+  const n2 = await count();
+  await page.keyboard.press('KeyV');
+  if (n1 !== 1 || n2 !== 0 || !r.ok) throw new Error(`${n1}/${n2}/${JSON.stringify(r)}`);
+  return 'GUI 로 그린 도형을 illy.undo() 로 제거';
+});
+
+await check('브라우저에서 toPNG 가 실제 이미지를 만든다', async () => {
+  const r = await ev(async () => {
+    AI.app.setDoc(AI.model.newDoc(100, 60));
+    illy.addRect({ x: 0, y: 0, width: 100, height: 60, fill: '#00ff00' });
+    const url = illy.toPNG({ scale: 2 });
+    const im = new Image();
+    await new Promise(res => { im.onload = res; im.src = url; });
+    const cv = document.createElement('canvas');
+    cv.width = im.width; cv.height = im.height;
+    cv.getContext('2d').drawImage(im, 0, 0);
+    const px = [...cv.getContext('2d').getImageData(100, 60, 1, 1).data];
+    return { w: im.width, h: im.height, px };
+  });
+  if (r.w !== 200 || r.h !== 120) throw new Error(`크기 ${r.w}×${r.h}`);
+  if (r.px[1] < 200 || r.px[0] > 60) throw new Error('픽셀 ' + r.px);
+  return `${r.w}×${r.h} · 중앙 픽셀 rgb(${r.px.slice(0, 3)})`;
+});
+
+await check('postMessage 브리지로 외부에서 제어', async () => {
+  const host = await browser.newPage();
+  await host.setContent(`<!doctype html><iframe id="f" src="http://127.0.0.1:${PORT}/index.html" width="900" height="600"></iframe>`);
+  await host.waitForTimeout(900);
+  const out = await host.evaluate(async () => {
+    const f = document.getElementById('f').contentWindow;
+    let seq = 0;
+    function rpc(op, args) {
+      return new Promise((resolve, reject) => {
+        const id = 'r' + (++seq);
+        const t = setTimeout(() => reject(new Error('timeout ' + op)), 4000);
+        function on(e) {
+          if (!e.data || e.data.illy !== 1 || e.data.id !== id) return;
+          clearTimeout(t);
+          window.removeEventListener('message', on);
+          resolve(e.data.response);
+        }
+        window.addEventListener('message', on);
+        f.postMessage({ illy: 1, id, op, args }, '*');
+      });
+    }
+    const ping = await rpc('__ping');
+    const ops = await rpc('__ops');
+    await rpc('newDocument', { width: 200, height: 100, name: '브리지' });
+    const made = await rpc('addRect', { x: 10, y: 10, width: 80, height: 50, fill: '#0088ff' });
+    const bad = await rpc('addRect', { x: 0 });
+    const batch = await rpc('__batch', [
+      { op: 'addEllipse', args: { x: 100, y: 10, width: 60, height: 60, fill: 'red' } },
+      { op: 'find', args: '*' }
+    ]);
+    const svg = await rpc('toSVG');
+    return {
+      ping: ping.result, opCount: ops.result.length, madeId: made.result,
+      badOk: bad.ok, badCode: bad.error && bad.error.code,
+      batchOk: batch.ok, batchCount: batch.results && batch.results[1].length,
+      svgHasRect: /#0088ff/.test(svg.result), svgLen: svg.result.length
+    };
+  });
+  await host.close();
+  if (!out.ping.ready) throw new Error('__ping 실패');
+  if (out.opCount < 30) throw new Error('__ops ' + out.opCount);
+  if (!out.madeId) throw new Error('생성 실패');
+  if (out.badOk || out.badCode !== 'MISSING_ARG') throw new Error('오류 전달 실패 ' + out.badCode);
+  if (!out.batchOk || out.batchCount !== 2) throw new Error('배치 실패');
+  if (!out.svgHasRect) throw new Error('SVG 내용 불일치');
+  return `ping v${out.ping.version} · ${out.opCount}개 연산 · ${out.madeId} · 배치 ${out.batchCount}개 · SVG ${out.svgLen}B`;
+});
+
 /* ---------------- 결과 ---------------- */
 console.log('\n=== Illymolly E2E ===');
 for (const [n, s, d] of results) console.log(`${s === 'OK' ? '✔' : '✘'} ${n}${d ? ' — ' + d : ''}`);

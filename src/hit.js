@@ -5,7 +5,30 @@
   'use strict';
   var U = AI.util, M = AI.mat, R = AI.rect, G = AI.geom, Model = AI.model, Rn = AI.render;
   var H = AI.hit = {};
-  var hctx = document.createElement('canvas').getContext('2d');
+  var hctx = U.hasDOM ? document.createElement('canvas').getContext('2d') : null;
+
+  /* 캔버스가 없을 때: 평탄화한 폴리곤/폴리라인으로 직접 판정 */
+  function geomTest(app, it, sx, sy, m) {
+    var polys = G.flattenItem(it, 0.4, m);
+    if (!polys.length) return false;
+    var fillable = it.fill && it.fill.type !== 'none' && !app.prefs.outline;
+    if (fillable && polys.some(function (p) { return p.closed; })) {
+      if (G.pointInPolys(polys.filter(function (p) { return p.closed; }), sx, sy)) return true;
+    }
+    var sw = (it.stroke && it.stroke.type !== 'none') ? it.stroke.width * (app.view ? app.view.scale : 1) : 0;
+    var tol = Math.max(sw / 2, H.TOL);
+    for (var i = 0; i < polys.length; i++) {
+      var pts = polys[i].pts, n = pts.length;
+      var last = polys[i].closed ? n : n - 1;
+      for (var j = 0; j < last; j++) {
+        var a = pts[j], b = pts[(j + 1) % n];
+        var dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+        var t = l2 < 1e-12 ? 0 : U.clamp(((sx - a.x) * dx + (sy - a.y) * dy) / l2, 0, 1);
+        if (U.dist(sx, sy, a.x + dx * t, a.y + dy * t) <= tol) return true;
+      }
+    }
+    return false;
+  }
 
   H.TOL = 4; /* 화면 픽셀 */
 
@@ -17,6 +40,7 @@
       return p.x >= b.x - 1 && p.x <= b.x2 + 1 && p.y >= b.y - 1 && p.y <= b.y2 + 1;
     }
     if (it.type !== 'path') return false;
+    if (!hctx) return geomTest(app, it, sx, sy, m);
     hctx.setTransform(1, 0, 0, 1, 0, 0);
     hctx.beginPath();
     G.tracePath(hctx, it, m);
@@ -279,4 +303,4 @@
     app.selPts.forEach(function (s) { if (out.indexOf(s.it) < 0) out.push(s.it); });
     return out;
   };
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

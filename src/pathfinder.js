@@ -330,4 +330,4 @@
     return { x: c.x / n, y: c.y / n };
   };
 
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

@@ -296,4 +296,4 @@
 
   /* 다른 도구에서 재사용 */
   T.selectHelpers = { commonDown: commonDown, commonMove: commonMove, commonUp: commonUp };
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

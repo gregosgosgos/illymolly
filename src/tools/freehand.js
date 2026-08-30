@@ -214,4 +214,4 @@
     },
     onUp: function (app) { if (st) { app.history.commit(); st = null; } }
   });
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

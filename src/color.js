@@ -78,4 +78,4 @@
     '#800000', '#9a6324', '#808000', '#469990',
     '#000075', '#fabebe', '#ffd8b1', '#aaffc3'
   ];
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

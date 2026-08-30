@@ -6,7 +6,25 @@
   var U = AI.util, M = AI.mat, R = AI.rect, G = AI.geom, Col = AI.color, Model = AI.model;
   var Rn = AI.render = {};
 
-  var mctx = document.createElement('canvas').getContext('2d');
+  var mctx = U.hasDOM ? document.createElement('canvas').getContext('2d') : null;
+
+  /* 캔버스가 없는 환경(Node)용 근사 글자폭 — 전각 1.0em, 그 외 0.52em */
+  function approxWidth(str, size) {
+    var w = 0;
+    for (var i = 0; i < str.length; i++) {
+      var c = str.charCodeAt(i);
+      var wide = (c >= 0x1100 && c <= 0x115F) || (c >= 0x2E80 && c <= 0xA4CF) ||
+        (c >= 0xAC00 && c <= 0xD7A3) || (c >= 0xF900 && c <= 0xFAFF) ||
+        (c >= 0xFE30 && c <= 0xFE6F) || (c >= 0xFF00 && c <= 0xFF60) || (c >= 0xFFE0 && c <= 0xFFE6);
+      w += wide ? 1.0 : 0.52;
+    }
+    return w * size;
+  }
+  Rn.measureLine = function (line, t) {
+    if (mctx) { mctx.font = Rn.fontCss(t); return mctx.measureText(line).width; }
+    return approxWidth(line, t.size);
+  };
+  Rn.hasCanvas = function () { return !!mctx; };
 
   /* ---------------- 텍스트 계측 ---------------- */
   Rn.fontCss = function (t) {
@@ -15,10 +33,9 @@
   Rn.textLines = function (it) { return String(it.text.content).split('\n'); };
   Rn.measureText = function (it) {
     var t = it.text, lines = Rn.textLines(it);
-    mctx.font = Rn.fontCss(t);
     var w = 0;
     for (var i = 0; i < lines.length; i++) {
-      var m = mctx.measureText(lines[i]).width + Math.max(0, lines[i].length - 1) * (t.tracking || 0);
+      var m = Rn.measureLine(lines[i], t) + Math.max(0, lines[i].length - 1) * (t.tracking || 0);
       if (m > w) w = m;
     }
     var lh = t.size * (t.leading || 1.2);
@@ -130,7 +147,9 @@
     ctx.setTransform(app.dpr, 0, 0, app.dpr, 0, 0);
     if (app.exporting) ctx.clearRect(0, 0, vw, vh);
     else {
-      ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--canvas-bg').trim() || '#3a3a3a';
+      ctx.fillStyle = (U.hasDOM && document.body)
+        ? (getComputedStyle(document.body).getPropertyValue('--canvas-bg').trim() || '#3a3a3a')
+        : '#3a3a3a';
       ctx.fillRect(0, 0, vw, vh);
     }
 
@@ -644,4 +663,4 @@
   }
 
   Rn.UIC = UIC;
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

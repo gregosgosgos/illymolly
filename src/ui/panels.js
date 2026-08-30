@@ -1041,4 +1041,4 @@
     UI.syncIsolation(a);
     UI.buildLayers(a);
   };
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

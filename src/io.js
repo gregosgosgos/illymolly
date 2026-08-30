@@ -99,6 +99,7 @@
 
   function normalizeDoc(doc) {
     doc.layers = doc.layers || [Model.newLayer()];
+    U.bumpIds(doc);
     doc.artboards = doc.artboards || [{ id: U.uid('AB'), name: '대지 1', x: 0, y: 0, w: doc.width || 800, h: doc.height || 600 }];
     doc.guides = doc.guides || [];
     doc.activeArtboard = doc.activeArtboard || 0;
@@ -387,4 +388,4 @@
     return Model.newPath(subs);
   }
   IO.pathFromD = pathFromD;
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

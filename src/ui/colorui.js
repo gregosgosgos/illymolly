@@ -138,4 +138,4 @@
     pop.style.top = Math.min(r.bottom + 4, innerHeight - 280) + 'px';
     apply();
   };
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

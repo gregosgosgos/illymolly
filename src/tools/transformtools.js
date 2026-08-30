@@ -125,4 +125,4 @@
     onMove: function (app, e) { T.selectHelpers.commonMove(app, e); },
     onUp: function (app, e) { T.selectHelpers.commonUp(app, e); }
   });
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

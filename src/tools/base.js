@@ -54,4 +54,4 @@
     a = Math.round(a / step) * step;
     return { x: ax + Math.cos(a) * d, y: ay + Math.sin(a) * d };
   };
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

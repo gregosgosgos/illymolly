@@ -188,4 +188,4 @@
       '</g>';
     return mk(body, 12, 12);
   };
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

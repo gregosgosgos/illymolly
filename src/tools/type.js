@@ -139,4 +139,4 @@
     id: 'typearea', name: '영역 문자 도구', key: null, cursor: 'text',
     onDown: function (app, e) { T.get('type').onDown(app, e); }
   });
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

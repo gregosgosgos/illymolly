@@ -97,4 +97,4 @@
     if (r.bottom > innerHeight) cm.style.top = Math.max(0, innerHeight - r.height - 4) + 'px';
     if (r.right > innerWidth) cm.style.left = Math.max(0, innerWidth - r.width - 4) + 'px';
   };
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

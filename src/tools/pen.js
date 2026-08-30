@@ -235,4 +235,4 @@
     onUp: function (app) { if (conv) { app.history.commit(); conv = null; } else app.history.abort(); }
   });
 
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

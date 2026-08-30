@@ -102,18 +102,60 @@ python3 -m http.server 8080
 히트 테스트·마퀴·스냅은 변환 행렬을 트리 하향으로 누적하고 화면 바운딩으로 먼저
 걸러 O(n) 로 동작합니다.
 
+## AI 에이전트용 자동화 API
+
+사람이 GUI 로 쓰는 것과 **같은 문서 · 같은 실행 취소 스택**을 코드로 조종할 수 있습니다.
+브라우저에서는 `window.illy`, Node 에서는 `require('illymolly')` — API 는 동일합니다.
+
+```js
+// 브라우저 (GUI 와 함께) — 캔버스·패널·레이어가 즉시 갱신되고 Ctrl+Z 로 되돌릴 수 있습니다
+illy.addRect({ x: 20, y: 20, width: 200, height: 120, fill: '#ff3366' });
+illy.find({ fill: 'red' });          // 선택자로 대상 특정
+console.log(illy.describe());        // 픽셀 없이 상태 파악
+```
+
+```js
+// Node (헤드리스 · 브라우저 불필요)
+const { createDocument } = require('illymolly');
+const illy = createDocument({ width: 400, height: 300 });
+illy.addText({ x: 24, y: 160, text: 'Illymolly', size: 40 });
+require('fs').writeFileSync('out.svg', illy.toSVG());
+```
+
+```bash
+illy run script.js -o out.svg   # CLI
+illy ops --json                 # LLM 함수 정의로 쓸 도구 매니페스트
+illy info doc.illy.json         # 구조 요약
+```
+
+iframe 으로 임베드하면 `postMessage` RPC 로 창 밖에서 제어할 수 있습니다.
+
+**에이전트를 염두에 둔 설계**
+
+- 모든 인자·반환값이 JSON 직렬화 가능 — RPC 를 그대로 통과
+- 결정적 id (`path-3`) — 같은 스크립트는 같은 결과
+- 연산 정의가 한 곳 — 호출 메서드와 `illy.ops()` 매니페스트가 같은 테이블에서 생성되어 문서와 구현이 어긋나지 않음
+- `undoable` 선언 강제 — 조회 연산이 실행 취소 스택을 오염시키는 사고를 로드 시점에 차단
+- 원자적 `batch()` — 하나라도 실패하면 전부 롤백하고 실패 지점을 알려 줌. 전체가 실행 취소 한 단계
+- 오타 인자를 조용히 무시하지 않고 사용 가능한 이름을 안내
+- `describe()` — 화면을 볼 수 없는 에이전트를 위한 텍스트 요약
+
+전체 레퍼런스: **[docs/AI-API.md](docs/AI-API.md)**
+
 ## 테스트
 
 두 개의 Playwright 스위트가 있습니다.
 
 | 스크립트 | 내용 |
 |---|---|
-| `npm test` | E2E 45개 — 실제 마우스/키보드 조작으로 도구·단축키·대화상자·패널·커서·내보내기 검증 |
+| `npm test` | E2E 50개 — 실제 마우스/키보드 조작으로 도구·단축키·대화상자·패널·커서·API·RPC 검증 |
 | `npm run test:deep` | 심층 62개 — 기하/모델/불리언 연산의 수학적 불변식을 직접 검증 |
+| `npm run test:api` | 자동화 API 20개 — 헤드리스 Node, 브라우저 불필요 |
 
 ```bash
+npm run test:api                  # Playwright 없이 바로 실행 가능
 npm i -D playwright && npx playwright install chromium
-npm test && npm run test:deep
+npm run test:all                  # 132개 전부
 ```
 
 심층 스위트는 원∩원 넓이를 해석해와 비교하고, 그룹 변환 왕복·다단계 undo/redo 동일성·
@@ -148,10 +190,18 @@ src/
                       type, freehand, transformtools, misc, index)
   commands.js         명령 레지스트리 (메뉴 + 단축키 공용)
   keymap.js           Illustrator 호환 키 매핑
-  ui/                 메뉴 · 패널 · 레이어 · 색상 피커
+  ui/                 메뉴 · 패널 · 대화상자 · 레이어 · 색상 피커
   io.js               저장/열기/SVG·PNG 입출력
+  api.js              자동화 API (연산 테이블 · 선택자 · 배치)
+  bridge.js           postMessage RPC 브리지
   app.js              부트스트랩 · 이벤트 라우팅 · 렌더 루프
+index.js              Node 진입점 (헤드리스)
+bin/illy.js           CLI
 ```
+
+`src/util.js` 부터 `src/api.js` 까지의 코어는 DOM 없이도 동작합니다.
+Node 진입점은 **브라우저와 같은 소스 파일을 그대로 읽어 실행**하므로
+빌드 단계도, 코드 사본도 없습니다.
 
 전역 네임스페이스는 `window.AI` 하나입니다. 콘솔에서 `AI.app` 으로 현재 상태에 접근할 수 있습니다.
 
@@ -161,7 +211,9 @@ src/
   (원∩원 면적 오차는 0.05% 수준)
 - 나누기/자르기는 구멍이 있는 컴파운드 패스를 조각낼 때 구멍 정보를 잃을 수 있습니다.
 - 텍스트 → 윤곽선 변환은 브라우저 글꼴 접근 제약으로 지원하지 않습니다.
-- 이미지 배치(Place), 브러시 프리셋, 효과(Effect), 심볼, 메시는 미구현입니다.
+- 브러시 프리셋, 효과(Effect), 심볼, 메시는 미구현입니다.
+- 자동화 API 에서 `toPNG`·`setTool`·`zoom` 은 브라우저 전용이며,
+  Node 에서는 캔버스가 없어 텍스트 바운딩이 근사치입니다.
 - 그레이디언트는 오브젝트의 바운딩 박스 기준으로 매핑됩니다(개별 오브젝트마다 독립적인 그레이디언트 지오메트리는 미지원).
 - 획 안쪽/바깥쪽 정렬은 클리핑으로 구현해 가장자리와 모퉁이는 정확하지만,
   점선의 둥근 끝(round cap)은 사각 끝으로 대체됩니다.

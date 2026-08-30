@@ -397,4 +397,4 @@
       }
     });
   };
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

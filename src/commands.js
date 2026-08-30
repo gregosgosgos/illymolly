@@ -439,4 +439,4 @@
     { title: '대지', items: ['newArtboard', 'deleteArtboard', '-', 'prevArtboard', 'nextArtboard', 'firstArtboard', 'lastArtboard', '-', 'docSetup'] },
     { title: '도움말', items: ['shortcutHelp', 'about'] }
   ];
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

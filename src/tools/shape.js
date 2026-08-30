@@ -124,4 +124,4 @@
   shapeTool('polygon', '다각형 도구', null, 'polygon', { n: 6 });
   shapeTool('star', '별모양 도구', null, 'star', { n: 5 });
   shapeTool('line', '선분 도구', '\\', 'line');
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

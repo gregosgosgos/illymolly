@@ -168,4 +168,4 @@
       if (slot.indexOf(id) >= 0) { app.slotChoice = app.slotChoice || {}; app.slotChoice[si] = id; }
     });
   };
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

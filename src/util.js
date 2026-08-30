@@ -1,7 +1,7 @@
 /* =========================================================================
    util.js — 수학 / 행렬 / 공용 헬퍼
    ========================================================================= */
-window.AI = window.AI || {};
+(function (root) { root.AI = root.AI || {}; })(typeof globalThis !== 'undefined' ? globalThis : this);
 (function (AI) {
   'use strict';
 
@@ -14,8 +14,33 @@ window.AI = window.AI || {};
   U.rad = function (d) { return d * Math.PI / 180; };
   U.sign = function (v) { return v < 0 ? -1 : 1; };
 
-  var _id = 0;
-  U.uid = function (p) { return (p || 'o') + (++_id) + '_' + Math.random().toString(36).slice(2, 7); };
+  /* ---- 식별자 ----
+     기본은 결정적(순차) — 같은 스크립트를 돌리면 같은 id 가 나와야
+     AI 에이전트가 결과를 재현하고 비교할 수 있다. */
+  var _id = 0, _idMode = 'sequential';
+  U.idMode = function (m) { if (m) _idMode = m; return _idMode; };
+  U.resetIds = function (n) { _id = n || 0; };
+  U.uid = function (p) {
+    p = p || 'o';
+    if (_idMode === 'random') return p + (++_id) + '_' + Math.random().toString(36).slice(2, 7);
+    return p + '-' + (++_id);
+  };
+  /* 문서를 불러온 뒤 카운터를 기존 최대값 위로 올려 충돌을 막는다 */
+  U.bumpIds = function (doc) {
+    var max = 0;
+    function scan(id) {
+      var m = /-(\d+)$/.exec(String(id || ''));
+      if (m) max = Math.max(max, +m[1]);
+    }
+    (doc.layers || []).forEach(function (l) {
+      scan(l.id);
+      (function rec(list) {
+        (list || []).forEach(function (it) { scan(it.id); if (it.children) rec(it.children); });
+      })(l.children);
+    });
+    (doc.artboards || []).forEach(function (a) { scan(a.id); });
+    if (max > _id) _id = max;
+  };
 
   /* 소수점 정리 (부동소수 오차 제거) */
   U.round = function (v, n) {
@@ -76,7 +101,9 @@ window.AI = window.AI || {};
     return r;
   };
 
-  U.isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+  U.hasDOM = (typeof document !== 'undefined' && !!document.createElement);
+  U.isMac = (typeof navigator !== 'undefined') &&
+    /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
 
   /* ---------------------- 2x3 행렬 ----------------------
      m = [a,b,c,d,e,f]  ->  x' = a*x + c*y + e ,  y' = b*x + d*y + f     */
@@ -166,6 +193,7 @@ window.AI = window.AI || {};
 
   /* ---------------------- DOM ---------------------- */
   U.el = function (tag, cls, html) {
+    if (!U.hasDOM) return null;
     var e = document.createElement(tag);
     if (cls) e.className = cls;
     if (html != null) e.innerHTML = html;
@@ -180,6 +208,7 @@ window.AI = window.AI || {};
 
   var toastTimer = null;
   U.toast = function (msg) {
+    if (!U.hasDOM) { (AI.log || function () { })(msg); return; }
     var t = document.getElementById('toast');
     if (!t) return;
     t.textContent = msg; t.hidden = false;
@@ -187,4 +216,4 @@ window.AI = window.AI || {};
     toastTimer = setTimeout(function () { t.hidden = true; }, 1600);
   };
 
-})(window.AI);
+})(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);
