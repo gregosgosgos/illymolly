@@ -16,6 +16,7 @@
     convert: '<path d="M2 12 C6 12 6 4 10 4"/><circle cx="2" cy="12" r="1.4"/><circle cx="10" cy="4" r="1.4"/>',
     type: '<path d="M3 3.5 H13 M8 3.5 V14"/>',
     typearea: '<rect x="2.5" y="2.5" width="11" height="11"/><path d="M5 6h6M8 6v5"/>',
+    typepath: '<path d="M1.5 11.5 C5 4.5 11 4.5 14.5 11.5" fill="none"/><path d="M4.6 8.2 h5.4 M7.3 8.2 V13"/>',
     line: '<path d="M3 13 L13 3"/>',
     rect: '<rect x="2.5" y="4.5" width="11" height="8"/>',
     roundrect: '<rect x="2.5" y="4.5" width="11" height="8" rx="2.5"/>',
@@ -46,7 +47,7 @@
   T.SLOTS = [
     ['select'], ['directselect', 'groupselect'],
     ['magicwand'], ['pen', 'addanchor', 'delanchor', 'convert'],
-    ['type', 'typearea'], ['line'],
+    ['type', 'typearea', 'typepath'], ['line'],
     ['rect', 'roundrect', 'ellipse', 'polygon', 'star'],
     ['brush', 'blob'], ['pencil', 'smooth'],
     ['eraser', 'scissors'],

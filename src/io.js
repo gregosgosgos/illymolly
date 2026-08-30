@@ -256,6 +256,22 @@
     if (it.type === 'text') {
       var t = it.text;
       var L = Rn.layoutText(it);
+      /* 패스 상의 문자는 SVG 에 그대로 대응하는 <textPath> 가 있다 */
+      if (t.path) {
+        var tpid = 'tp' + (++gradSeq);
+        defs.push('<path id="' + tpid + '" d="' + G.toSvgD({ subs: t.path.subs }, null) + '" fill="none"/>');
+        var startOff = U.round(L.pathLen ? (pathStartOffset(t, L) / L.pathLen) * 100 : 0, 3);
+        var dy = t.path.align === 'ascender' ? -L.asc
+          : t.path.align === 'descender' ? t.size * 0.2
+            : t.path.align === 'center' ? -L.asc / 2 : 0;
+        return '<text' + tr + op + ' font-family="' + escXml(t.family) + '" font-size="' + t.size + '"' +
+          (t.weight !== 400 ? ' font-weight="' + t.weight + '"' : '') +
+          (t.tracking ? ' letter-spacing="' + t.tracking + '"' : '') +
+          style + '><textPath href="#' + tpid + '" xlink:href="#' + tpid + '" startOffset="' + startOff + '%"' +
+          (t.path.flip ? ' side="right"' : '') +
+          (dy ? ' dy="' + U.round(dy, 3) + '"' : '') + '>' +
+          escXml(String(t.content).replace(/\n/g, ' ')) + '</textPath></text>';
+      }
       /* 영역 문자는 줄바꿈 결과를 그대로 tspan 으로 굳혀 내보낸다 (SVG 에 자동 흐름이 없다) */
       var lines = L.lines.map(function (l, i) {
         var lx = t.area ? U.round(L.xs[i] || 0, 3) : 0;
@@ -269,6 +285,14 @@
         style + '>' + lines + '</text>';
     }
     return '';
+  }
+
+  /* 패스 상의 문자가 실제로 시작하는 호 길이 (정렬을 반영) */
+  function pathStartOffset(t, L) {
+    var s0 = t.path.start || 0;
+    if (t.align === 'center') s0 += (L.pathLen - L.textLen) / 2;
+    else if (t.align === 'right') s0 += L.pathLen - L.textLen;
+    return s0;
   }
 
   /* 화살표를 <marker> 로 — 시작/끝 각각 정의한다 */
@@ -369,7 +393,7 @@
       .map(function (l) { return '<g id="' + escXml(l.name) + '">' + l.children.map(function (c) { return itemSvg(app.doc, c, defs); }).join('') + '</g>'; })
       .join('');
     return '<?xml version="1.0" encoding="UTF-8"?>\n' +
-      '<svg xmlns="http://www.w3.org/2000/svg" width="' + U.round(ab.w, 2) + '" height="' + U.round(ab.h, 2) + '" ' +
+      '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="' + U.round(ab.w, 2) + '" height="' + U.round(ab.h, 2) + '" ' +
       'viewBox="' + U.round(ab.x, 2) + ' ' + U.round(ab.y, 2) + ' ' + U.round(ab.w, 2) + ' ' + U.round(ab.h, 2) + '">\n' +
       (defs.length ? '<defs>' + defs.join('') + '</defs>\n' : '') + body + '\n</svg>';
   };

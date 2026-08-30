@@ -616,6 +616,51 @@
     });
   };
 
+  /* ---------- 패스 상의 문자 옵션 ---------- */
+  Dlg.typePath = function (app) {
+    var sel = app.sel.filter(function (it) { return it.type === 'text' && it.text.path; });
+    if (!sel.length) { U.toast('패스 상의 문자를 선택하세요'); return; }
+    var snap = sel.map(function (it) { return U.deepCopy(it.text.path); });
+    function restore() { sel.forEach(function (it, i) { it.text.path = U.deepCopy(snap[i]); }); }
+    var base = snap[0];
+    var len = Rn.measureText(sel[0]).pathLen || 0;
+
+    function apply(v) {
+      sel.forEach(function (it) {
+        it.text.path.align = v.align;
+        it.text.path.flip = !!v.flip;
+        it.text.path.start = v.start;
+      });
+    }
+
+    D.open({
+      title: '패스 상의 문자 옵션',
+      fields: [
+        { id: 'align', label: '문자 맞추기', type: 'select', value: base.align || 'baseline', width: 130,
+          options: [['baseline', '기준선'], ['ascender', '어센더'], ['descender', '디센더'], ['center', '가운데']] },
+        { id: 'start', label: '시작 위치', type: 'num', value: base.start || 0, unit: 'pt' },
+        { id: 'flip', label: '뒤집기', type: 'check', value: !!base.flip },
+        { type: 'sep' },
+        { id: 'info', label: '패스 길이 ' + U.fmt(len) + 'pt', type: 'info' },
+        { id: 'preview', label: '미리 보기', type: 'check', value: true }
+      ],
+      onChange: function (v) {
+        restore();
+        if (v.preview !== false) apply(v);
+        app.invalidate();
+      },
+      onDone: function (v) {
+        restore();
+        app.history.begin('패스 상의 문자 옵션', app.doc);
+        apply(v);
+        app.history.commit();
+        app.invalidate();
+        AI.ui.syncAll(app);
+      },
+      onCancel: function () { restore(); app.invalidate(); AI.ui.syncAll(app); }
+    });
+  };
+
   /* ---------- 이미지 추적 ---------- */
   Dlg.imageTrace = function (app) {
     var TR = AI.trace;

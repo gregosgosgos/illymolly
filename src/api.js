@@ -470,6 +470,42 @@
     return it;
   });
 
+  op('typeOnPath', {
+    undoable: true, group: '문자',
+    desc: '선택한 패스를 기준선 삼아 글을 흘립니다 (패스 상의 문자). 원본 패스는 문자 오브젝트가 됩니다.',
+    params: {
+      query: Q,
+      text: p('string', '내용', { required: true }),
+      size: p('number', '글꼴 크기 (pt)'),
+      font: p('string', 'CSS font-family'),
+      start: p('number', '패스 시작점에서의 오프셋 (pt)', { default: 0 }),
+      textAlign: p('string', '패스 위 정렬', { enum: ['left', 'center', 'right'], default: 'left' }),
+      alignTo: p('string', '문자 맞추기', { enum: ['baseline', 'ascender', 'descender', 'center'], default: 'baseline' }),
+      flip: p('boolean', '패스 뒤집기', { default: false })
+    },
+    returns: 'id[]',
+    run: function (ctx, a) {
+      var made = [];
+      withSel(ctx, a.query, 'typeOnPath', function (list) {
+        list.forEach(function (src) {
+          if (src.type !== 'path') return;
+          var it = AI.edit.makePathText(ctx, src, a.start || 0);
+          if (!it) return;
+          it.text.content = a.text;
+          if (a.size != null) it.text.size = a.size;
+          if (a.font) it.text.family = a.font;
+          if (a.textAlign) it.text.align = a.textAlign;
+          if (a.alignTo) it.text.path.align = a.alignTo;
+          it.text.path.flip = !!a.flip;
+          made.push(it);
+        });
+      });
+      if (!made.length) throw err('NO_PATH', '기준선이 될 패스를 선택하세요');
+      ctx.sel = made;
+      return made.map(function (i) { return i.id; });
+    }
+  });
+
   shapeOp('addImage', '생성', '이미지를 배치합니다. src 는 data URL 또는 URL.', {
     src: p('string', 'data URL 또는 이미지 URL', { required: true }),
     x: p('number', '왼쪽', { required: true }), y: p('number', '위쪽', { required: true }),

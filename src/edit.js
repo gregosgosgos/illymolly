@@ -582,6 +582,26 @@
   /* ---------------- 산포 브러시 (Scatter Brush) ---------------- */
   /* 패스를 따라 심볼/도형 사본을 뿌린다. 일러스트레이터의 산포 브러시를
      "적용 즉시 확장" 형태로 구현한 것 — 결과가 평범한 아트웍이라 다루기 쉽다. */
+  /* ---------------- 패스 상의 문자 ----------------
+     패스를 문자 오브젝트의 기준선으로 바꾼다 (일러스트레이터처럼 원본 패스는
+     문자 오브젝트가 되면서 사라진다). 기준선은 아이템 로컬 좌표로 옮겨 담는다. */
+  E.makePathText = function (app, src, startAt) {
+    if (!src || src.type !== 'path') return null;
+    var b = Rn.worldBounds(app.doc, src, true);
+    var rel = M.mul(M.translate(-b.x, -b.y), Model.worldMatrix(app.doc, src));
+    var it = Model.newPathText(b.x, b.y, '', G.xformSubs(src.subs, rel));
+    var o = app.typeOpts || {};
+    it.text.size = o.size || 24;
+    if (o.family) it.text.family = o.family;
+    if (startAt != null) it.text.path.start = startAt;
+    it.fill = U.deepCopy(app.textFill || Col.solid('#000000'));
+    it.stroke = Model.defaultStroke();
+    var loc = Model.locate(app.doc, src);
+    if (loc) loc.list.splice(loc.index, 1, it);
+    else Model.activeLayer(app.doc).children.push(it);
+    return it;
+  };
+
   E.scatterAlongPath = function (app, art, o) {
     o = o || {};
     var spacing = Math.max(1, o.spacing == null ? 30 : o.spacing);

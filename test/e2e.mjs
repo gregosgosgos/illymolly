@@ -1936,6 +1936,107 @@ await check('변형 효과의 사본 · 자유 왜곡 · 오목·볼록 (API)', 
   return `사본 4벌 220pt · 볼록 ${r.bloatW}pt · 자유 왜곡 ${free}pt`;
 });
 
+/* ---------------- 패스 상의 문자 ---------------- */
+await check('패스 상의 문자 — 도구로 만들고 글자가 접선을 따라 선다', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(500, 400));
+    /* 위로 볼록한 호 */
+    const arc = AI.model.newPath([{ closed: false, pts: [
+      { x: 50, y: 250, ox: 50, oy: 80 },
+      { x: 450, y: 250, ix: 450, iy: 80 }
+    ] }]);
+    arc.fill = AI.color.none();
+    app.doc.layers[0].children.push(arc);
+    AI.viewT.fitArtboard(app);
+  });
+  /* 패스 상 문자 도구로 호의 왼쪽을 클릭 */
+  await ev(() => AI.tools.setTool(AI.app, 'typepath'));
+  const pt = await ev(() => {
+    const vm = AI.viewT.matrix(AI.app);
+    const q = AI.mat.apply(vm, 50, 250);
+    return { x: q.x, y: q.y };
+  });
+  const vbox = await (await page.$('#view')).boundingBox();
+  await page.mouse.click(vbox.x + pt.x, vbox.y + pt.y);
+  await page.waitForTimeout(80);
+  await page.keyboard.type('Illymolly');
+  await page.waitForTimeout(80);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(80);
+
+  const r = await ev(() => {
+    const it = AI.app.doc.layers[0].children[0];
+    const L = AI.render.measureText(it);
+    return {
+      type: it.type, onPath: !!(it.text && it.text.path),
+      content: it.text.content,
+      glyphs: L.glyphs.length,
+      /* 호의 왼쪽 끝에서는 접선이 거의 수직(위쪽), 오른쪽으로 갈수록 눕는다 */
+      a0: Math.round(L.glyphs[0].ang * 180 / Math.PI),
+      aLast: Math.round(L.glyphs[L.glyphs.length - 1].ang * 180 / Math.PI),
+      count: AI.app.doc.layers[0].children.length      /* 원본 패스는 사라진다 */
+    };
+  });
+  if (r.type !== 'text' || !r.onPath) throw new Error('패스 상의 문자가 안 만들어짐=' + JSON.stringify(r));
+  if (r.content !== 'Illymolly') throw new Error('내용=' + r.content);
+  if (r.glyphs !== 9) throw new Error('글자 수=' + r.glyphs);
+  if (r.count !== 1) throw new Error('원본 패스가 남음=' + r.count);
+  if (!(r.a0 < -60) || !(r.aLast > r.a0 + 10)) throw new Error('접선 각도=' + r.a0 + '/' + r.aLast);
+  return `글자 ${r.glyphs}개 · 접선 ${r.a0}° → ${r.aLast}° · 원본 패스는 문자 오브젝트가 됨`;
+});
+
+await check('패스 상의 문자 — 옵션 · 뒤집기 · 풀기 · SVG textPath', async () => {
+  const before = await ev(() => {
+    const it = AI.app.doc.layers[0].children[0];
+    AI.sel.set(AI.app, [it]);
+    return AI.render.measureText(it).glyphs[0].y;
+  });
+  /* 옵션 대화상자로 문자 맞추기 · 시작 위치 */
+  await ev(() => AI.commands.run('typePathOptions'));
+  await page.waitForSelector('.dlg');
+  await page.selectOption('#dlgf-align', 'ascender');
+  await page.fill('#dlgf-start', '40');
+  await page.press('#dlgf-start', 'Tab');
+  await page.waitForTimeout(60);
+  await page.click('.dlg-btn:has-text("확인")');
+  await page.waitForTimeout(60);
+
+  const opt = await ev(() => {
+    const it = AI.app.sel[0];
+    const L = AI.render.measureText(it);
+    return { align: it.text.path.align, start: it.text.path.start, y: L.glyphs[0].y };
+  });
+  if (opt.align !== 'ascender' || opt.start !== 40) throw new Error('옵션=' + JSON.stringify(opt));
+  if (Math.abs(opt.y - before) < 1) throw new Error('문자 맞추기가 반영되지 않음');
+
+  /* 뒤집기 */
+  const flipped = await ev(() => {
+    const y0 = AI.render.measureText(AI.app.sel[0]).glyphs[0].y;
+    AI.commands.run('typePathFlip');
+    const it = AI.app.sel[0];
+    return { on: it.text.path.flip, moved: Math.abs(AI.render.measureText(it).glyphs[0].y - y0) > 1 };
+  });
+  if (!flipped.on || !flipped.moved) throw new Error('뒤집기=' + JSON.stringify(flipped));
+
+  /* SVG 는 textPath 로 나간다 */
+  const svg = await ev(() => AI.io.toSVG(AI.app));
+  if (svg.indexOf('<textPath') < 0) throw new Error('textPath 없음');
+  if (!/<path id="tp\d+"/.test(svg)) throw new Error('기준선 패스 정의 없음');
+
+  /* 풀기 → 다시 패스로 */
+  const rel = await ev(() => {
+    AI.commands.run('releaseTypePath');
+    const it = AI.app.doc.layers[0].children[0];
+    return { type: it.type, subs: it.subs ? it.subs.length : 0 };
+  });
+  if (rel.type !== 'path' || rel.subs !== 1) throw new Error('풀기=' + JSON.stringify(rel));
+  await ev(() => AI.commands.run('undo'));
+  const back = await ev(() => AI.app.doc.layers[0].children[0].type);
+  if (back !== 'text') throw new Error('실행 취소 실패=' + back);
+  return `맞추기 ascender · 시작 40pt · 뒤집기 · SVG textPath · 풀기/복원`;
+});
+
 /* ---------------- 결과 ---------------- */
 console.log('\n=== Illymolly E2E ===');
 for (const [n, s, d] of results) console.log(`${s === 'OK' ? '✔' : '✘'} ${n}${d ? ' — ' + d : ''}`);

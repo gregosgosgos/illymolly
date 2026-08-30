@@ -32,6 +32,18 @@
     el.style.textAlign = t.align || 'left';
     el.style.color = (it.fill && it.fill.type === 'solid') ? Col.toCss(it.fill.color, it.fill.alpha) : '#000';
     el.style.caretColor = el.style.color;
+    if (t.path) {
+      /* 패스 상의 문자는 글이 휘어 있어 그 자리에서 편집할 수 없다.
+         패스 옆에 가로로 펼친 편집 상자를 띄운다 (일러스트레이터도 편집 중에는 곧게 편다) */
+      var bx = m.box || { x: 0, y: 0, x2: 120, y2: L };
+      el.style.transform = M.toCSS(M.mul(wm, M.translate(bx.x, (bx.y + bx.y2) / 2 - L / 2)));
+      el.style.width = Math.max((m.textLen || 0) + 24, 80) + 'px';
+      el.style.height = (L + 6) + 'px';
+      el.style.whiteSpace = 'pre';
+      el.style.textAlign = 'left';
+      el.style.display = 'block';
+      return;
+    }
     if (t.area) {
       /* 영역 문자는 상자 자체가 편집 영역 — 정렬 보정 없이 좌상단에 맞춘다 */
       el.style.transform = M.toCSS(M.mul(wm, M.translate(0, (L - t.size) / 2 - (L - t.size) / 2)));
@@ -149,6 +161,12 @@
      · 상자를 클릭하면 편집                                          */
   var areaSt = null;
 
+  /* 패스를 텍스트 아이템의 로컬 좌표(바운딩 좌상단이 원점)로 옮겨 담는다 */
+  function localSubs(app, it, b, filter) {
+    var rel = M.mul(M.translate(-b.x, -b.y), Model.worldMatrix(app.doc, it));
+    return AI.geom.xformSubs(filter ? it.subs.filter(filter) : it.subs, rel);
+  }
+
   function makeAreaText(app, x, y, w, h, shapeSubs) {
     var it = Model.newText(x, y, '');
     it.name = '영역 문자';
@@ -181,20 +199,9 @@
       /* 닫힌 패스를 클릭 → 그 도형 안으로 글을 흘린다 */
       if (hit && hit.type === 'path' && hit.subs.some(function (sb) { return sb.closed; })) {
         app.history.begin('영역 문자', app.doc);
-        var wm = Model.worldMatrix(app.doc, hit);
         var b = Rn.worldBounds(app.doc, hit, true);
         /* 도형을 텍스트 로컬 좌표(좌상단 원점)로 옮겨 담는다 */
-        var rel = M.mul(M.translate(-b.x, -b.y), wm);
-        var subs = hit.subs.filter(function (sb) { return sb.closed; }).map(function (sb) {
-          return {
-            closed: true, pts: sb.pts.map(function (pt) {
-              var q = M.apply(rel, pt.x, pt.y), o = { x: q.x, y: q.y };
-              if (pt.ix != null) { var i2 = M.apply(rel, pt.ix, pt.iy); o.ix = i2.x; o.iy = i2.y; }
-              if (pt.ox != null) { var o2 = M.apply(rel, pt.ox, pt.oy); o.ox = o2.x; o.oy = o2.y; }
-              return o;
-            })
-          };
-        });
+        var subs = localSubs(app, hit, b, function (sb) { return sb.closed; });
         var it = makeAreaText(app, b.x, b.y, b.x2 - b.x, b.y2 - b.y, subs);
         /* 원본 도형은 일러스트레이터처럼 문자 영역이 되면서 사라진다 */
         var loc = Model.locate(app.doc, hit);
@@ -232,4 +239,56 @@
 
     onKey: function () { return false; }
   });
+  /* ---------------- 패스 상 문자 도구 ----------------
+     · 패스를 클릭하면 그 패스를 기준선 삼아 글이 흐른다 (일러스트레이터와 같이
+       원본 패스는 문자 오브젝트가 되면서 사라진다)
+     · 클릭 지점이 곧 글의 시작 위치가 된다                          */
+  T.mk({
+    id: 'typepath', name: '패스 상 문자 도구', key: null, cursor: 'text',
+    activate: function (app) { bindTextarea(app); },
+    deactivate: function (app) { commitEdit(app); },
+
+    onDown: function (app, e) {
+      var hit = H.itemAt(app, e.x, e.y, true);
+      if (editing && hit === editing.it) return;
+      commitEdit(app);
+
+      if (hit && hit.type === 'text') {
+        app.history.begin('텍스트 편집', app.doc);
+        AI.sel.set(app, [hit]);
+        startEdit(app, hit, false);
+        return;
+      }
+      if (!hit || hit.type !== 'path') { U.toast('글을 흘릴 패스를 클릭하세요'); return; }
+
+      app.history.begin('패스 상의 문자', app.doc);
+      /* 클릭 지점까지의 호 길이를 시작 위치로 삼는다 */
+      var d = AI.viewT.toDoc(app, e.x, e.y);
+      var wm = Model.worldMatrix(app.doc, hit);
+      var start = arcLengthNear(hit.subs, wm, d.x, d.y);
+      var it = AI.edit.makePathText(app, hit, start);
+      AI.sel.set(app, [it]);
+      startEdit(app, it, false);
+      app.invalidate();
+    },
+
+    onUp: function () { },
+    onKey: function () { return false; }
+  });
+
+  /* 클릭 지점에 가장 가까운 패스 위치까지의 호 길이 */
+  function arcLengthNear(subs, wm, x, y) {
+    var walk = AI.geom.walker(subs, 0.3, wm);
+    if (!walk || !walk.length) return 0;
+    var best = 0, bd = Infinity;
+    var steps = Math.max(24, Math.min(600, Math.round(walk.length / 2)));
+    for (var i = 0; i <= steps; i++) {
+      var s = walk.length * i / steps, q = walk.at(s);
+      if (!q) continue;
+      var dd = (q.x - x) * (q.x - x) + (q.y - y) * (q.y - y);
+      if (dd < bd) { bd = dd; best = s; }
+    }
+    return best;
+  }
+
 })(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

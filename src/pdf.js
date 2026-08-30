@@ -197,6 +197,21 @@
     w.w('q');
     setAlpha(w, a);
     w.w(rgb(col) + ' rg');
+
+    /* 패스 상의 문자 — 글자마다 접선 각도로 세운 텍스트 행렬을 쓴다 */
+    if (t.path && L.glyphs) {
+      L.glyphs.forEach(function (g) {
+        var gm = M.mulAll(m, M.translate(g.x, g.y), M.rotate(g.ang), M.scale(1, -1));
+        w.w('BT');
+        w.w('/' + fname + ' ' + n(t.size) + ' Tf');
+        w.w([n(gm[0]), n(gm[1]), n(gm[2]), n(gm[3]), n(gm[4]), n(gm[5])].join(' ') + ' Tm');
+        w.w('(' + escapeText(g.ch) + ') Tj');
+        w.w('ET');
+      });
+      w.w('Q');
+      return;
+    }
+
     for (var i = 0; i < L.lines.length; i++) {
       var lx = t.area ? (L.xs[i] || 0) : lineX(L, i, t);
       var ly = t.area ? (L.asc + i * L.lineH) : (i * L.lineH);

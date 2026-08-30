@@ -261,6 +261,72 @@
     a.sel.forEach(function (it) { if (it.type === 'text') { it.text.size = Math.max(1, it.text.size + d); any = true; } });
     return any ? undefined : false;
   }
+  /* ---- 패스 상의 문자 ---- */
+  var pathTextSel = function (a) {
+    return a.sel.some(function (it) { return it.type === 'text' && it.text.path; });
+  };
+  def('typeOnPath', '패스 상의 문자 만들기', null, hist('패스 상의 문자', function (a) {
+    var paths = a.sel.filter(function (it) { return it.type === 'path'; });
+    var txt = a.sel.filter(function (it) { return it.type === 'text' && !it.text.path; })[0];
+    if (!paths.length) { U.toast('기준선이 될 패스를 선택하세요'); return false; }
+    var made = [];
+    paths.forEach(function (src) {
+      var it = E.makePathText(a, src, 0);
+      if (txt) {
+        /* 함께 선택한 점 문자가 있으면 그 내용과 서식을 그대로 가져온다 */
+        it.text.content = txt.text.content;
+        it.text.family = txt.text.family; it.text.size = txt.text.size;
+        it.text.weight = txt.text.weight; it.text.italic = txt.text.italic;
+        it.text.tracking = txt.text.tracking; it.text.align = txt.text.align;
+        it.fill = U.deepCopy(txt.fill); it.stroke = U.deepCopy(txt.stroke);
+      } else if (!it.text.content) {
+        it.text.content = '패스 상의 문자';
+      }
+      made.push(it);
+    });
+    if (txt) {
+      var loc = Model.locate(a.doc, txt);
+      if (loc) loc.list.splice(loc.index, 1);
+    }
+    AI.sel.set(a, made);
+    U.toast(made.length + '개 패스에 문자 배치');
+  }), { enabled: function (a) { return a.sel.some(function (i) { return i.type === 'path'; }); } });
+
+  def('typePathOptions', '패스 상의 문자 옵션...', null, function (a) {
+    if (!pathTextSel(a)) { U.toast('패스 상의 문자를 선택하세요'); return; }
+    AI.dialogs.typePath(a);
+  }, { enabled: pathTextSel });
+
+  def('typePathFlip', '패스 뒤집기', null, hist('패스 뒤집기', function (a) {
+    var n = 0;
+    a.sel.forEach(function (it) {
+      if (it.type !== 'text' || !it.text.path) return;
+      it.text.path.flip = !it.text.path.flip;
+      n++;
+    });
+    if (!n) { U.toast('패스 상의 문자를 선택하세요'); return false; }
+  }), { enabled: pathTextSel });
+
+  def('releaseTypePath', '패스 상의 문자 풀기', null, hist('패스 상의 문자 풀기', function (a) {
+    var made = [], n = 0;
+    a.sel.slice().forEach(function (it) {
+      if (it.type !== 'text' || !it.text.path) { made.push(it); return; }
+      /* 기준선 패스를 다시 독립된 패스 오브젝트로 되돌린다 */
+      var pth = Model.newPath(U.deepCopy(it.text.path.subs));
+      pth.m = it.m.slice();
+      pth.name = '패스';
+      pth.fill = Col.none();
+      pth.stroke = Model.defaultStroke();
+      var loc = Model.locate(a.doc, it);
+      if (loc) loc.list.splice(loc.index, 1, pth); else Model.activeLayer(a.doc).children.push(pth);
+      made.push(pth);
+      n++;
+    });
+    if (!n) { U.toast('패스 상의 문자를 선택하세요'); return false; }
+    AI.sel.set(a, made);
+    U.toast(n + '개 패스로 되돌림');
+  }), { enabled: pathTextSel });
+
   def('createOutlines', '윤곽선 만들기', 'Ctrl+Shift+O', hist('윤곽선 만들기', function (a) {
     var texts = a.sel.filter(function (it) { return it.type === 'text'; });
     if (!texts.length) { U.toast('텍스트를 선택하세요'); return false; }
@@ -697,7 +763,11 @@
       ]
     },
     {
-      title: '문자', items: ['fontBigger', 'fontSmaller', '-', 'createOutlines']
+      title: '문자', items: [
+        'fontBigger', 'fontSmaller', '-',
+        'typeOnPath', 'typePathOptions', 'typePathFlip', 'releaseTypePath', '-',
+        'createOutlines'
+      ]
     },
     {
       title: '선택', items: ['selectAll', 'deselectAll', 'reselect', 'selectInverse', '-', 'selectSameFill', 'selectSameStroke']

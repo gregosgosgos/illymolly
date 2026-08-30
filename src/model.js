@@ -90,6 +90,19 @@
     return it;
   };
 
+  /* 패스 상의 문자 — subs 는 아이템 로컬 좌표의 기준선 패스 */
+  Model.newPathText = function (x, y, content, subs) {
+    var it = Model.newText(x, y, content);
+    it.name = '패스 상의 문자';
+    it.text.path = {
+      subs: subs,
+      start: 0,            /* 패스 시작점에서의 오프셋 (pt) */
+      align: 'baseline',   /* 문자 맞추기: baseline · ascender · descender · center */
+      flip: false          /* 패스 뒤집기 */
+    };
+    return it;
+  };
+
   /* --- 라이브 셰이프: 로컬 좌표 (0,0)-(w,h) 기준으로 pts 재생성 --- */
   var K = 0.5522847498307936;
 

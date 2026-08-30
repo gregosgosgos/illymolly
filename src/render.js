@@ -43,6 +43,9 @@
     var tr = t.tracking || 0;
     function widthOf(str) { return Rn.measureLine(str, t) + Math.max(0, str.length - 1) * tr; }
 
+    /* 패스 상 문자 — 글자 하나씩 호 길이를 따라 놓는다 */
+    if (t.path) return layoutOnPath(it, lh, asc, tr);
+
     if (!t.area) {
       var raw = String(t.content).split('\n');
       var w0 = 0;
@@ -87,6 +90,74 @@
       w: area.w, h: area.h, lineH: lh, asc: asc, overflow: overflow, area: area
     };
   };
+
+  /* ---------------- 패스 상 문자 레이아웃 ----------------
+     t.path = { subs, start, align, flip, effect } — subs 는 아이템 로컬 좌표.
+     글자마다 진행 거리를 재어 그 지점의 접선 각도로 세운다. */
+  Rn.pathWalker = function (it) {
+    var t = it.text;
+    if (!t || !t.path) return null;
+    /* 같은 패스에는 같은 순회기를 재사용한다 (글자마다 다시 평탄화하면 비싸다) */
+    var w = it.__walk;
+    if (w && w.subs === t.path.subs) return w.walk;
+    var walk = G.walker(t.path.subs, 0.3, null);
+    try {
+      Object.defineProperty(it, '__walk', {
+        value: { subs: t.path.subs, walk: walk }, writable: true, configurable: true, enumerable: false
+      });
+    } catch (err) { it.__walk = { subs: t.path.subs, walk: walk }; }
+    return walk;
+  };
+
+  function layoutOnPath(it, lh, asc, tr) {
+    var t = it.text, pth = t.path;
+    var walk = Rn.pathWalker(it);
+    var chars = String(t.content).replace(/\n/g, ' ').split('');
+    var adv = chars.map(function (c) { return Rn.measureLine(c, t) + tr; });
+    var total = adv.reduce(function (a, b) { return a + b; }, 0) - (chars.length ? tr : 0);
+    var len = walk ? walk.length : 0;
+
+    /* 정렬 = 패스 위에서의 시작 위치 (왼쪽 / 가운데 / 오른쪽 맞추기) */
+    var s0 = pth.start || 0;
+    if (t.align === 'center') s0 += (len - total) / 2;
+    else if (t.align === 'right') s0 += len - total;
+
+    /* 기준선 오프셋 — 일러스트레이터의 [문자 맞추기] */
+    var off = pth.align === 'ascender' ? -asc
+      : pth.align === 'descender' ? t.size * 0.2
+        : pth.align === 'center' ? -asc / 2 : 0;
+    if (pth.flip) off = -off;
+
+    var glyphs = [], s = s0, overflow = false;
+    var r = R.empty();
+    for (var i = 0; i < chars.length; i++) {
+      var mid = s + adv[i] / 2;
+      if (walk && (mid < -adv[i] || mid > len + adv[i])) { overflow = true; s += adv[i]; continue; }
+      var q = walk ? walk.at(mid) : null;
+      if (!q) { s += adv[i]; continue; }
+      var ang = q.ang + (pth.flip ? Math.PI : 0);
+      var nx = -Math.sin(ang), ny = Math.cos(ang);
+      /* 글자 왼쪽 아래(기준선 시작점)로 되돌린다 */
+      var half = adv[i] / 2 - tr / 2;
+      glyphs.push({
+        ch: chars[i], ang: ang, adv: adv[i],
+        x: q.x - Math.cos(ang) * half + nx * off,
+        y: q.y - Math.sin(ang) * half + ny * off
+      });
+      var g = glyphs[glyphs.length - 1];
+      R.add(r, g.x, g.y);
+      R.add(r, g.x + Math.cos(ang) * adv[i], g.y + Math.sin(ang) * adv[i]);
+      R.add(r, g.x - nx * asc, g.y - ny * asc);
+      R.add(r, g.x + Math.cos(ang) * adv[i] - nx * asc, g.y + Math.sin(ang) * adv[i] - ny * asc);
+      s += adv[i];
+    }
+    if (R.isEmpty(r)) r = G.pathBounds({ subs: pth.subs }, null);
+    return {
+      lines: [chars.join('')], xs: [0], widths: [total], glyphs: glyphs,
+      box: r, w: R.w(r), h: R.h(r), lineH: lh, asc: asc,
+      overflow: overflow, area: null, pathLen: len, textLen: total
+    };
+  }
 
   function alignX(span, w, align) {
     if (align === 'center') return (span.x + span.x2) / 2 - w / 2;
@@ -151,7 +222,11 @@
 
   Rn.measureText = function (it) {
     var L = Rn.layoutText(it);
-    return { w: L.w, h: L.h, lineH: L.lineH, lines: L.lines, asc: L.asc, xs: L.xs, overflow: L.overflow, area: L.area };
+    return {
+      w: L.w, h: L.h, lineH: L.lineH, lines: L.lines, asc: L.asc, xs: L.xs,
+      overflow: L.overflow, area: L.area, glyphs: L.glyphs, box: L.box,
+      pathLen: L.pathLen, textLen: L.textLen
+    };
   };
   /* ---------------- 이미지 캐시 ---------------- */
   Rn.imageCache = Object.create(null);
@@ -189,6 +264,7 @@
     }
     if (it.type === 'text') {
       var m = Rn.measureText(it), t = it.text, x0 = 0;
+      if (t.path) return m.box || G.pathBounds({ subs: t.path.subs }, null);
       if (t.area) return { x: 0, y: 0, x2: t.area.w, y2: t.area.h };
       if (t.align === 'center') x0 = -m.w / 2; else if (t.align === 'right') x0 = -m.w;
       var last = (m.lines.length - 1) * m.lineH;
@@ -863,6 +939,7 @@
 
   function drawText(ctx, app, it, m) {
     var t = it.text, mt = Rn.measureText(it);
+    if (t.path) { drawTextOnPath(ctx, app, it, m, mt); return; }
     ctx.save();
     ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
     ctx.font = Rn.fontCss(t);
@@ -895,6 +972,40 @@
           if (fs) { ctx.fillStyle = fs; ctx.fillText(line, x, y); }
           if (ss) { ctx.strokeStyle = ss; ctx.lineWidth = lw; ctx.strokeText(line, x, y); }
         }
+      }
+    });
+    ctx.restore();
+  }
+
+  /* 패스 상 문자 — 글자마다 접선 각도로 세워 그린다 */
+  function drawTextOnPath(ctx, app, it, m, mt) {
+    var t = it.text;
+    var glyphs = mt.glyphs || [];
+    var vb = mt.box || { x: 0, y: 0, x2: 1, y2: 1 };
+    ctx.save();
+    ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
+    ctx.font = Rn.fontCss(t);
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign = 'left';
+    AI.appearance.list(it).forEach(function (e) {
+      var fs = null, ss = null, lw = 1;
+      if (e.kind === 'fill') {
+        if (!Col.isPaint(e.paint)) return;
+        fs = paintStyle(ctx, e.paint, vb);
+      } else {
+        var st = e.stroke;
+        if (!st || st.type === 'none' || !(st.width > 0)) return;
+        ss = paintStyle(ctx, st, vb);
+        lw = st.width;
+      }
+      for (var i = 0; i < glyphs.length; i++) {
+        var g = glyphs[i];
+        ctx.save();
+        ctx.translate(g.x, g.y);
+        ctx.rotate(g.ang);
+        if (fs) { ctx.fillStyle = fs; ctx.fillText(g.ch, 0, 0); }
+        if (ss) { ctx.strokeStyle = ss; ctx.lineWidth = lw; ctx.strokeText(g.ch, 0, 0); }
+        ctx.restore();
       }
     });
     ctx.restore();
@@ -957,6 +1068,50 @@
         if (it.type === 'path') G.tracePath(ctx, it, wm);
         else outlineBox(ctx, Rn.localBounds(it), wm);
         ctx.strokeStyle = lc.get(it) || UIC.blue; ctx.lineWidth = 1; ctx.setLineDash([]); ctx.stroke();
+      });
+
+      /* 패스 상의 문자: 기준선 패스와 시작·끝 브래킷 */
+      app.sel.forEach(function (it) {
+        if (it.type !== 'text' || !it.text.path) return;
+        var wm3 = M.mul(vm, Model.worldMatrix(app.doc, it));
+        var L3 = Rn.layoutText(it);
+        ctx.save();
+        ctx.beginPath();
+        G.tracePath(ctx, { subs: it.text.path.subs }, wm3);
+        ctx.strokeStyle = 'rgba(45,140,235,.55)';
+        ctx.setLineDash([4, 3]); ctx.lineWidth = 1; ctx.stroke();
+        ctx.setLineDash([]);
+        /* 시작 · 끝 브래킷 — 일러스트레이터에서 끌어 글의 시작 위치를 바꾸는 손잡이 */
+        var walk = Rn.pathWalker(it);
+        if (walk && walk.length) {
+          var s0 = it.text.path.start || 0;
+          if (it.text.align === 'center') s0 += (L3.pathLen - L3.textLen) / 2;
+          else if (it.text.align === 'right') s0 += L3.pathLen - L3.textLen;
+          [s0, s0 + L3.textLen].forEach(function (sv) {
+            var q = walk.at(Math.max(0, Math.min(walk.length, sv)));
+            if (!q) return;
+            var a0 = M.apply(wm3, q.x, q.y);
+            var nx = -Math.sin(q.ang), ny = Math.cos(q.ang);
+            var b0 = M.apply(wm3, q.x - nx * it.text.size * 0.8, q.y - ny * it.text.size * 0.8);
+            ctx.beginPath();
+            ctx.moveTo(a0.x, a0.y); ctx.lineTo(b0.x, b0.y);
+            ctx.strokeStyle = UIC.blue; ctx.lineWidth = 1.6; ctx.stroke();
+          });
+        }
+        if (L3.overflow) {
+          var e0 = walk && walk.at(walk.length);
+          if (e0) {
+            var c0 = M.apply(wm3, e0.x, e0.y);
+            ctx.fillStyle = '#e2483c';
+            ctx.fillRect(c0.x - 5, c0.y - 5, 11, 11);
+            ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.4;
+            ctx.beginPath();
+            ctx.moveTo(c0.x - 2.5, c0.y); ctx.lineTo(c0.x + 2.5, c0.y);
+            ctx.moveTo(c0.x, c0.y - 2.5); ctx.lineTo(c0.x, c0.y + 2.5);
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
       });
 
       /* 영역 문자: 상자 테두리와 넘침 표시 (일러스트레이터의 빨간 ⊞) */

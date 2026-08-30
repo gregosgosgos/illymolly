@@ -109,6 +109,64 @@
     return out;
   };
 
+  /* 서브패스를 행렬로 옮긴 사본 (방향선까지) */
+  G.xformSubs = function (subs, mtx) {
+    return (subs || []).map(function (sub) {
+      return {
+        closed: !!sub.closed,
+        pts: sub.pts.map(function (pt) {
+          var q = M.apply(mtx, pt.x, pt.y), o = { x: q.x, y: q.y };
+          if (pt.ix != null) { var a = M.apply(mtx, pt.ix, pt.iy); o.ix = a.x; o.iy = a.y; }
+          if (pt.ox != null) { var b = M.apply(mtx, pt.ox, pt.oy); o.ox = b.x; o.oy = b.y; }
+          return o;
+        })
+      };
+    });
+  };
+
+  /* ---------------- 호 길이 기준 패스 순회 ----------------
+     패스를 평탄화해 누적 길이를 만들어 두고, 길이 s 에서의 좌표와 접선 각도를
+     돌려준다. 패스 상 문자 · 산포처럼 '패스를 따라 배치'하는 곳에서 쓴다. */
+  G.walker = function (subs, tol, mtx) {
+    var pts = [], acc = [], total = 0;
+    (subs || []).forEach(function (sub) {
+      var p = G.flattenSub(sub, tol || 0.3, mtx);
+      if (p.length < 2) return;
+      if (sub.closed) p = p.concat([{ x: p[0].x, y: p[0].y }]);
+      /* 서브패스가 여럿이면 이어 붙인다 — 사이를 잇는 구간은 길이 0 으로 둔다 */
+      for (var i = 0; i < p.length; i++) {
+        if (i > 0) total += Math.hypot(p[i].x - p[i - 1].x, p[i].y - p[i - 1].y);
+        pts.push(p[i]);
+        acc.push(total);
+      }
+    });
+    return {
+      length: total,
+      count: pts.length,
+      /* s 위치의 점과 접선 — 범위를 벗어나면 양 끝을 연장한 값 */
+      at: function (s) {
+        if (pts.length < 2) return null;
+        var lo = 0, hi = acc.length - 1;
+        if (s <= 0) { lo = 0; hi = 1; }
+        else if (s >= total) { lo = acc.length - 2; hi = acc.length - 1; }
+        else {
+          /* 이분 탐색 */
+          var a = 0, b = acc.length - 1;
+          while (b - a > 1) { var mid = (a + b) >> 1; if (acc[mid] <= s) a = mid; else b = mid; }
+          lo = a; hi = b;
+        }
+        var p0 = pts[lo], p1 = pts[hi];
+        var span = acc[hi] - acc[lo];
+        var t = span < 1e-9 ? 0 : (s - acc[lo]) / span;
+        return {
+          x: p0.x + (p1.x - p0.x) * t,
+          y: p0.y + (p1.y - p0.y) * t,
+          ang: Math.atan2(p1.y - p0.y, p1.x - p0.x)
+        };
+      }
+    };
+  };
+
   G.flattenItem = function (it, tol, mtx) {
     var polys = [];
     if (!it.subs) return polys;

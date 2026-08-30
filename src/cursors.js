@@ -146,7 +146,7 @@
     addanchor: function () { return C.pen('add'); },
     delanchor: function () { return C.pen('del'); },
     convert: function () { return C.pen('close'); },
-    type: C.type, typearea: C.type,
+    type: C.type, typearea: C.type, typepath: C.type,
     line: function () { return C.crossShape(GL.line); },
     rect: function () { return C.crossShape(GL.rect); },
     roundrect: function () { return C.crossShape(GL.rect); },
