@@ -1,0 +1,175 @@
+/* =========================================================================
+   ui/layers.js — 레이어 패널
+   ========================================================================= */
+(function (AI) {
+  'use strict';
+  var U = AI.util, Model = AI.model, C = AI.commands;
+  var UI = AI.ui = AI.ui || {};
+
+  var dragSrc = null;
+
+  UI.buildLayers = function (app) {
+    var p = document.getElementById('p-layers');
+    if (!p) return;
+    p.innerHTML = '';
+    var wrap = U.el('div', 'lyr-list');
+
+    for (var i = app.doc.layers.length - 1; i >= 0; i--) {
+      (function (ly, li) {
+        wrap.appendChild(layerRow(app, ly, li));
+        if (!ly.collapsed) {
+          for (var j = ly.children.length - 1; j >= 0; j--) {
+            appendItemRows(app, wrap, ly.children[j], ly, 1);
+          }
+        }
+      })(app.doc.layers[i], i);
+    }
+    p.appendChild(wrap);
+
+    var tools = U.el('div', 'lyr-tools');
+    tools.innerHTML =
+      '<button class="mini-btn" id="ly-new" title="새 레이어">＋</button>' +
+      '<button class="mini-btn" id="ly-dup" title="선택 항목 복제">⧉</button>' +
+      '<button class="mini-btn" id="ly-del" title="삭제">🗑</button>';
+    p.appendChild(tools);
+
+    U.on(U.q('#ly-new', tools), 'click', function () {
+      app.history.begin('새 레이어', app.doc);
+      app.doc.layers.push(Model.newLayer('레이어 ' + (app.doc.layers.length + 1)));
+      app.doc.activeLayer = app.doc.layers.length - 1;
+      app.history.commit();
+      UI.buildLayers(app);
+    });
+    U.on(U.q('#ly-dup', tools), 'click', function () { C.run('duplicate'); });
+    U.on(U.q('#ly-del', tools), 'click', function () {
+      if (app.sel.length) { C.run('clear'); return; }
+      if (app.doc.layers.length < 2) return;
+      app.history.begin('레이어 삭제', app.doc);
+      app.doc.layers.splice(app.doc.activeLayer, 1);
+      app.doc.activeLayer = Math.max(0, app.doc.activeLayer - 1);
+      app.history.commit();
+      UI.buildLayers(app);
+      app.invalidate();
+    });
+  };
+
+  function layerRow(app, ly, li) {
+    var row = U.el('div', 'lyr' + (app.doc.activeLayer === li ? ' sel' : ''));
+    row.draggable = true;
+    row.innerHTML =
+      '<span class="eye' + (ly.visible ? '' : ' off') + '">👁</span>' +
+      '<span class="lock' + (ly.locked ? '' : ' off') + '">🔒</span>' +
+      '<span class="tw">' + (ly.collapsed ? '▸' : '▾') + '</span>' +
+      '<span class="thumb" style="background:' + ly.color + '"></span>' +
+      '<span class="nm">' + esc(ly.name) + '</span>';
+    U.on(U.q('.eye', row), 'click', function (e) { e.stopPropagation(); ly.visible = !ly.visible; app.invalidate(); UI.buildLayers(app); });
+    U.on(U.q('.lock', row), 'click', function (e) { e.stopPropagation(); ly.locked = !ly.locked; UI.buildLayers(app); });
+    U.on(U.q('.tw', row), 'click', function (e) { e.stopPropagation(); ly.collapsed = !ly.collapsed; UI.buildLayers(app); });
+    U.on(row, 'click', function () { app.doc.activeLayer = li; UI.buildLayers(app); });
+    bindRename(app, U.q('.nm', row), ly);
+    bindDrag(app, row, { kind: 'layer', index: li });
+    return row;
+  }
+
+  function appendItemRows(app, wrap, it, layer, depth) {
+    var row = U.el('div', 'lyr' + (AI.sel.has(app, it) ? ' sel' : ''));
+    row.draggable = true;
+    var pad = 4 + depth * 12;
+    row.style.paddingLeft = pad + 'px';
+    var isGroup = it.type === 'group';
+    row.innerHTML =
+      '<span class="eye' + (it.visible ? '' : ' off') + '">👁</span>' +
+      '<span class="lock' + (it.locked ? '' : ' off') + '">🔒</span>' +
+      (isGroup ? '<span class="tw">' + (it.collapsed ? '▸' : '▾') + '</span>' : '<span class="tw"></span>') +
+      '<span class="nm">' + esc(itemLabel(it)) + '</span>' +
+      '<span class="dot"></span>';
+    U.on(U.q('.eye', row), 'click', function (e) { e.stopPropagation(); it.visible = !it.visible; app.invalidate(); UI.buildLayers(app); });
+    U.on(U.q('.lock', row), 'click', function (e) { e.stopPropagation(); it.locked = !it.locked; UI.buildLayers(app); });
+    if (isGroup) U.on(U.q('.tw', row), 'click', function (e) { e.stopPropagation(); it.collapsed = !it.collapsed; UI.buildLayers(app); });
+    U.on(row, 'click', function (e) {
+      if (e.shiftKey) AI.sel.toggle(app, it); else AI.sel.set(app, [it]);
+      app.invalidate();
+      UI.syncSelection(app);
+      UI.buildLayers(app);
+    });
+    bindRename(app, U.q('.nm', row), it);
+    bindDrag(app, row, { kind: 'item', item: it });
+    wrap.appendChild(row);
+    if (isGroup && !it.collapsed) {
+      for (var i = it.children.length - 1; i >= 0; i--) appendItemRows(app, wrap, it.children[i], layer, depth + 1);
+    }
+  }
+
+  function itemLabel(it) {
+    if (it.type === 'text') return '<' + (it.text.content.split('\n')[0].slice(0, 14) || '텍스트') + '>';
+    if (it.type === 'group') return it.clip ? '클립 그룹' : '그룹';
+    return it.name || '패스';
+  }
+
+  function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
+
+  function bindRename(app, el, target) {
+    U.on(el, 'dblclick', function (e) {
+      e.stopPropagation();
+      el.contentEditable = 'true';
+      el.focus();
+      document.execCommand && document.execCommand('selectAll', false, null);
+    });
+    U.on(el, 'keydown', function (e) {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+    });
+    U.on(el, 'blur', function () {
+      if (el.contentEditable !== 'true') return;
+      el.contentEditable = 'false';
+      var v = el.textContent.trim();
+      if (v) { target.name = v; }
+      UI.buildLayers(app);
+    });
+  }
+
+  function bindDrag(app, row, ref) {
+    U.on(row, 'dragstart', function (e) {
+      dragSrc = ref;
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', 'x'); } catch (err) { }
+    });
+    U.on(row, 'dragover', function (e) {
+      if (!dragSrc) return;
+      e.preventDefault();
+      row.style.borderTop = '1px solid #2d8ceb';
+    });
+    U.on(row, 'dragleave', function () { row.style.borderTop = ''; });
+    U.on(row, 'drop', function (e) {
+      e.preventDefault();
+      row.style.borderTop = '';
+      if (!dragSrc) return;
+      app.history.begin('순서 변경', app.doc);
+      applyDrop(app, dragSrc, ref);
+      app.history.commit();
+      dragSrc = null;
+      app.invalidate();
+      UI.buildLayers(app);
+    });
+  }
+
+  function applyDrop(app, src, dst) {
+    if (src.kind === 'layer' && dst.kind === 'layer') {
+      var l = app.doc.layers.splice(src.index, 1)[0];
+      app.doc.layers.splice(dst.index, 0, l);
+      return;
+    }
+    if (src.kind === 'item') {
+      var sl = Model.locate(app.doc, src.item);
+      if (!sl) return;
+      sl.list.splice(sl.index, 1);
+      if (dst.kind === 'layer') {
+        app.doc.layers[dst.index].children.push(src.item);
+      } else {
+        var dl = Model.locate(app.doc, dst.item);
+        if (!dl) { Model.activeLayer(app.doc).children.push(src.item); return; }
+        dl.list.splice(dl.index + 1, 0, src.item);
+      }
+    }
+  }
+})(window.AI);

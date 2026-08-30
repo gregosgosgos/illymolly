@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Illymolly — Vector Studio</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ================= MENU BAR ================= -->
+  <div id="menubar">
+    <div class="brand">Illymolly</div>
+    <nav id="menus"></nav>
+    <div class="menubar-right">
+      <span id="doc-title">무제-1</span>
+    </div>
+  </div>
+
+  <!-- ================= CONTROL BAR ================= -->
+  <div id="controlbar">
+    <span id="ctl-toolname" class="ctl-label">선택</span>
+    <span class="ctl-sep"></span>
+
+    <span class="ctl-label">칠</span>
+    <button class="swatch-btn" id="ctl-fill" title="칠 (Fill)"><i></i></button>
+    <span class="ctl-label">획</span>
+    <button class="swatch-btn" id="ctl-stroke" title="획 (Stroke)"><i></i></button>
+    <input id="ctl-stroke-w" class="ctl-input" list="stroke-widths" value="1" title="획 두께" style="width:64px">
+    <datalist id="stroke-widths"><option>0.25</option><option>0.5</option><option>0.75</option><option>1</option><option>1.5</option><option>2</option><option>3</option><option>4</option><option>6</option><option>8</option><option>12</option><option>16</option><option>24</option></datalist>
+
+    <span class="ctl-sep"></span>
+    <span class="ctl-label">불투명도</span>
+    <input id="ctl-opacity" class="ctl-input" type="number" min="0" max="100" step="1" value="100" style="width:56px">
+    <span class="ctl-label">%</span>
+
+    <span class="ctl-sep"></span>
+    <span class="ctl-group" id="ctl-xywh">
+      <span class="ctl-label">X</span><input class="ctl-input num" id="ctl-x" type="text" value="0">
+      <span class="ctl-label">Y</span><input class="ctl-input num" id="ctl-y" type="text" value="0">
+      <span class="ctl-label">W</span><input class="ctl-input num" id="ctl-w" type="text" value="0">
+      <button class="mini-btn" id="ctl-lockratio" title="가로세로 비율 유지">⛓</button>
+      <span class="ctl-label">H</span><input class="ctl-input num" id="ctl-h" type="text" value="0">
+      <span class="ctl-label">∠</span><input class="ctl-input num" id="ctl-a" type="text" value="0">
+    </span>
+
+    <span class="ctl-spacer"></span>
+    <span id="ctl-tool-options" class="ctl-group"></span>
+  </div>
+
+  <!-- ================= MAIN ================= -->
+  <div id="main">
+
+    <!-- Toolbar -->
+    <div id="toolbar"></div>
+
+    <!-- Workspace -->
+    <div id="workspace">
+      <div id="ruler-corner"></div>
+      <canvas id="ruler-h"></canvas>
+      <canvas id="ruler-v"></canvas>
+      <div id="canvas-wrap">
+        <canvas id="view" tabindex="0"></canvas>
+        <textarea id="text-editor" spellcheck="false"></textarea>
+        <div id="canvas-hud"></div>
+      </div>
+    </div>
+
+    <!-- Panels -->
+    <div id="panels">
+      <section class="panel" data-panel="properties">
+        <header><span>속성</span><b class="fold">▾</b></header>
+        <div class="body" id="p-properties"></div>
+      </section>
+
+      <section class="panel" data-panel="transform">
+        <header><span>변형</span><b class="fold">▾</b></header>
+        <div class="body" id="p-transform"></div>
+      </section>
+
+      <section class="panel" data-panel="color">
+        <header><span>색상</span><b class="fold">▾</b></header>
+        <div class="body" id="p-color"></div>
+      </section>
+
+      <section class="panel" data-panel="swatches">
+        <header><span>견본</span><b class="fold">▾</b></header>
+        <div class="body" id="p-swatches"></div>
+      </section>
+
+      <section class="panel" data-panel="stroke">
+        <header><span>획</span><b class="fold">▾</b></header>
+        <div class="body" id="p-stroke"></div>
+      </section>
+
+      <section class="panel" data-panel="align">
+        <header><span>정렬</span><b class="fold">▾</b></header>
+        <div class="body" id="p-align"></div>
+      </section>
+
+      <section class="panel" data-panel="pathfinder">
+        <header><span>패스파인더</span><b class="fold">▾</b></header>
+        <div class="body" id="p-pathfinder"></div>
+      </section>
+
+      <section class="panel" data-panel="layers">
+        <header><span>레이어</span><b class="fold">▾</b></header>
+        <div class="body" id="p-layers"></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ================= STATUS BAR ================= -->
+  <div id="statusbar">
+    <div class="zoombox">
+      <input id="st-zoom" value="100%">
+      <span class="pct">%</span>
+    </div>
+    <span class="ctl-sep"></span>
+    <span id="st-artboard">대지 1</span>
+    <span class="ctl-sep"></span>
+    <span id="st-hint">선택 도구</span>
+    <span class="ctl-spacer"></span>
+    <span id="st-coords">0 , 0</span>
+  </div>
+</div>
+
+<div id="contextmenu" class="menu-pop" hidden></div>
+<div id="colorpop" class="pop" hidden></div>
+<div id="toast" hidden></div>
+
+<script src="src/util.js"></script>
+<script src="src/color.js"></script>
+<script src="src/model.js"></script>
+<script src="src/geom.js"></script>
+<script src="src/pathfinder.js"></script>
+<script src="src/history.js"></script>
+<script src="src/render.js"></script>
+<script src="src/hit.js"></script>
+<script src="src/view.js"></script>
+<script src="src/edit.js"></script>
+<script src="src/tools/base.js"></script>
+<script src="src/tools/select.js"></script>
+<script src="src/tools/directselect.js"></script>
+<script src="src/tools/pen.js"></script>
+<script src="src/tools/shape.js"></script>
+<script src="src/tools/type.js"></script>
+<script src="src/tools/freehand.js"></script>
+<script src="src/tools/transformtools.js"></script>
+<script src="src/tools/misc.js"></script>
+<script src="src/tools/index.js"></script>
+<script src="src/commands.js"></script>
+<script src="src/keymap.js"></script>
+<script src="src/ui/menus.js"></script>
+<script src="src/ui/panels.js"></script>
+<script src="src/ui/layers.js"></script>
+<script src="src/ui/colorui.js"></script>
+<script src="src/io.js"></script>
+<script src="src/app.js"></script>
+</body>
+</html>

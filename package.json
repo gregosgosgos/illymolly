@@ -1,0 +1,14 @@
+{
+  "name": "illymolly",
+  "version": "0.1.0",
+  "description": "Adobe Illustrator 호환 단축키를 사용하는 웹 벡터 그래픽 편집기",
+  "private": true,
+  "scripts": {
+    "start": "npx http-server -p 8080 -c-1 .",
+    "test": "node test/e2e.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.0"
+  },
+  "license": "MIT"
+}
