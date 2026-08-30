@@ -2214,6 +2214,125 @@ await check('라이브 다각형 — 변의 수 위젯을 끌면 변이 늘어�
   return `변 6 → ${up.n} (앵커 ${up.pts}) · 실행 취소로 6 복원`;
 });
 
+/* ---------------- 에이전트용 연산 (render · diff) ---------------- */
+await check('render() — 에이전트가 결과를 눈으로 확인한다', async () => {
+  const r = await ev(() => {
+    const app = AI.app;
+    while (illy.documents().length > 1) AI.docs.close(app, illy.documents().length - 1, true);
+    app.setDoc(AI.model.newDoc(400, 300));
+    app.history.reset(app.doc, '새 문서');
+    illy.rect({ x: 20, y: 20, width: 100, height: 100, fill: '#ff0000' });
+    const b = illy.ellipse({ x: 200, y: 20, width: 80, height: 80, fill: '#00ff00' });
+    const board = illy.render({ of: 'artboard', maxSize: 200 });
+    illy.select([b]);
+    const sel = illy.render({ of: 'selection', maxSize: 120, padding: 0 });
+    const all = illy.render({ of: 'all', maxSize: 200, padding: 10 });
+    return {
+      board: { w: board.width, h: board.height, isPng: board.png.indexOf('data:image/png;base64,') === 0, region: board.region },
+      sel: { w: sel.width, h: sel.height, region: sel.region },
+      all: { w: all.width, h: all.height }
+    };
+  });
+  /* 대지 400×300 을 긴 변 200 으로 → 200×150 */
+  if (r.board.w !== 200 || r.board.h !== 150) throw new Error('대지 렌더=' + r.board.w + 'x' + r.board.h);
+  if (!r.board.isPng) throw new Error('PNG data URL 이 아님');
+  if (r.board.region.width !== 400 || r.board.region.height !== 300) throw new Error('영역=' + JSON.stringify(r.board.region));
+  /* 선택 렌더는 그 오브젝트만 담는다 (원 80×80) */
+  if (Math.abs(r.sel.region.width - 80) > 2 || Math.abs(r.sel.region.height - 80) > 2) {
+    throw new Error('선택 영역=' + JSON.stringify(r.sel.region));
+  }
+
+  /* 실제로 그 오브젝트가 찍혔는지 픽셀로 확인 */
+  const px = await ev(() => {
+    const out = illy.render({ of: 'selection', maxSize: 120, padding: 0, background: false });
+    return new Promise(res => {
+      const im = new Image();
+      im.onload = () => {
+        const cv = document.createElement('canvas');
+        cv.width = im.width; cv.height = im.height;
+        const c = cv.getContext('2d'); c.drawImage(im, 0, 0);
+        const d = c.getImageData(Math.round(im.width / 2), Math.round(im.height / 2), 1, 1).data;
+        return res([d[0], d[1], d[2]].join(','));
+      };
+      im.src = out.png;
+    });
+  });
+  if (px !== '0,255,0') throw new Error('선택 렌더 가운데 픽셀=' + px);
+
+  /* 선택이 없으면 친절하게 알려 준다 */
+  const errMsg = await ev(() => {
+    illy.deselect();
+    try { illy.render({ of: 'selection' }); return 'no-error'; }
+    catch (e) { return e.message; }
+  });
+  if (errMsg.indexOf('선택') < 0) throw new Error('오류 안내=' + errMsg);
+  return `대지 ${r.board.w}×${r.board.h} · 선택 ${r.sel.w}×${r.sel.h}(가운데 ${px}) · 전체 ${r.all.w}×${r.all.h}`;
+});
+
+await check('diff() — 표시해 둔 시점 이후 무엇이 달라졌는지', async () => {
+  const r = await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 300));
+    app.history.reset(app.doc, '새 문서');
+    const a = illy.rect({ x: 20, y: 20, width: 100, height: 100, fill: '#ff0000' });
+    const gone = illy.rect({ x: 300, y: 20, width: 40, height: 40, fill: '#888888' });
+    const mark = illy.mark();
+
+    illy.ellipse({ x: 200, y: 20, width: 80, height: 80, fill: '#00ff00' });   /* 추가 */
+    illy.set(a, { fill: '#0000ff', opacity: 0.5 });                            /* 변경 */
+    illy.move([a], { dx: 10, dy: 0 });                                         /* 변경 */
+    illy.remove(gone);                                                         /* 삭제 */
+
+    const d = illy.diff({ since: mark });
+    return {
+      summary: d.summary,
+      since: d.since === mark,
+      added: d.added.map(x => x.type + ':' + x.fill),
+      removed: d.removed.map(x => x.name),
+      changedKeys: d.changed.map(c => Object.keys(c.changes).sort().join('|')),
+      changedName: d.changed[0] && d.changed[0].name,
+      unchanged: d.unchanged
+    };
+  });
+  if (r.summary !== '추가 1 · 삭제 1 · 변경 1') throw new Error('요약=' + r.summary);
+  if (!r.since) throw new Error('기준 시점이 안 맞음');
+  if (r.added[0] !== 'path:#00ff00') throw new Error('추가=' + r.added);
+  if (r.removed.length !== 1) throw new Error('삭제=' + JSON.stringify(r.removed));
+  const keys = r.changedKeys[0];
+  ['칠', '불투명도', '위치·크기'].forEach(k => {
+    if (keys.indexOf(k) < 0) throw new Error('"' + k + '" 변경이 안 잡힘 — ' + keys);
+  });
+
+  /* 문서 자체가 달라진 것도 알려 준다 */
+  const docd = await ev(() => {
+    const m = illy.mark();
+    illy.addArtboard({ width: 100, height: 100, name: '둘째' });
+    const d = illy.diff({ since: m });
+    return d.document ? Object.keys(d.document).join(',') + '=' + d.document.artboards.from + '→' + d.document.artboards.to : '(없음)';
+  });
+  if (docd !== 'artboards=1→2') throw new Error('문서 변경=' + docd);
+
+  /* mark 가 없으면 마지막 동작 직전과 견준다 */
+  const auto = await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(300, 300));
+    app.history.reset(app.doc, '새 문서');
+    delete app.__marks;
+    illy.rect({ x: 10, y: 10, width: 50, height: 50, fill: '#123456' });
+    const d = illy.diff({});
+    return { since: d.since, summary: d.summary, added: d.added.length };
+  });
+  if (auto.added !== 1) throw new Error('자동 비교 추가=' + auto.added);
+  if (String(auto.since).indexOf('마지막 동작 직전') < 0) throw new Error('기준=' + auto.since);
+
+  /* 없는 표시를 주면 살아 있는 표시를 알려 준다 */
+  const bad = await ev(() => {
+    try { illy.diff({ since: '없는표시' }); return 'no-error'; } catch (e) { return e.message; }
+  });
+  if (bad.indexOf('표시를 찾을 수 없습니다') < 0) throw new Error('오류 안내=' + bad);
+  return `${r.summary} · 변경 항목 [${keys}] · 문서 ${docd} · mark 없으면 "${auto.since}"`;
+});
+
 /* ---------------- 자유형 그레이디언트 ---------------- */
 await check('자유형 그레이디언트 — 색 점이 제 자리를 지키며 섞인다', async () => {
   const r = await ev(() => {

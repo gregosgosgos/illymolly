@@ -73,6 +73,8 @@ window.addEventListener('message', e => {
 | **원자적 `batch()`** | 여러 연산 중 하나라도 실패하면 전부 롤백하고 실패 지점을 알려 줍니다. 절반만 적용된 문서가 생기지 않습니다. |
 | **모르는 인자를 조용히 무시하지 않음** | `colour` 같은 오타는 즉시 오류가 되고, 사용 가능한 인자 목록을 함께 알려 줍니다. |
 | **`describe()`** | 픽셀을 볼 수 없는 에이전트가 문서 상태를 텍스트로 파악합니다. |
+| **`render()`** | 결과를 **눈으로** 확인하는 PNG. 대지·선택·전체 중 골라 담고 긴 변 픽셀 수를 제한해 컨텍스트를 아낍니다. |
+| **`mark()` / `diff()`** | 내가 **무엇을 바꿨는지** 알려 줍니다. 표시 이후의 추가·삭제·변경을 항목별 전후 값으로 돌려주고, 표시가 없으면 마지막 동작 직전과 견줍니다. |
 
 ---
 
@@ -119,17 +121,18 @@ illy.rotate({ angle: 90 })        // 선택자 없는 인자 객체
 
 | 그룹 | 연산 |
 |---|---|
-| 문서 | `newDocument` `documentInfo` `setDocument` |
+| 문서 | `newDocument` `documentInfo` `setDocument` `documents` `activateDocument` `closeDocument` |
 | 생성 | `addRect` `addEllipse` `addPolygon` `addStar` `addLine` `addPath` `addText` `addImage` |
-| 조회 | `find` `get` `snapshot` `describe` |
-| 선택 | `select` `deselect` `selection` |
+| 문자 | `typeOnPath` `textStyles` `addTextStyle` `applyTextStyle` `updateTextStyle` `removeTextStyle` |
+| 조회 | `find` `get` `snapshot` `describe` `mark` `diff` |
+| 선택 | `select` `deselect` `selection` `selectSame` `selectObjects` |
 | 수정 | `set` `remove` `duplicate` `arrange` `group` `ungroup` |
 | 변형 | `move` `setBounds` `rotate` `scale` `reflect` `transformEach` |
 | 정렬 | `align` `distribute` |
 | 패스 | `pathfinder` `clipMask` `offsetPath` `simplify` `opacityMask` `blend` |
 | 앵커 | `anchors` `setAnchor` `addAnchor` `removeAnchor` `setSubpathClosed` |
 | 모양 | `appearance` `addFill` `addStroke` `setAppearanceLayer` `removeAppearanceLayer` `expandAppearance` |
-| 스타일 | `setArrowheads` `recolor` `colors` |
+| 스타일 | `setArrowheads` `recolor` `colors` `applyBrush` |
 | 효과 | `applyEffect` `clearEffects` `effects` |
 | 자산 | `assets` `defineSymbol` `placeSymbol` `breakSymbolLink` `definePattern` `applyPattern` |
 | 이미지 | `cropImage` `imageTrace` *(브라우저 전용)* |
@@ -137,8 +140,36 @@ illy.rotate({ angle: 90 })        // 선택자 없는 인자 객체
 | 대지 | `addArtboard` `setArtboard` `removeArtboard` `gotoArtboard` `fitArtboard` `rearrangeArtboards` |
 | 안내선 | `addGuide` `guides` `clearGuides` `releaseGuides` |
 | 히스토리 | `undo` `redo` `history` |
-| 출력 | `toSVG` `toJSON` `loadJSON` `toPDF` `toPNG` |
+| 출력 | `toSVG` `toJSON` `loadJSON` `toPDF` `toPNG` `render` `exportArtboards` |
 | GUI | `setTool` `zoom` *(브라우저 전용)* |
+
+### 결과 확인 — `render()` 와 `diff()`
+
+```js
+const mark = illy.mark();                       // 지금 상태를 표시
+
+illy.rect({ x: 20, y: 20, width: 100, height: 100, fill: 'red' });
+illy.set('path-1', { fill: 'blue', opacity: 0.5 });
+
+illy.diff({ since: mark });
+// {
+//   summary: '추가 1 · 삭제 0 · 변경 1',
+//   added:   [{ id:'path-2', type:'path', fill:'#ff0000', bounds:[20,20,100,100] }],
+//   changed: [{ id:'path-1', name:'사각형',
+//               changes: { 칠: {from:'#ff0000', to:'#0000ff'},
+//                          불투명도: {from:1, to:0.5} } }],
+//   document: null
+// }
+
+illy.diff({});                                  // 표시가 없으면 마지막 동작 직전과 비교
+
+const shot = illy.render({ of: 'selection', maxSize: 512 });
+// { png:'data:image/png;base64,…', width:512, height:340,
+//   region:{ x:20, y:20, width:100, height:100 }, scale:5.12 }
+```
+
+`of` 는 `artboard`(기본) · `selection` · `all` 중 하나이고, `maxSize` 로 긴 변의
+픽셀 수를 제한합니다 (기본 640). 이미지가 커져 컨텍스트를 잡아먹는 일이 없습니다.
 
 ### 앵커 단위 편집
 
@@ -265,7 +296,8 @@ illy.run('addRect', { x:0, y:0, width:10, colour:'red' });
 | `NO_TARGET` | 선택자에 맞는 대상이 없음 |
 | `NO_LAYER` `NO_TOOL` | 이름으로 찾지 못함 |
 | `PF_EMPTY` | 패스파인더 결과가 비어 있음 |
-| `NO_CANVAS` | Node 에서 `toPNG` 호출 (→ `toSVG` 사용) |
+| `NO_CANVAS` | Node 에서 `toPNG` · `render` 호출 (→ `toSVG` 사용) |
+| `NO_MARK` | `diff({since})` 에 없는 표시를 줌 (살아 있는 표시 목록을 함께 알려 줌) |
 | `NO_DOM` | Node 에서 `imageTrace` 호출 (브라우저 전용) |
 | `NOT_PATH` `NO_SUBPATH` `NO_ANCHOR` `NO_SEGMENT` | 앵커 편집 대상이 잘못됨 |
 | `NO_SYMBOL` `NO_PATTERN` | 이름·id 로 자산을 찾지 못함 |

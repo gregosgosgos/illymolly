@@ -2052,6 +2052,186 @@
       });
     }
   });
+  /* ---------- 에이전트가 결과를 확인하는 연산 ---------- */
+  op('render', {
+    undoable: false, group: '출력',
+    desc: '지금 화면을 PNG data URL 로 돌려줍니다. 눈으로 결과를 확인할 때 씁니다 (브라우저 전용).',
+    params: {
+      of: p('string', '무엇을 담을지', { enum: ['artboard', 'selection', 'all'], default: 'artboard' }),
+      artboard: p('number', '대지 번호 (of=artboard, 생략 시 활성 대지)'),
+      maxSize: p('number', '긴 변의 최대 픽셀', { default: 640 }),
+      padding: p('number', '여백 (pt)', { default: 12 }),
+      background: p('boolean', '대지 배경 포함', { default: true })
+    },
+    run: function (ctx, a) {
+      if (!U.hasDOM) throw err('NO_CANVAS', 'render 는 브라우저에서만 사용할 수 있습니다. Node 에서는 toSVG 를 쓰세요.');
+      var box;
+      if (a.of === 'selection') {
+        if (!ctx.sel.length) throw err('NO_SELECTION', '선택된 오브젝트가 없습니다');
+        box = Rn.selectionBounds(ctx, false);
+        box = R.grow(box, Math.max(0, a.padding));
+      } else if (a.of === 'all') {
+        box = R.empty();
+        Model.walk(ctx.doc, function (it) {
+          if (it.type === 'group') return;
+          box = R.union(box, Rn.worldBounds(ctx.doc, it, false));
+        });
+        ctx.doc.artboards.forEach(function (ab) {
+          box = R.union(box, { x: ab.x, y: ab.y, x2: ab.x + ab.w, y2: ab.y + ab.h });
+        });
+        box = R.grow(box, Math.max(0, a.padding));
+      } else {
+        var i = a.artboard == null ? ctx.doc.activeArtboard
+          : U.clamp(Math.round(a.artboard), 0, ctx.doc.artboards.length - 1);
+        var ab2 = ctx.doc.artboards[i];
+        box = { x: ab2.x, y: ab2.y, x2: ab2.x + ab2.w, y2: ab2.y + ab2.h };
+      }
+      if (R.isEmpty(box)) throw err('EMPTY', '그릴 것이 없습니다');
+
+      var bw = Math.max(1, R.w(box)), bh = Math.max(1, R.h(box));
+      var cap = U.clamp(a.maxSize == null ? 640 : a.maxSize, 32, 4096);
+      var scale = Math.min(cap / bw, cap / bh, 4);
+      var cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round(bw * scale));
+      cv.height = Math.max(1, Math.round(bh * scale));
+      Rn.scene(cv.getContext('2d'), {
+        doc: ctx.doc, dpr: 1, exporting: true, exportBg: a.background !== false,
+        view: { scale: scale, tx: -box.x * scale, ty: -box.y * scale },
+        prefs: { grid: false, guides: false, outline: false },
+        canvas: cv, sel: [], selPts: [], invalidate: function () { }
+      });
+      return {
+        png: cv.toDataURL('image/png'),
+        width: cv.width, height: cv.height,
+        region: { x: U.round(box.x, 2), y: U.round(box.y, 2), width: U.round(bw, 2), height: U.round(bh, 2) },
+        scale: U.round(scale, 4)
+      };
+    }
+  });
+
+  /* 문서를 "무엇이 달라졌는지 견줄 수 있는" 얕은 지문으로 만든다 */
+  function fingerprint(doc) {
+    var map = Object.create(null);
+    Model.walkWorld(doc, function (it, info) {
+      var b = Rn.boundsM(it, info.m, true, 1);
+      map[it.id] = {
+        type: it.type,
+        name: it.name,
+        layer: info.layer ? info.layer.name : null,
+        parent: info.parent ? info.parent.id : null,
+        z: info.index,
+        bounds: R.isEmpty(b) ? null : [U.round(b.x, 2), U.round(b.y, 2), U.round(R.w(b), 2), U.round(R.h(b), 2)],
+        fill: paintKeyOf(it.fill),
+        stroke: paintKeyOf(it.stroke) + (it.stroke && it.stroke.width != null ? ' ' + U.round(it.stroke.width, 2) : ''),
+        opacity: U.round(it.opacity == null ? 1 : it.opacity, 3),
+        blend: it.blend || 'normal',
+        effects: (it.effects || []).map(function (e) { return e.type; }).join(','),
+        anchors: it.subs ? it.subs.reduce(function (n, sb) { return n + sb.pts.length; }, 0) : 0,
+        text: it.type === 'text' ? String(it.text.content).slice(0, 80) : null,
+        visible: it.visible !== false,
+        locked: !!it.locked
+      };
+    });
+    return map;
+  }
+  function paintKeyOf(p2) {
+    if (!p2 || p2.type === 'none') return 'none';
+    if (p2.type === 'solid') return p2.color;
+    if (p2.type === 'pattern') return 'pattern:' + p2.patternId;
+    if (p2.type === 'freeform') return 'freeform:' + (p2.stops || []).map(function (x) { return x.color; }).join('·');
+    if (p2.stops) return p2.type + ':' + p2.stops.map(function (x) { return x.color; }).join('→');
+    return p2.type;
+  }
+  function docFacts(doc) {
+    return {
+      name: doc.name,
+      artboards: doc.artboards.length,
+      layers: doc.layers.length,
+      background: doc.bg || '#ffffff'
+    };
+  }
+  var FP_FIELDS = ['type', 'name', 'layer', 'parent', 'z', 'bounds', 'fill', 'stroke',
+    'opacity', 'blend', 'effects', 'anchors', 'text', 'visible', 'locked'];
+  var FP_LABEL = {
+    type: '종류', name: '이름', layer: '레이어', parent: '상위 그룹', z: '순서',
+    bounds: '위치·크기', fill: '칠', stroke: '획', opacity: '불투명도', blend: '혼합 모드',
+    effects: '효과', anchors: '앵커 수', text: '내용', visible: '표시', locked: '잠금'
+  };
+  function sameVal(a, b) {
+    if (Array.isArray(a) && Array.isArray(b)) return a.join(',') === b.join(',');
+    return a === b;
+  }
+
+  op('mark', {
+    undoable: false, group: '조회',
+    desc: '지금 문서 상태를 표시해 둡니다. 나중에 diff 로 무엇이 달라졌는지 견줍니다.',
+    params: {}, returns: 'string',
+    run: function (ctx) {
+      var token = 'mark-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 1e4);
+      ctx.__marks = ctx.__marks || [];
+      ctx.__marks.push({ token: token, fp: fingerprint(ctx.doc), facts: docFacts(ctx.doc) });
+      if (ctx.__marks.length > 8) ctx.__marks.shift();
+      return token;
+    }
+  });
+
+  op('diff', {
+    undoable: false, group: '조회',
+    desc: '표시해 둔 시점(mark) 이후 무엇이 달라졌는지 알려 줍니다. mark 가 없으면 마지막 동작 직전과 견줍니다.',
+    params: { since: p('string', 'mark 가 돌려준 토큰 (생략 시 가장 최근 mark, 그것도 없으면 마지막 동작 직전)') },
+    run: function (ctx, a) {
+      var base = null, from = null;
+      var marks = ctx.__marks || [];
+      if (a.since) {
+        for (var i = 0; i < marks.length; i++) if (marks[i].token === a.since) base = marks[i];
+        if (!base) {
+          throw err('NO_MARK', "표시를 찾을 수 없습니다: '" + a.since + "'. 살아 있는 표시: " +
+            (marks.map(function (m) { return m.token; }).join(', ') || '(없음)'));
+        }
+        from = a.since;
+      } else if (marks.length) {
+        base = marks[marks.length - 1];
+        from = base.token;
+      } else {
+        var h = ctx.history;
+        var prev = (h && h.index >= 0 && h.stack[h.index]) ? h.stack[h.index] : null;
+        if (!prev) return { since: null, note: '견줄 이전 상태가 없습니다 — 먼저 mark() 를 부르세요', added: [], removed: [], changed: [] };
+        base = { fp: fingerprint(prev.state), facts: docFacts(prev.state) };
+        from = '마지막 동작 직전 (' + prev.label + ')';
+      }
+
+      var now = fingerprint(ctx.doc);
+      var added = [], removed = [], changed = [];
+      Object.keys(now).forEach(function (id) {
+        var b = base.fp[id];
+        if (!b) {
+          added.push({ id: id, type: now[id].type, name: now[id].name, bounds: now[id].bounds, fill: now[id].fill });
+          return;
+        }
+        var diffs = {};
+        FP_FIELDS.forEach(function (k) {
+          if (!sameVal(b[k], now[id][k])) diffs[FP_LABEL[k]] = { from: b[k], to: now[id][k] };
+        });
+        if (Object.keys(diffs).length) changed.push({ id: id, name: now[id].name, changes: diffs });
+      });
+      Object.keys(base.fp).forEach(function (id) {
+        if (!now[id]) removed.push({ id: id, type: base.fp[id].type, name: base.fp[id].name });
+      });
+
+      var docChanges = {};
+      var f0 = base.facts, f1 = docFacts(ctx.doc);
+      Object.keys(f1).forEach(function (k) { if (f0[k] !== f1[k]) docChanges[k] = { from: f0[k], to: f1[k] }; });
+
+      return {
+        since: from,
+        unchanged: Object.keys(now).length - added.length - changed.length,
+        added: added, removed: removed, changed: changed,
+        document: Object.keys(docChanges).length ? docChanges : null,
+        summary: '추가 ' + added.length + ' · 삭제 ' + removed.length + ' · 변경 ' + changed.length
+      };
+    }
+  });
+
   op('toJSON', {
     undoable: false, group: '출력', desc: '문서 전체를 저장 형식(JSON 문자열)으로 반환합니다.', params: {}, returns: 'string', 
     run: function (ctx) { return JSON.stringify({ format: 'illymolly', version: 1, doc: ctx.doc }); }
