@@ -2130,6 +2130,90 @@ await check('문서 탭 — Ctrl+Tab 순환 · 닫기 · 마지막 하나는 남
   return 'Ctrl+Tab 순환 · 닫기 · 마지막 문서는 빈 문서로 대체 · 탭 줄 자동 숨김';
 });
 
+/* ---------------- 라이브 셰이프 위젯 ---------------- */
+await check('라이브 원형 — 파이 각도 위젯으로 부채꼴이 된다', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 400));
+    const e2 = AI.model.newEllipse(100, 100, 200, 200);
+    e2.fill = AI.color.solid('#3366cc');
+    app.doc.layers[0].children.push(e2);
+    AI.sel.set(app, [e2]);
+    AI.viewT.fitArtboard(app);
+  });
+  await refreshBox();
+  const w0 = await ev(() => {
+    const lw = AI.render.liveWidgets(AI.app);
+    return lw && lw.pts.map(p => ({ kind: p.kind, x: p.x, y: p.y }));
+  });
+  if (!w0 || w0.length !== 2) throw new Error('파이 위젯이 없음=' + JSON.stringify(w0));
+
+  /* 끝 각도 손잡이를 아래쪽(90°)으로 끌어 4분원으로 만든다 */
+  const end = w0.find(p => p.kind === 'pieEnd');
+  const target = await ev(() => {
+    const vm = AI.viewT.matrix(AI.app);
+    const q = AI.mat.apply(vm, 200, 300);        /* 타원 아래쪽 끝 = 90° */
+    return { x: q.x, y: q.y };
+  });
+  await drag({ x: box.x + end.x, y: box.y + end.y }, { x: box.x + target.x, y: box.y + target.y });
+  await page.waitForTimeout(60);
+
+  const r = await ev(() => {
+    const it = AI.app.sel[0];
+    const b = AI.render.worldBounds(AI.app.doc, it, true);
+    return {
+      pie: it.shape.pie && [Math.round(it.shape.pie.start), Math.round(it.shape.pie.end)],
+      w: Math.round(b.x2 - b.x), h: Math.round(b.y2 - b.y),
+      anchors: it.subs[0].pts.length,
+      label: AI.app.history.undoLabel()
+    };
+  });
+  if (!r.pie || Math.abs(r.pie[1] - 90) > 3) throw new Error('끝 각도=' + JSON.stringify(r.pie));
+  if (r.w !== 100 || r.h !== 100) throw new Error('부채꼴 바운딩=' + r.w + '×' + r.h);
+  if (r.anchors !== 3) throw new Error('앵커=' + r.anchors);  /* 중심 + 호 양 끝 */
+  if (r.label !== '파이 각도') throw new Error('실행 취소 이름=' + r.label);
+
+  /* 한 바퀴로 되돌리면 다시 온전한 원 */
+  const back = await ev(() => {
+    illy.set(AI.app.sel[0].id, { pieEnd: 360 });
+    return { pie: !!AI.app.sel[0].shape.pie, anchors: AI.app.sel[0].subs[0].pts.length };
+  });
+  if (back.pie || back.anchors !== 4) throw new Error('원 복귀=' + JSON.stringify(back));
+  return `파이 0→${r.pie[1]}° · 바운딩 ${r.w}×${r.h} · 앵커 ${r.anchors} · 360°에서 온전한 원 복귀`;
+});
+
+await check('라이브 다각형 — 변의 수 위젯을 끌면 변이 늘어난다', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 400));
+    const pg = AI.model.newPolygon(200, 200, 80, 6);
+    pg.fill = AI.color.solid('#cc6633');
+    app.doc.layers[0].children.push(pg);
+    AI.sel.set(app, [pg]);
+    AI.viewT.fitArtboard(app);
+  });
+  await refreshBox();
+  const w = await ev(() => {
+    const lw = AI.render.liveWidgets(AI.app);
+    return lw && lw.pts[0];
+  });
+  if (!w || w.kind !== 'sides') throw new Error('변 수 위젯이 없음=' + JSON.stringify(w));
+  /* 위로 24px = +3 */
+  await drag({ x: box.x + w.x, y: box.y + w.y }, { x: box.x + w.x, y: box.y + w.y - 24 });
+  await page.waitForTimeout(60);
+  const up = await ev(() => ({
+    n: AI.app.sel[0].shape.n,
+    pts: AI.app.sel[0].subs[0].pts.length,
+    label: AI.app.history.undoLabel()
+  }));
+  if (up.n !== 9 || up.pts !== 9) throw new Error('변 수=' + JSON.stringify(up));
+  if (up.label !== '변의 수') throw new Error('실행 취소 이름=' + up.label);
+  await ev(() => AI.commands.run('undo'));
+  const undone = await ev(() => AI.app.doc.layers[0].children[0].shape.n);
+  if (undone !== 6) throw new Error('실행 취소=' + undone);
+  return `변 6 → ${up.n} (앵커 ${up.pts}) · 실행 취소로 6 복원`;
+});
+
 /* ---------------- 결과 ---------------- */
 console.log('\n=== Illymolly E2E ===');
 for (const [n, s, d] of results) console.log(`${s === 'OK' ? '✔' : '✘'} ${n}${d ? ' — ' + d : ''}`);

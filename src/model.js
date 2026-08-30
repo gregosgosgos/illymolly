@@ -148,13 +148,21 @@
     } else if (s.kind === 'ellipse') {
       w = s.w; h = s.h;
       var rx = w / 2, ry = h / 2, cx = rx, cy = ry, kx = rx * K, ky = ry * K;
-      pts = [
-        { x: cx, y: 0, ix: cx - kx, iy: 0, ox: cx + kx, oy: 0 },
-        { x: w, y: cy, ix: w, iy: cy - ky, ox: w, oy: cy + ky },
-        { x: cx, y: h, ix: cx + kx, iy: h, ox: cx - kx, oy: h },
-        { x: 0, y: cy, ix: 0, iy: cy + ky, ox: 0, oy: cy - ky }
-      ];
-      it.subs = [{ closed: true, pts: pts }];
+      var span = Model.pieSpan(s);
+      if (span < 359.999) {
+        /* 파이 — 시작 각도에서 끝 각도까지의 부채꼴 (일러스트레이터의 원형 파이 위젯) */
+        var a0 = s.pie.start * Math.PI / 180, a1 = a0 + span * Math.PI / 180;
+        pts = [Model.pt(cx, cy)].concat(Model.arcPts(cx, cy, rx, ry, a0, a1));
+        it.subs = [{ closed: true, pts: pts }];
+      } else {
+        pts = [
+          { x: cx, y: 0, ix: cx - kx, iy: 0, ox: cx + kx, oy: 0 },
+          { x: w, y: cy, ix: w, iy: cy - ky, ox: w, oy: cy + ky },
+          { x: cx, y: h, ix: cx + kx, iy: h, ox: cx - kx, oy: h },
+          { x: 0, y: cy, ix: 0, iy: cy + ky, ox: 0, oy: cy - ky }
+        ];
+        it.subs = [{ closed: true, pts: pts }];
+      }
     } else if (s.kind === 'polygon' || s.kind === 'star') {
       var n = Math.max(3, s.n | 0), i, a, rr;
       pts = [];
@@ -175,6 +183,31 @@
     } else if (s.kind === 'line') {
       it.subs = [{ closed: false, pts: [Model.pt(0, 0), Model.pt(s.w, s.h)] }];
     }
+  };
+
+  /* 파이가 덮는 각도 (0 초과 360 이하). 파이 설정이 없으면 온전한 원. */
+  Model.pieSpan = function (s) {
+    if (!s || !s.pie) return 360;
+    var d = (((s.pie.end - s.pie.start) % 360) + 360) % 360;
+    return d < 0.001 ? 360 : d;
+  };
+
+  /* 타원 호를 큐빅 베지어 앵커 목록으로 — 90° 이하 조각으로 나눠 근사한다 */
+  Model.arcPts = function (cx, cy, rx, ry, a0, a1) {
+    var n = Math.max(1, Math.ceil(Math.abs(a1 - a0) / (Math.PI / 2)));
+    var da = (a1 - a0) / n;
+    var k = 4 / 3 * Math.tan(da / 4);
+    var out = [];
+    for (var i = 0; i <= n; i++) {
+      var a = a0 + i * da;
+      var x = cx + rx * Math.cos(a), y = cy + ry * Math.sin(a);
+      var dx = -rx * Math.sin(a) * k, dy = ry * Math.cos(a) * k;
+      var p = { x: x, y: y };
+      if (i > 0) { p.ix = x - dx; p.iy = y - dy; }
+      if (i < n) { p.ox = x + dx; p.oy = y + dy; }
+      out.push(p);
+    }
+    return out;
   };
 
   Model.newRect = function (x, y, w, h, r) {

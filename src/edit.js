@@ -360,6 +360,25 @@
     return any;
   };
 
+  /* 선택한 타원의 파이 각도를 바꾼다 (둘 중 하나만 줘도 된다) */
+  E.updatePie = function (app, start, end) {
+    var any = false;
+    app.sel.forEach(function (it) {
+      (function rec(o) {
+        if (o.type === 'group') { o.children.forEach(rec); return; }
+        if (o.type !== 'path' || !o.shape || o.shape.kind !== 'ellipse') return;
+        var pie = o.shape.pie || { start: 0, end: 360 };
+        if (start != null) pie.start = start;
+        if (end != null) pie.end = end;
+        if (Math.abs((((pie.end - pie.start) % 360) + 360) % 360) < 0.001) delete o.shape.pie;
+        else o.shape.pie = pie;
+        Model.buildShape(o);
+        any = true;
+      })(it);
+    });
+    return any;
+  };
+
   /* ---------------- 개별 변형 (Transform Each) ---------------- */
   /* 선택한 오브젝트를 각자의 기준점을 중심으로 변형한다.
      random 을 켜면 각 오브젝트마다 0~지정값 사이의 임의 값이 적용된다. */

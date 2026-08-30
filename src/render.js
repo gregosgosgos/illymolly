@@ -1144,7 +1144,10 @@
 
       /* 바운딩 박스 */
       if (!directMode && app.sel.length && app.prefs.bbox !== false) drawBBox(ctx, app, mainColor);
-      if (app.prefs.cornerWidgets !== false) drawCornerWidgets(ctx, app, mainColor);
+      if (app.prefs.cornerWidgets !== false) {
+        drawCornerWidgets(ctx, app, mainColor);
+        drawLiveWidgets(ctx, app, mainColor);
+      }
 
       /* 직접 선택: 앵커/핸들 */
       if (directMode) drawAnchors(ctx, app, vm, lc);
@@ -1280,6 +1283,74 @@
       })
     };
   };
+
+  /* ---------------- 라이브 셰이프 위젯 ----------------
+     원형: 파이 시작 · 끝 각도 손잡이  ·  다각형/별: 변(점) 개수 손잡이
+     (일러스트레이터의 라이브 셰이프 위젯과 같은 자리에 둔다) */
+  Rn.liveWidgets = function (app) {
+    if (app.sel.length !== 1) return null;
+    var it = app.sel[0];
+    if (it.type !== 'path' || !it.shape) return null;
+    var sh = it.shape;
+    var wm = M.mul(AI.viewT.matrix(app), Model.worldMatrix(app.doc, it));
+    var sc = Math.hypot(wm[0], wm[1]) || 1;
+    var pts = [];
+
+    if (sh.kind === 'ellipse') {
+      var rx = sh.w / 2, ry = sh.h / 2;
+      if (Math.min(Math.abs(sh.w), Math.abs(sh.h)) * sc < 30) return null;
+      var pie = sh.pie || { start: 0, end: 360 };
+      function onEdge(deg, k) {
+        var a = U.rad(deg);
+        return M.apply(wm, rx + Math.cos(a) * rx * k, ry + Math.sin(a) * ry * k);
+      }
+      /* 온전한 원이면 두 손잡이가 정확히 겹친다. 일러스트레이터처럼 시작 쪽을
+         안으로 조금 당겨 두 개를 따로 집을 수 있게 한다. */
+      var s0 = onEdge(pie.start, 1), e0 = onEdge(pie.end, 1);
+      var k0 = U.dist(s0.x, s0.y, e0.x, e0.y) < 9 ? 0.78 : 1;
+      var sp = k0 === 1 ? s0 : onEdge(pie.start, k0);
+      pts.push({ kind: 'pieStart', x: sp.x, y: sp.y, angle: pie.start });
+      pts.push({ kind: 'pieEnd', x: e0.x, y: e0.y, angle: pie.end });
+    } else if (sh.kind === 'polygon' || sh.kind === 'star') {
+      if (sh.r * sc < 18) return null;
+      /* 도형 오른쪽 바깥 — 위아래로 끌어 변(점) 개수를 바꾼다 */
+      var c = M.apply(wm, sh.r, sh.r);
+      var e = M.apply(wm, sh.r * 2, sh.r);
+      var dx = e.x - c.x, dy = e.y - c.y, l = Math.hypot(dx, dy) || 1;
+      pts.push({ kind: 'sides', x: e.x + dx / l * 13, y: e.y + dy / l * 13, n: sh.n });
+    }
+    return pts.length ? { item: it, pts: pts } : null;
+  };
+
+  function drawLiveWidgets(ctx, app, color) {
+    var lw = Rn.liveWidgets(app);
+    if (!lw) return;
+    color = color || UIC.box;
+    ctx.save();
+    lw.pts.forEach(function (p) {
+      ctx.beginPath();
+      if (p.kind === 'sides') {
+        /* 마름모 — 개수를 바꾸는 손잡이 */
+        ctx.moveTo(p.x, p.y - 5); ctx.lineTo(p.x + 5, p.y);
+        ctx.lineTo(p.x, p.y + 5); ctx.lineTo(p.x - 5, p.y);
+        ctx.closePath();
+      } else {
+        ctx.arc(p.x, p.y, 4.5, 0, 6.2832);
+      }
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.2;
+      ctx.fill(); ctx.stroke();
+      if (p.kind === 'sides') {
+        ctx.beginPath();
+        ctx.moveTo(p.x - 2, p.y - 1); ctx.lineTo(p.x + 2, p.y - 1);
+        ctx.moveTo(p.x - 2, p.y + 1); ctx.lineTo(p.x + 2, p.y + 1);
+        ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.stroke();
+      }
+    });
+    ctx.restore();
+  }
+  Rn.drawLiveWidgets = drawLiveWidgets;
 
   function drawCornerWidgets(ctx, app, color) {
     var cw = Rn.cornerWidgets(app);

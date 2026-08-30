@@ -1282,6 +1282,18 @@
         so[tool] = so[tool] || {}; so[tool].r = Math.max(0, v);
         if (E.updateShape(a, ['rect'], 'r', Math.max(0, v))) return true;
       }, '모퉁이 반경']);
+    } else if (tool === 'ellipse') {
+      /* 원형 파이 각도 — 선택한 타원이 있으면 바로 반영된다 */
+      html = optNum('파이 시작', 'to-p0', U.fmt(shapeOpt('ellipse', 'pieStart', 0)), '파이 시작 각도(°)', null, 48) +
+        optNum('끝', 'to-p1', U.fmt(shapeOpt('ellipse', 'pieEnd', 360)), '파이 끝 각도(°)', null, 48);
+      wire.push(['to-p0', function (v) {
+        so.ellipse.pieStart = v;
+        return E.updatePie(a, v, null);
+      }, '파이 시작 각도']);
+      wire.push(['to-p1', function (v) {
+        so.ellipse.pieEnd = v;
+        return E.updatePie(a, null, v);
+      }, '파이 끝 각도']);
     } else if (tool === 'polygon') {
       html = optNum('변', 'to-n', shapeOpt('polygon', 'n', 6), '변의 수', null, 44);
       wire.push(['to-n', function (v) {

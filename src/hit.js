@@ -249,6 +249,18 @@
     return null;
   };
 
+  /* 라이브 셰이프 위젯 히트 (원형 파이 각도 · 다각형 변 수) */
+  H.liveWidgetAt = function (app, sx, sy) {
+    var lw = Rn.liveWidgets(app);
+    if (!lw) return null;
+    var best = null, bd = 7;
+    for (var i = 0; i < lw.pts.length; i++) {
+      var p = lw.pts[i], d = U.dist(p.x, p.y, sx, sy);
+      if (d <= bd) { bd = d; best = p; }
+    }
+    return best ? { item: lw.item, pt: best } : null;
+  };
+
   /* 바운딩 박스 핸들 히트: 0..7 인덱스 / 'rotate' / null */
   H.bboxHandleAt = function (app, sx, sy) {
     var f = Rn.bboxFrame(app);

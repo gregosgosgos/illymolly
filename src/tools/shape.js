@@ -32,7 +32,15 @@
     var it;
     if (kind === 'rect') it = Model.newRect(x, y, w, h, extra && extra.r);
     else if (kind === 'roundrect') it = Model.newRect(x, y, w, h, (extra && extra.r != null) ? extra.r : Math.min(Math.abs(w), Math.abs(h)) * 0.2);
-    else if (kind === 'ellipse') it = Model.newEllipse(x, y, w, h);
+    else if (kind === 'ellipse') {
+      it = Model.newEllipse(x, y, w, h);
+      /* 도구가 기억하고 있는 파이 각도를 새 타원에도 적용한다 (일러스트레이터와 같다) */
+      if (extra && Math.abs((((extra.pieEnd - extra.pieStart) % 360) + 360) % 360) > 0.001) {
+        it.shape.pie = { start: extra.pieStart, end: extra.pieEnd };
+        it.name = '파이';
+        Model.buildShape(it);
+      }
+    }
     else if (kind === 'polygon') it = Model.newPolygon(x, y, Math.max(Math.abs(w), 1), extra.n);
     else if (kind === 'star') it = Model.newStar(x, y, Math.max(Math.abs(w), 1), Math.max(Math.abs(w), 1) * (extra.ratio || 0.5), extra.n);
     else it = Model.newLine(x, y, x + w, y + h);
@@ -52,7 +60,9 @@
           kind: kind, start: d, item: null, moved: false,
           n: o.n || (defaults && defaults.n) || 6,
           r: kind === 'roundrect' ? (o.r == null ? null : o.r) : (o.r || 0),
-          ratio: o.ratio == null ? 0.5 : o.ratio
+          ratio: o.ratio == null ? 0.5 : o.ratio,
+          pieStart: o.pieStart || 0,
+          pieEnd: o.pieEnd == null ? 360 : o.pieEnd
         };
       },
       onMove: function (app, e) {
@@ -76,9 +86,9 @@
           it = makeShape(app, kind, sx, sy, rr, rr, { n: st.n, ratio: st.ratio });
           it.m = M.mulAll(M.translate(sx, sy), M.rotate(e.shift ? 0 : ang), M.translate(-rr, -rr));
         } else if (w < 0 || h < 0) {
-          it = makeShape(app, kind, Math.min(x, x + w), Math.min(y, y + h), Math.abs(w), Math.abs(h), { r: st.r });
+          it = makeShape(app, kind, Math.min(x, x + w), Math.min(y, y + h), Math.abs(w), Math.abs(h), { r: st.r, pieStart: st.pieStart, pieEnd: st.pieEnd });
         } else {
-          it = makeShape(app, kind, x, y, w, h, { r: st.r });
+          it = makeShape(app, kind, x, y, w, h, { r: st.r, pieStart: st.pieStart, pieEnd: st.pieEnd });
         }
         place(app, it);
         st.item = it;

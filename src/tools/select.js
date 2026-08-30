@@ -23,6 +23,18 @@
       st = { kind: 'corner', it: cwHit.item, pt: cwHit.pt, moved: false, r0: cwHit.item.shape.r || 0 };
       return;
     }
+    /* 0-b) 라이브 셰이프 위젯 — 원형 파이 각도 · 다각형 변 수 */
+    var lwHit = H.liveWidgetAt(app, e.x, e.y);
+    if (lwHit) {
+      var sh0 = lwHit.item.shape;
+      app.history.begin(lwHit.pt.kind === 'sides' ? '변의 수' : '파이 각도', app.doc);
+      st = {
+        kind: 'live', it: lwHit.item, pt: lwHit.pt, moved: false,
+        n0: sh0.n, y0: e.y,
+        pie0: sh0.pie ? { start: sh0.pie.start, end: sh0.pie.end } : { start: 0, end: 360 }
+      };
+      return;
+    }
     /* 1) 바운딩 박스 핸들 */
     if (app.sel.length) {
       var hh = H.bboxHandleAt(app, e.x, e.y);
@@ -130,8 +142,39 @@
       AI.ui && AI.ui.buildToolOptions && AI.ui.buildToolOptions(app);
       return;
     }
+    if (st.kind === 'live') { doLiveWidget(app, e); return; }
     if (st.kind === 'scale') { doScale(app, e); return; }
     if (st.kind === 'rotate') { doRotate(app, e); return; }
+  }
+
+  /* 라이브 셰이프 위젯 끌기 */
+  function doLiveWidget(app, e) {
+    st.moved = true;
+    var it = st.it, sh = it.shape;
+    if (st.pt.kind === 'sides') {
+      /* 위로 끌면 늘고 아래로 끌면 준다 — 화면 8px 마다 하나 */
+      var d = Math.round((st.y0 - e.y) / 8);
+      var lim = sh.kind === 'star' ? 3 : 3;
+      sh.n = U.clamp(st.n0 + d, lim, 60);
+      app.hudText = (sh.kind === 'star' ? '점 ' : '변 ') + sh.n + '개';
+    } else {
+      var inv = M.invert(Model.worldMatrix(app.doc, it));
+      var dd = AI.viewT.toDoc(app, e.x, e.y);
+      var lp = M.apply(inv, dd.x, dd.y);
+      var rx = sh.w / 2, ry = sh.h / 2;
+      var ang = Math.atan2((lp.y - ry) / (ry || 1), (lp.x - rx) / (rx || 1)) * 180 / Math.PI;
+      if (e.shift) ang = Math.round(ang / 15) * 15;
+      ang = ((ang % 360) + 360) % 360;
+      var pie = sh.pie || { start: st.pie0.start, end: st.pie0.end };
+      if (st.pt.kind === 'pieStart') pie.start = ang; else pie.end = ang;
+      sh.pie = pie;
+      /* 두 각이 같아지면 온전한 원으로 되돌린다 */
+      if (Math.abs(((pie.end - pie.start) % 360 + 360) % 360) < 0.001) delete sh.pie;
+      app.hudText = '파이 ' + U.fmt(Model.pieSpan(sh)) + '°';
+    }
+    Model.buildShape(it);
+    app.invalidate();
+    AI.ui && AI.ui.buildToolOptions && AI.ui.buildToolOptions(app);
   }
 
   function restore(app) {
@@ -231,7 +274,7 @@
         return;
       }
     }
-    if (H.cornerWidgetAt(app, e.x, e.y)) { C.set(app, 'pointer'); return; }
+    if (H.cornerWidgetAt(app, e.x, e.y) || H.liveWidgetAt(app, e.x, e.y)) { C.set(app, 'pointer'); return; }
     var hit = H.itemAt(app, e.x, e.y, false);
     if (app.prefs.smart) {
       if (app.hoverItem !== hit) { app.hoverItem = hit; app.invalidate(); }
@@ -262,7 +305,7 @@
       }
     },
     drawUI: function (ctx, app) {
-      if (app.hudText && st && st.kind === 'corner') {
+      if (app.hudText && st && (st.kind === 'corner' || st.kind === 'live')) {
         ctx.save();
         ctx.font = '11px sans-serif';
         var w = ctx.measureText(app.hudText).width + 10;

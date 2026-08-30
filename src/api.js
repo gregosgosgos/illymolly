@@ -405,10 +405,20 @@
     radius: p('number', '모퉁이 반경', { default: 0 })
   }, function (ctx, a) { return Model.newRect(a.x, a.y, a.width, a.height, a.radius || 0); });
 
-  shapeOp('addEllipse', '생성', '타원을 추가합니다.', {
+  shapeOp('addEllipse', '생성', '타원을 추가합니다. 파이 각도를 주면 부채꼴이 됩니다.', {
     x: p('number', '바운딩 왼쪽', { required: true }), y: p('number', '바운딩 위쪽', { required: true }),
-    width: p('number', '폭', { required: true }), height: p('number', '높이', { required: true })
-  }, function (ctx, a) { return Model.newEllipse(a.x, a.y, a.width, a.height); });
+    width: p('number', '폭', { required: true }), height: p('number', '높이', { required: true }),
+    pieStart: p('number', '파이 시작 각도 (°, 0 = 오른쪽)', { default: 0 }),
+    pieEnd: p('number', '파이 끝 각도 (°)', { default: 360 })
+  }, function (ctx, a) {
+    var it = Model.newEllipse(a.x, a.y, a.width, a.height);
+    if (Math.abs((((a.pieEnd - a.pieStart) % 360) + 360) % 360) > 0.001) {
+      it.shape.pie = { start: a.pieStart, end: a.pieEnd };
+      it.name = '파이';
+      Model.buildShape(it);
+    }
+    return it;
+  });
 
   shapeOp('addPolygon', '생성', '정다각형을 추가합니다.', {
     cx: p('number', '중심 x', { required: true }), cy: p('number', '중심 y', { required: true }),
@@ -741,6 +751,8 @@
       o.align = p('string', '문단 정렬', { enum: ['left', 'center', 'right'] });
       o.radius = p('number', '모퉁이 반경 (라이브 사각형)');
       o.sides = p('number', '변/점 개수 (다각형·별)');
+      o.pieStart = p('number', '파이 시작 각도 ° (라이브 원형)');
+      o.pieEnd = p('number', '파이 끝 각도 ° (라이브 원형)');
       return o;
     })(),
     returns: 'id[]',
@@ -769,6 +781,14 @@
           if (a.radius != null && it.shape.kind === 'rect') { it.shape.r = Math.max(0, a.radius); changed = true; }
           if (a.sides != null && (it.shape.kind === 'polygon' || it.shape.kind === 'star')) {
             it.shape.n = Math.max(3, Math.round(a.sides)); changed = true;
+          }
+          if ((a.pieStart != null || a.pieEnd != null) && it.shape.kind === 'ellipse') {
+            var pie = it.shape.pie || { start: 0, end: 360 };
+            if (a.pieStart != null) pie.start = a.pieStart;
+            if (a.pieEnd != null) pie.end = a.pieEnd;
+            if (Math.abs((((pie.end - pie.start) % 360) + 360) % 360) < 0.001) delete it.shape.pie;
+            else it.shape.pie = pie;
+            changed = true;
           }
           if (changed) Model.buildShape(it);
         }

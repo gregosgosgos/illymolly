@@ -267,7 +267,10 @@
     ]; } },
     ellipse: { title: '타원', fields: function (o) { return [
       { id: 'w', label: '폭', type: 'num', value: o.w || 100, unit: 'pt' },
-      { id: 'h', label: '높이', type: 'num', value: o.h || 100, unit: 'pt' }
+      { id: 'h', label: '높이', type: 'num', value: o.h || 100, unit: 'pt' },
+      { type: 'sep' },
+      { id: 'pieStart', label: '파이 시작 각도', type: 'num', value: o.pieStart || 0, unit: '°' },
+      { id: 'pieEnd', label: '파이 끝 각도', type: 'num', value: o.pieEnd == null ? 360 : o.pieEnd, unit: '°' }
     ]; } },
     polygon: { title: '다각형', fields: function (o) { return [
       { id: 'rad', label: '반경', type: 'num', value: o.rad || 50, unit: 'pt' },
@@ -293,7 +296,8 @@
     var stored = {
       w: o.lastW, h: o.lastH, r: o.r,
       rad: o.lastRad, n: o.n, r1: o.lastRad, r2: o.lastRad2,
-      len: o.lastLen, angle: o.lastAngle
+      len: o.lastLen, angle: o.lastAngle,
+      pieStart: o.pieStart, pieEnd: o.pieEnd
     };
     D.open({
       title: def.title,
@@ -305,7 +309,13 @@
           it = Model.newRect(at.x - v.w / 2, at.y - v.h / 2, v.w, v.h, v.r);
         } else if (kind === 'ellipse') {
           o.lastW = v.w; o.lastH = v.h;
+          o.pieStart = v.pieStart; o.pieEnd = v.pieEnd;
           it = Model.newEllipse(at.x - v.w / 2, at.y - v.h / 2, v.w, v.h);
+          if (Math.abs((((v.pieEnd - v.pieStart) % 360) + 360) % 360) > 0.001) {
+            it.shape.pie = { start: v.pieStart, end: v.pieEnd };
+            it.name = '파이';
+            Model.buildShape(it);
+          }
         } else if (kind === 'polygon') {
           o.lastRad = v.rad; o.n = Math.max(3, Math.round(v.n));
           it = Model.newPolygon(at.x, at.y, v.rad, o.n);
