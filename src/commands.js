@@ -256,9 +256,24 @@
     a.sel.forEach(function (it) { if (it.type === 'text') { it.text.size = Math.max(1, it.text.size + d); any = true; } });
     return any ? undefined : false;
   }
-  def('createOutlines', '윤곽선 만들기', 'Ctrl+Shift+O', function (a) {
-    U.toast('텍스트 윤곽선 변환은 지원되지 않습니다 (브라우저 글꼴 제약)');
-  });
+  def('createOutlines', '윤곽선 만들기', 'Ctrl+Shift+O', hist('윤곽선 만들기', function (a) {
+    var texts = a.sel.filter(function (it) { return it.type === 'text'; });
+    if (!texts.length) { U.toast('텍스트를 선택하세요'); return false; }
+    if (!AI.trace || !U.hasDOM) { U.toast('브라우저에서만 사용할 수 있습니다'); return false; }
+    var made = [], ok = 0;
+    texts.forEach(function (it) {
+      var outline = AI.trace.textToOutlines(a, it);
+      if (!outline) { made.push(it); return; }
+      var loc = Model.locate(a.doc, it);
+      if (loc) loc.list.splice(loc.index, 1, outline);
+      else Model.activeLayer(a.doc).children.push(outline);
+      made.push(outline);
+      ok++;
+    });
+    if (!ok) { U.toast('윤곽선으로 바꿀 수 없었습니다'); return false; }
+    AI.sel.set(a, made);
+    U.toast(ok + '개 텍스트를 윤곽선으로 변환');
+  }), { enabled: function (a) { return a.sel.some(function (i) { return i.type === 'text'; }); } });
 
   /* ================= 보기 ================= */
   def('outlineMode', '윤곽선 보기', 'Ctrl+Y', function (a) { a.prefs.outline = !a.prefs.outline; }, { checked: function (a) { return a.prefs.outline; } });
@@ -349,13 +364,61 @@
     U.toast('효과 지움');
   }), { enabled: hasSel });
   def('expandAppearance', '모양 확장', null, hist('모양 확장', function (a) {
-    /* 흐림·그림자는 래스터 효과라 벡터로 확장할 수 없다 — 일러스트레이터처럼
-       모양을 확정하는 대신, 확장 불가임을 알리고 효과는 그대로 둔다. */
-    var n = a.sel.filter(function (it) { return AI.effects.has(it); }).length;
-    if (!n) { U.toast('확장할 모양이 없습니다'); return false; }
-    U.toast('래스터 효과(흐림·그림자·광선)는 벡터로 확장되지 않습니다');
-    return false;
+    var made = [], expanded = 0, rasterLeft = 0;
+    a.sel.slice().forEach(function (it) {
+      var parts = AI.appearance.expand(it);
+      if (!parts) {
+        if (AI.effects.has(it)) rasterLeft++;
+        made.push(it);
+        return;
+      }
+      /* 각 겹을 실제 오브젝트로 펼치고 원본 자리에 그룹으로 넣는다 */
+      var g = Model.newGroup(parts);
+      g.name = it.name + ' (확장)';
+      g.m = it.m.slice();
+      g.opacity = it.opacity;
+      g.blend = it.blend;
+      if (AI.effects.has(it)) g.effects = U.deepCopy(it.effects);
+      parts.forEach(function (c) { c.m = M.ident(); });
+      var loc = Model.locate(a.doc, it);
+      if (loc) loc.list.splice(loc.index, 1, g); else Model.activeLayer(a.doc).children.push(g);
+      made.push(g);
+      expanded++;
+    });
+    if (!expanded) {
+      U.toast(rasterLeft ? '래스터 효과(흐림·그림자·광선)는 벡터로 확장되지 않습니다' : '확장할 모양이 없습니다');
+      return false;
+    }
+    AI.sel.set(a, made);
+    U.toast(expanded + '개 모양 확장됨' + (rasterLeft ? ' (래스터 효과는 유지)' : ''));
   }), { enabled: hasSel });
+
+  /* ================= 투명도 · 블렌드 ================= */
+  def('opacityMaskMake', '불투명도 마스크 만들기', null, hist('불투명도 마스크', function (a) {
+    return E.makeOpacityMask(a);
+  }), { enabled: function (a) { return a.sel.length > 1; } });
+  def('opacityMaskRelease', '불투명도 마스크 해제', null, hist('마스크 해제', function (a) {
+    return E.releaseOpacityMask(a);
+  }));
+  def('opacityMaskInvert', '마스크 반전', null, hist('마스크 반전', function (a) {
+    var any = false;
+    a.sel.forEach(function (it) { if (it.opacityMask) { it.maskInvert = !it.maskInvert; any = true; } });
+    if (!any) { U.toast('불투명도 마스크가 없습니다'); return false; }
+  }));
+  def('blendMake', '블렌드 만들기', 'Ctrl+Alt+B', hist('블렌드', function (a) {
+    return E.blend(a, (a.blendOpts && a.blendOpts.steps) || 5);
+  }), { enabled: function (a) { return a.sel.length > 1; } });
+  def('blendOptions', '블렌드 옵션...', null, function (a) { AI.dialogs.blendOptions(a); });
+  def('blendRelease', '블렌드 해제', 'Ctrl+Alt+Shift+B', hist('블렌드 해제', function (a) {
+    if (!a.sel.some(function (i) { return i.type === 'group' && i.blendSpine; })) {
+      U.toast('블렌드 그룹을 선택하세요'); return false;
+    }
+    E.ungroup(a);
+  }));
+
+  /* ================= 패스 ================= */
+  def('offsetPath', '패스 이동...', null, function (a) { AI.dialogs.offsetPath(a); }, { enabled: hasSel });
+  def('simplifyPath', '단순화...', null, function (a) { AI.dialogs.simplify(a); }, { enabled: hasSel });
 
   /* ================= 이미지 ================= */
   def('cropImage', '이미지 자르기', null, hist('이미지 자르기', function (a) { return E.cropImage(a); }), {
@@ -511,8 +574,11 @@
         'reflectH', 'reflectV', '-',
         'bringToFront', 'bringForward', 'sendBackward', 'sendToBack', '-',
         'group', 'ungroup', '-', 'lock', 'unlockAll', 'hide', 'showAll', '-',
-        'clipMake', 'clipRelease', '-', 'compoundMake', 'compoundRelease', '-',
-        'joinPath', 'averagePath', 'outlineStroke', '-',
+        'clipMake', 'clipRelease', '-', 'opacityMaskMake', 'opacityMaskRelease', 'opacityMaskInvert', '-',
+        'blendMake', 'blendOptions', 'blendRelease', '-',
+        'compoundMake', 'compoundRelease', '-',
+        'joinPath', 'averagePath', 'outlineStroke', 'offsetPath', 'simplifyPath', '-',
+        'expandAppearance', '-',
         'imageTrace', 'cropImage', '-',
         'mergeLayers', 'releaseToLayers', 'collectInNewLayer', '-',
         'fitArtboardToSelection', 'fitArtboardToArtwork', '-',

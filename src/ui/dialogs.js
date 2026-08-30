@@ -698,4 +698,90 @@
       }
     });
   };
+
+  /* ---------- 패스 이동 (Offset Path) ---------- */
+  Dlg.offsetPath = function (app) {
+    if (!app.sel.length) { U.toast('오브젝트를 먼저 선택하세요'); return; }
+    D.open({
+      title: '패스 이동',
+      fields: [
+        { id: 'offset', label: '이동', type: 'num', value: 10, unit: 'pt' },
+        { id: 'replace', label: '원본 대체', type: 'check', value: false },
+        { id: 'info', label: '음수를 넣으면 안쪽으로 줄어듭니다', type: 'info' }
+      ],
+      onDone: function (v) {
+        app.history.begin('패스 이동', app.doc);
+        if (E.offsetPath(app, v.offset, { replace: v.replace }) === false) app.history.abort();
+        else { app.history.commit(); U.toast('패스 이동 ' + U.fmt(v.offset) + 'pt'); }
+        app.invalidate();
+        AI.ui.syncAll(app);
+      }
+    });
+  };
+
+  /* ---------- 단순화 (Simplify) ---------- */
+  Dlg.simplify = function (app) {
+    if (!app.sel.length) { U.toast('오브젝트를 먼저 선택하세요'); return; }
+    var snap = app.sel.map(function (it) { return U.deepCopy(it.subs); });
+    var shapes = app.sel.map(function (it) { return it.shape ? U.deepCopy(it.shape) : null; });
+    function restore() {
+      app.sel.forEach(function (it, i) {
+        if (snap[i]) it.subs = U.deepCopy(snap[i]);
+        it.shape = shapes[i] ? U.deepCopy(shapes[i]) : null;
+      });
+    }
+    function setInfo(r) {
+      var el = document.querySelector('.dlg-info');
+      if (el) el.textContent = r ? ('앵커 ' + r.before + ' → ' + r.after) : '미리 보기를 켜면 결과를 볼 수 있습니다';
+    }
+    D.open({
+      title: '단순화',
+      fields: [
+        { id: 'precision', label: '곡선 정밀도', type: 'num', value: 90, unit: '%' },
+        { id: 'angle', label: '각도 한계값', type: 'num', value: 0, unit: '°' },
+        { id: 'curves', label: '곡선으로 맞춤', type: 'check', value: true },
+        { type: 'sep' },
+        { id: 'preview', label: '미리 보기', type: 'check', value: true },
+        { id: 'info', label: '앵커 —', type: 'info' }
+      ],
+      onChange: function (v) {
+        restore();
+        if (v.preview !== false) setInfo(E.simplifyPaths(app, v) || null);
+        else setInfo(null);
+        app.invalidate();
+      },
+      onDone: function (v) {
+        restore();
+        app.history.begin('단순화', app.doc);
+        var r = E.simplifyPaths(app, v);
+        if (r === false) { app.history.abort(); U.toast('단순화할 패스가 없습니다'); }
+        else { app.history.commit(); U.toast('앵커 ' + r.before + ' → ' + r.after); }
+        app.invalidate();
+        AI.ui.syncAll(app);
+      },
+      onCancel: function () { restore(); app.invalidate(); AI.ui.syncAll(app); }
+    });
+  };
+
+  /* ---------- 블렌드 옵션 ---------- */
+  Dlg.blendOptions = function (app) {
+    app.blendOpts = app.blendOpts || { steps: 5 };
+    D.open({
+      title: '블렌드 옵션',
+      fields: [
+        { id: 'mode', label: '간격', type: 'select', value: 'steps', width: 130,
+          options: [['steps', '지정된 단계'], ['smooth', '매끄러운 색상']] },
+        { id: 'steps', label: '단계', type: 'num', value: app.blendOpts.steps, step: 1 },
+        { id: 'info', label: '2개 이상 선택한 뒤 Ctrl+Alt+B 로 만듭니다', type: 'info' }
+      ],
+      onChange: function (v, changed, a) {
+        if (changed === 'mode' && v.mode === 'smooth') a.set('steps', 24);
+      },
+      onDone: function (v) {
+        app.blendOpts.steps = U.clamp(Math.round(v.steps), 1, 200);
+        if (app.sel.length > 1) AI.commands.run('blendMake');
+        else U.toast('블렌드 단계: ' + app.blendOpts.steps);
+      }
+    });
+  };
 })(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

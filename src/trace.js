@@ -30,10 +30,10 @@
   var MAX_SIDE = 640;   /* 작업 해상도 상한 — Illustrator 도 내부적으로 축소한다 */
 
   /* ---------- 픽셀 읽기 ---------- */
-  function readPixels(img) {
+  function readPixels(img, maxSide) {
     var iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
     if (!iw || !ih) return null;
-    var k = Math.min(1, MAX_SIDE / Math.max(iw, ih));
+    var k = Math.min(1, (maxSide || MAX_SIDE) / Math.max(iw, ih));
     var w = Math.max(1, Math.round(iw * k)), h = Math.max(1, Math.round(ih * k));
     var cv = document.createElement('canvas');
     cv.width = w; cv.height = h;
@@ -144,7 +144,7 @@
   /* img: HTMLImageElement, opt: {mode, colors, threshold, path, noise}
      반환: [{ color:'#rrggbb', rings:[[{x,y}…]] }]  — 좌표는 이미지 픽셀 기준 */
   TR.traceImage = function (img, opt) {
-    var px = readPixels(img);
+    var px = readPixels(img, opt && opt.maxSide);
     if (!px) return [];
     var w = px.w, h = px.h, data = px.data;
     var layers = [];
@@ -244,4 +244,93 @@
     g.m = imageItem.m.slice();
     return g;
   };
+
+  /* ---------- 텍스트 → 윤곽선 ----------
+     브라우저는 글리프의 실제 아웃라인을 주지 않는다. 그래서 글자를 아주 크게
+     (기본 8배) 래스터라이즈한 뒤 같은 등고선 추적 엔진으로 벡터화한다.
+     배율이 높을수록 곡선이 매끄럽지만 시간이 든다.                           */
+  TR.textToOutlines = function (app, it, opt) {
+    opt = opt || {};
+    if (!U.hasDOM) return null;
+    var t = it.text;
+    var Rn = AI.render;
+    var L = Rn.layoutText(it);
+    var b = Rn.localBounds(it);
+    var bw = b.x2 - b.x, bh = b.y2 - b.y;
+    if (bw < 0.5 || bh < 0.5) return null;
+
+    var SS = U.clamp(opt.supersample == null ? 8 : opt.supersample, 2, 16);
+    var pad = Math.ceil(t.size * SS * 0.35);
+    var cw = Math.ceil(bw * SS) + pad * 2, ch = Math.ceil(bh * SS) + pad * 2;
+    /* 너무 큰 캔버스는 만들지 않는다 — 배율을 낮춰서라도 항상 결과를 낸다 */
+    while ((cw > 4096 || ch > 4096) && SS > 2) {
+      SS = SS / 2;
+      pad = Math.ceil(t.size * SS * 0.35);
+      cw = Math.ceil(bw * SS) + pad * 2; ch = Math.ceil(bh * SS) + pad * 2;
+    }
+    var cv = document.createElement('canvas');
+    cv.width = cw; cv.height = ch;
+    var ctx = cv.getContext('2d', { willReadFrequently: true });
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, cw, ch);
+    ctx.fillStyle = '#000000';
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign = t.area ? 'left' : (t.align === 'center' ? 'center' : t.align === 'right' ? 'right' : 'left');
+    ctx.font = Rn.fontCss(t).replace(/(\d+(?:\.\d+)?)px/, function (_, n) { return (parseFloat(n) * SS) + 'px'; });
+    var tr = (t.tracking || 0) * SS;
+    for (var i = 0; i < L.lines.length; i++) {
+      var lx = ((t.area ? (L.xs[i] || 0) : 0) - b.x) * SS + pad;
+      var ly = ((t.area ? (L.asc + i * L.lineH) : (i * L.lineH)) - b.y) * SS + pad;
+      if (tr) {
+        var cx = lx, line = L.lines[i];
+        var prev = ctx.textAlign; ctx.textAlign = 'left';
+        if (!t.area) {
+          var wfull = ctx.measureText(line).width + Math.max(0, line.length - 1) * tr;
+          cx = (t.align === 'center' ? -wfull / 2 : t.align === 'right' ? -wfull : 0) - b.x * SS + pad;
+        }
+        for (var k = 0; k < line.length; k++) {
+          ctx.fillText(line[k], cx, ly);
+          cx += ctx.measureText(line[k]).width + tr;
+        }
+        ctx.textAlign = prev;
+      } else {
+        ctx.fillText(L.lines[i], lx, ly);
+      }
+    }
+
+    /* traceImage 는 <canvas> 도 그대로 읽는다. 글자는 디테일이 중요하므로
+       기본 작업 해상도(640px)를 쓰지 않고 만든 크기 그대로 추적한다. */
+    var layers = TR.traceImage(cv, {
+      mode: 'bw', threshold: 160, maxSide: Math.max(cw, ch),
+      path: Math.max(0.6, SS * 0.16), noise: Math.max(4, SS * SS * 0.5), curves: true
+    });
+    if (!layers.length || !layers[0].rings.length) return null;
+
+    var children = layers[0].rings.length ? [outlineItem(it, layers[0].rings, SS, pad, b)] : [];
+    if (!children.length) return null;
+    if (children.length === 1) return children[0];
+    var g = Model.newGroup(children);
+    g.m = it.m.slice();
+    return g;
+  };
+
+  function outlineItem(src, rings, SS, pad, b) {
+    var subs = rings.map(function (r) {
+      return {
+        closed: true,
+        pts: G.fitCurve(r.map(function (p) {
+          return { x: (p.x - pad) / SS + b.x, y: (p.y - pad) / SS + b.y };
+        }), 0.35)
+      };
+    });
+    var it = Model.newPath(subs);
+    it.name = (src.text.content || '텍스트').split('\n')[0].slice(0, 12) + ' 윤곽선';
+    it.m = src.m.slice();
+    it.fill = U.deepCopy(src.fill || Col.solid('#000000'));
+    it.stroke = U.deepCopy(src.stroke || Model.defaultStroke());
+    it.opacity = src.opacity;
+    it.blend = src.blend;
+    if (src.effects) it.effects = U.deepCopy(src.effects);
+    return it;
+  }
 })(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

@@ -275,7 +275,28 @@
   };
 
   /* ---------------- 스타일 ---------------- */
+  /* 모양 패널에서 겹을 하나 고른 상태라면 그 겹에만 색을 적용한다 */
+  E.applyPaintToLayer = function (app, paint) {
+    var AP = AI.appearance;
+    if (app.apIndex == null || app.sel.length !== 1) return false;
+    var it = app.sel[0];
+    if (!AP.supports(it) || !AP.isCustom(it)) return false;
+    var e = AP.entry(it, app.apIndex);
+    if (!e) return false;
+    if (e.kind === 'fill') e.paint = U.deepCopy(paint);
+    else {
+      var s = e.stroke || Model.defaultStroke();
+      if (paint.type === 'none') s.type = 'none';
+      else if (paint.type === 'solid') { s.type = 'solid'; s.color = paint.color; s.alpha = paint.alpha; }
+      else Object.keys(paint).forEach(function (k) { s[k] = U.deepCopy(paint[k]); });
+      e.stroke = s;
+    }
+    AP.sync(it);
+    return true;
+  };
+
   E.applyPaint = function (app, paint, which) {
+    if (E.applyPaintToLayer(app, paint)) return;
     var targets = app.sel.length ? app.sel : [];
     targets.forEach(function (it) {
       (function rec(o) {
@@ -290,6 +311,7 @@
         } else {
           o.fill = U.deepCopy(paint);
         }
+        AI.appearance.pushDown(o);
       })(it);
     });
   };
@@ -300,6 +322,7 @@
         o.stroke = o.stroke || Model.defaultStroke();
         o.stroke[key] = value;
         if (key === 'width' && o.stroke.type === 'none') o.stroke.type = 'solid';
+        AI.appearance.pushDown(o);
       })(it);
     });
   };
@@ -364,6 +387,135 @@
     });
   };
 
+  /* ---------------- 패스 이동 (Offset Path) ---------------- */
+  /* 링을 각 꼭짓점의 각 이등분선 방향으로 밀어낸 뒤(마이터 제한 적용),
+     생기는 자체 교차를 평면 분할 + 감김수(nonzero)로 정리한다.
+     에지마다 불리언을 돌리는 방식보다 훨씬 빠르면서 결과는 같다. */
+  function offsetRing(ring, d) {
+    var n = ring.length;
+    if (n < 3) return null;
+    /* 링 자체 방향(넓이 부호)에 맞춰 바깥 방향을 정한다 — 구멍은 자동으로 반대가 된다 */
+    var sgn = AI.pathfinder.area(ring) > 0 ? 1 : -1;
+    var out = [];
+    for (var i = 0; i < n; i++) {
+      var p = ring[i], a = ring[(i - 1 + n) % n], b = ring[(i + 1) % n];
+      var n1 = edgeNormal(a, p), n2 = edgeNormal(p, b);
+      if (!n1 || !n2) continue;
+      var bx = n1.x + n2.x, by = n1.y + n2.y;
+      var len = Math.hypot(bx, by);
+      if (len < 1e-9) continue;                 /* 180° 되돌아가는 지점은 건너뛴다 */
+      bx /= len; by /= len;
+      var cos = bx * n1.x + by * n1.y;          /* 이등분선과 법선 사이 각 */
+      var k = cos < 1e-6 ? 1 : 1 / cos;
+      if (k > 6) k = 6;                          /* 마이터 제한 — 뾰족한 곳이 폭주하지 않게 */
+      out.push({ x: p.x + bx * d * sgn * k, y: p.y + by * d * sgn * k });
+    }
+    return out.length > 2 ? out : null;
+  }
+  function edgeNormal(a, b) {
+    var dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy);
+    if (l < 1e-9) return null;
+    return { x: dy / l, y: -dx / l };            /* 시계 반대 링 기준 바깥 법선 */
+  }
+
+  /* 링 집합을 d 만큼 오프셋한 결과 링들 */
+  E.offsetRings = function (rings, d) {
+    var raw = [];
+    rings.forEach(function (r) {
+      var o = offsetRing(r, d);
+      if (o) raw.push(o);
+    });
+    if (!raw.length) return [];
+    var faces = AI.pathfinder.faces([raw]);
+    var keep = faces.filter(function (f) {
+      var rp = AI.pathfinder.repPoint(f);
+      return AI.pathfinder.pointInRings(raw, rp.x, rp.y);
+    });
+    if (!keep.length) return [];
+    return AI.pathfinder.uniteAll(keep.map(function (f) { return AI.pathfinder.normalize([f]); }));
+  };
+
+  E.offsetPath = function (app, dist, opt) {
+    opt = opt || {};
+    if (!app.sel.length) { U.toast('오브젝트를 먼저 선택하세요'); return false; }
+    if (!dist) { U.toast('이동 거리를 0 이 아닌 값으로 지정하세요'); return false; }
+    var made = [], any = false;
+    app.sel.slice().forEach(function (it) {
+      var rings = itemRings(app, it);
+      if (!rings.length) { made.push(it); return; }
+      var res = E.offsetRings(rings, dist);
+      if (!res.length) { made.push(it); return; }
+      var ni = ringsToItem(app, res, {
+        fill: U.deepCopy(it.fill || Col.solid('#cccccc')),
+        stroke: U.deepCopy(it.stroke || Model.defaultStroke()),
+        opacity: it.opacity
+      });
+      ni.name = it.name + ' 이동';
+      if (opt.replace) {
+        var loc = Model.locate(app.doc, it);
+        if (loc) loc.list.splice(loc.index, 1, ni); else Model.activeLayer(app.doc).children.push(ni);
+      } else {
+        var loc2 = Model.locate(app.doc, it);
+        if (loc2) loc2.list.splice(loc2.index + 1, 0, ni);
+        else Model.activeLayer(app.doc).children.push(ni);
+      }
+      made.push(ni);
+      any = true;
+    });
+    if (!any) { U.toast('패스 이동 결과가 비어 있습니다'); return false; }
+    AI.sel.set(app, made);
+    return true;
+  };
+
+  /* ---------------- 단순화 (Simplify) ---------------- */
+  /* 곡선 정밀도(%)로 평탄화 허용치를 정하고, RDP 로 앵커를 줄인 뒤
+     원하면 다시 곡선으로 맞춘다. 일러스트레이터의 [단순화]와 같은 구성. */
+  E.simplifyPaths = function (app, o) {
+    o = o || {};
+    var precision = U.clamp(o.precision == null ? 90 : o.precision, 1, 100);
+    var angleThreshold = o.angle == null ? 0 : o.angle;
+    var curves = o.curves !== false;
+    var before = 0, after = 0, any = false;
+
+    app.sel.forEach(function (it) {
+      (function rec(node) {
+        if (node.type === 'group') { node.children.forEach(rec); return; }
+        if (node.type !== 'path') return;
+        var b = Rn.worldBounds(app.doc, node, true);
+        var diag = Math.hypot(R.w(b), R.h(b)) || 100;
+        /* 정밀도 100% = 거의 그대로, 1% = 대략 대각선의 5% 까지 허용 */
+        var tol = diag * 0.05 * Math.pow(1 - precision / 100, 1.5);
+        node.subs = node.subs.map(function (sub) {
+          var pts = G.flattenSub(sub, Math.max(tol * 0.25, 0.05));
+          before += sub.pts.length;
+          if (pts.length < 3) { after += sub.pts.length; return sub; }
+          var simp = G.simplify(pts, Math.max(tol, 1e-4));
+          /* 각도 임계값: 지정한 각보다 뾰족한 지점은 코너로 남긴다 */
+          var fitted = curves ? G.fitCurve(simp, Math.max(tol, 0.05)) : simp.map(function (p) { return { x: p.x, y: p.y }; });
+          if (angleThreshold > 0) markCorners(fitted, angleThreshold);
+          after += fitted.length;
+          any = true;
+          return { closed: sub.closed, pts: fitted };
+        });
+        node.shape = null;                 /* 라이브 셰이프는 더 이상 유효하지 않다 */
+      })(it);
+    });
+    if (!any) return false;
+    return { before: before, after: after };
+  };
+
+  function markCorners(pts, deg) {
+    var lim = Math.cos(U.rad(180 - deg));
+    for (var i = 1; i < pts.length - 1; i++) {
+      var a = pts[i - 1], p = pts[i], b = pts[i + 1];
+      var v1 = { x: p.x - a.x, y: p.y - a.y }, v2 = { x: b.x - p.x, y: b.y - p.y };
+      var l1 = Math.hypot(v1.x, v1.y), l2 = Math.hypot(v2.x, v2.y);
+      if (l1 < 1e-9 || l2 < 1e-9) continue;
+      var cos = (v1.x * v2.x + v1.y * v2.y) / (l1 * l2);
+      if (cos < lim) { delete p.ix; delete p.iy; delete p.ox; delete p.oy; }
+    }
+  }
+
   /* ---------------- 이미지 자르기 (Crop Image) ---------------- */
   /* 이미지 + 그 위의 도형을 선택하면 도형의 바운딩으로 이미지를 자른다.
      원본 픽셀은 유지하고 표시할 영역(crop)만 기록한다. */
@@ -403,6 +555,174 @@
     AI.sel.set(app, [img]);
     return true;
   };
+
+  /* ---------------- 불투명도 마스크 ---------------- */
+  /* 맨 앞 오브젝트가 마스크가 되고, 나머지는 내용 그룹이 된다 (투명도 패널) */
+  E.makeOpacityMask = function (app) {
+    if (app.sel.length < 2) { U.toast('2개 이상 선택하세요 (맨 앞이 마스크)'); return false; }
+    var ordered = [];
+    Model.walk(app.doc, function (it) { if (app.sel.indexOf(it) >= 0) ordered.push(it); });
+    var mask = ordered[ordered.length - 1];
+    var content = ordered.slice(0, -1);
+    if (!content.length) return false;
+
+    var anchor = Model.locate(app.doc, content[content.length - 1]);
+    var list = anchor ? anchor.list : Model.activeLayer(app.doc).children;
+    var at = anchor ? anchor.index : list.length;
+    ordered.forEach(function (it) {
+      var l = Model.locate(app.doc, it);
+      if (l) { l.list.splice(l.index, 1); if (l.list === list && l.index < at) at--; }
+    });
+
+    var g = Model.newGroup(content);
+    g.name = '불투명도 마스크';
+    g.opacityMask = mask;                 /* 마스크는 그룹 좌표계에서 자기 m 을 쓴다 */
+    list.splice(Math.min(at + 1, list.length), 0, g);
+    AI.sel.set(app, [g]);
+    return true;
+  };
+
+  E.releaseOpacityMask = function (app) {
+    var any = false;
+    app.sel.slice().forEach(function (it) {
+      if (!it.opacityMask) return;
+      var mask = it.opacityMask;
+      delete it.opacityMask;
+      delete it.maskInvert;
+      var loc = Model.locate(app.doc, it);
+      if (loc) loc.list.splice(loc.index + 1, 0, mask);
+      else Model.activeLayer(app.doc).children.push(mask);
+      any = true;
+    });
+    if (!any) { U.toast('해제할 불투명도 마스크가 없습니다'); return false; }
+    return true;
+  };
+
+  /* ---------------- 블렌드 ---------------- */
+  /* 두 패스를 같은 개수의 점으로 리샘플해 중간 단계를 만든다.
+     칠·획 색도 함께 보간한다 (오브젝트 > 블렌드 > 만들기). */
+  function resample(it, doc, n) {
+    var wm = Model.worldMatrix(doc, it);
+    var polys = G.flattenItem(it, 0.3, wm).filter(function (p) { return p.pts.length > 1; });
+    if (!polys.length) return null;
+    /* 가장 긴 서브패스 하나만 쓴다 — 블렌드는 형태 대응이 1:1 이어야 한다 */
+    var best = polys[0], bestLen = 0;
+    polys.forEach(function (p) {
+      var L = 0;
+      for (var i = 1; i < p.pts.length; i++) L += U.dist(p.pts[i - 1].x, p.pts[i - 1].y, p.pts[i].x, p.pts[i].y);
+      if (L > bestLen) { bestLen = L; best = p; }
+    });
+    var pts = best.pts.slice();
+    if (best.closed) pts.push({ x: pts[0].x, y: pts[0].y });
+    var acc = [0], total = 0;
+    for (var i = 1; i < pts.length; i++) {
+      total += U.dist(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y);
+      acc.push(total);
+    }
+    if (total < 1e-6) return null;
+    var out = [];
+    for (var k = 0; k < n; k++) {
+      var target = (k / n) * total;
+      for (var j = 1; j < acc.length; j++) {
+        if (acc[j] >= target) {
+          var seg = acc[j] - acc[j - 1];
+          var t = seg < 1e-9 ? 0 : (target - acc[j - 1]) / seg;
+          out.push({
+            x: pts[j - 1].x + (pts[j].x - pts[j - 1].x) * t,
+            y: pts[j - 1].y + (pts[j].y - pts[j - 1].y) * t
+          });
+          break;
+        }
+      }
+    }
+    while (out.length < n) out.push({ x: out[out.length - 1].x, y: out[out.length - 1].y });
+    return { pts: out, closed: best.closed };
+  }
+
+  /* 두 링의 시작점을 맞춘다 — 안 맞추면 중간 단계가 꼬인다 */
+  function alignStart(a, b) {
+    var n = a.length, bestK = 0, bestD = Infinity;
+    for (var k = 0; k < n; k++) {
+      var d = 0;
+      for (var i = 0; i < n; i += Math.max(1, Math.floor(n / 16))) {
+        d += U.dist(a[i].x, a[i].y, b[(i + k) % n].x, b[(i + k) % n].y);
+      }
+      if (d < bestD) { bestD = d; bestK = k; }
+    }
+    return b.slice(bestK).concat(b.slice(0, bestK));
+  }
+
+  E.blend = function (app, steps) {
+    if (app.sel.length < 2) { U.toast('2개 이상의 오브젝트를 선택하세요'); return false; }
+    var ordered = [];
+    Model.walk(app.doc, function (it) { if (app.sel.indexOf(it) >= 0) ordered.push(it); });
+    steps = U.clamp(Math.round(steps == null ? 5 : steps), 1, 200);
+    var N = 96;                               /* 리샘플 점 수 */
+    var made = [];
+
+    for (var s = 0; s + 1 < ordered.length; s++) {
+      var A = ordered[s], B = ordered[s + 1];
+      var ra = resample(A, app.doc, N), rb = resample(B, app.doc, N);
+      if (!ra || !rb) continue;
+      var pb = ra.closed && rb.closed ? alignStart(ra.pts, rb.pts) : rb.pts;
+      var fa = colorOfPaint(A.fill), fb = colorOfPaint(B.fill);
+      var sa = A.stroke && A.stroke.type !== 'none' ? A.stroke : null;
+      var sb2 = B.stroke && B.stroke.type !== 'none' ? B.stroke : null;
+      for (var k = 1; k <= steps; k++) {
+        var t = k / (steps + 1);
+        var pts = [];
+        for (var i = 0; i < N; i++) {
+          pts.push({ x: ra.pts[i].x + (pb[i].x - ra.pts[i].x) * t, y: ra.pts[i].y + (pb[i].y - ra.pts[i].y) * t });
+        }
+        var ni = Model.newPath([{ closed: ra.closed && rb.closed, pts: pts }]);
+        ni.m = M.ident();
+        ni.name = '블렌드 단계';
+        ni.fill = (fa && fb) ? Col.solid(mixHex(fa, fb, t)) : U.deepCopy(A.fill || Col.none());
+        if (sa && sb2) {
+          ni.stroke = U.deepCopy(sa);
+          ni.stroke.color = mixHex(sa.color, sb2.color, t);
+          ni.stroke.width = sa.width + (sb2.width - sa.width) * t;
+        } else ni.stroke = Model.defaultStroke();
+        ni.opacity = (A.opacity == null ? 1 : A.opacity) + ((B.opacity == null ? 1 : B.opacity) - (A.opacity == null ? 1 : A.opacity)) * t;
+        made.push(ni);
+      }
+    }
+    if (!made.length) { U.toast('블렌드할 수 없는 조합입니다'); return false; }
+
+    /* 원본은 남기고 그 사이에 단계들을 넣어 하나의 그룹으로 */
+    var first = ordered[0];
+    var loc = Model.locate(app.doc, first);
+    var list = loc ? loc.list : Model.activeLayer(app.doc).children;
+    var at = loc ? loc.index : list.length;
+    ordered.forEach(function (it) {
+      var l = Model.locate(app.doc, it);
+      if (l) { l.list.splice(l.index, 1); if (l.list === list && l.index < at) at--; }
+    });
+    var kids = [ordered[0]];
+    made.forEach(function (x) { kids.push(x); });
+    for (var q = 1; q < ordered.length; q++) kids.push(ordered[q]);
+    /* 원본의 변환을 로컬로 굳혀 그룹 안에서 그대로 보이게 한다 */
+    ordered.forEach(function (it) { it.m = Model.worldMatrix(app.doc, it); });
+    var g = Model.newGroup(kids);
+    g.name = '블렌드';
+    g.blendSpine = { steps: steps };
+    list.splice(Math.max(0, Math.min(at, list.length)), 0, g);
+    AI.sel.set(app, [g]);
+    return true;
+  };
+
+  function colorOfPaint(p) {
+    if (!p || p.type === 'none') return null;
+    if (p.type === 'solid') return p.color;
+    return p.stops && p.stops.length ? p.stops[0].color : null;
+  }
+  function mixHex(a, b, t) {
+    var ca = Col.hexToRgb(a || '#000000'), cb = Col.hexToRgb(b || '#000000');
+    return Col.rgbToHex(
+      Math.round(ca.r + (cb.r - ca.r) * t),
+      Math.round(ca.g + (cb.g - ca.g) * t),
+      Math.round(ca.b + (cb.b - ca.b) * t));
+  }
 
   /* ---------------- 레이어 ---------------- */
   E.mergeLayers = function (app) {

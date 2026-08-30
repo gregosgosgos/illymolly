@@ -11,11 +11,11 @@
   function geomTest(app, it, sx, sy, m) {
     var polys = G.flattenItem(it, 0.4, m);
     if (!polys.length) return false;
-    var fillable = it.fill && it.fill.type !== 'none' && !app.prefs.outline;
+    var fillable = AI.appearance.hasFill(it) && !app.prefs.outline;
     if (fillable && polys.some(function (p) { return p.closed; })) {
       if (G.pointInPolys(polys.filter(function (p) { return p.closed; }), sx, sy)) return true;
     }
-    var sw = (it.stroke && it.stroke.type !== 'none') ? it.stroke.width * (app.view ? app.view.scale : 1) : 0;
+    var sw = AI.appearance.maxStrokeWidth(it) * (app.view ? app.view.scale : 1);
     var tol = Math.max(sw / 2, H.TOL);
     for (var i = 0; i < polys.length; i++) {
       var pts = polys[i].pts, n = pts.length;
@@ -44,10 +44,10 @@
     hctx.setTransform(1, 0, 0, 1, 0, 0);
     hctx.beginPath();
     G.tracePath(hctx, it, m);
-    var fillable = it.fill && it.fill.type !== 'none' && !app.prefs.outline;
+    var fillable = AI.appearance.hasFill(it) && !app.prefs.outline;
     var hasClosed = it.subs.some(function (s) { return s.closed; });
     if (fillable && hasClosed && hctx.isPointInPath(sx, sy, 'nonzero')) return true;
-    var sw = (it.stroke && it.stroke.type !== 'none') ? it.stroke.width * app.view.scale : 0;
+    var sw = AI.appearance.maxStrokeWidth(it) * app.view.scale;
     hctx.lineWidth = Math.max(sw, H.TOL * 2);
     hctx.lineJoin = 'round'; hctx.lineCap = 'round';
     return hctx.isPointInStroke(sx, sy);
@@ -258,12 +258,13 @@
      ======================================================================= */
   var S = AI.sel = {};
 
-  S.clear = function (app) { app.sel = []; app.selPts = []; };
+  S.clear = function (app) { app.sel = []; app.selPts = []; app.apIndex = null; };
   S.set = function (app, items) {
     app.sel = items.slice();
     app.selPts = app.selPts.filter(function (sp) { return app.sel.indexOf(sp.it) >= 0; });
+    app.apIndex = null;   /* 모양 패널에서 고른 겹은 선택이 바뀌면 초기화 */
   };
-  S.add = function (app, it) { if (app.sel.indexOf(it) < 0) app.sel.push(it); };
+  S.add = function (app, it) { if (app.sel.indexOf(it) < 0) app.sel.push(it); app.apIndex = null; };
   S.remove = function (app, it) {
     var i = app.sel.indexOf(it); if (i >= 0) app.sel.splice(i, 1);
     app.selPts = app.selPts.filter(function (sp) { return sp.it !== it; });

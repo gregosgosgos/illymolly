@@ -33,6 +33,8 @@
     shear: '<path d="M4 12 H14 L12 4 H2 Z"/>',
     freetransform: '<rect x="3.5" y="3.5" width="9" height="9"/><rect x="2" y="2" width="3" height="3"/><rect x="11" y="11" width="3" height="3"/>',
     smooth: '<path d="M2 12 C5 4 11 12 14 4"/>',
+    shapebuilder: '<circle cx="6" cy="8" r="4"/><circle cx="10" cy="8" r="4"/><path d="M2.5 13.5 L7 9" stroke-dasharray="1.6 1.4"/>',
+    width: '<path d="M2 8 H14"/><path d="M6 4.5 V11.5M10 3 V13"/>',
     gradient: '<rect x="2.5" y="4.5" width="11" height="7"/><path d="M2.5 11.5 L13.5 4.5"/>',
     eyedropper: '<path d="M3 13 L8.5 7.5"/><path d="M9 6 L12 3 L13.5 4.5 L10.5 7.5z"/>',
     artboard: '<rect x="2.5" y="3.5" width="11" height="9" stroke-dasharray="2 1.6"/>',
@@ -48,9 +50,10 @@
     ['rect', 'roundrect', 'ellipse', 'polygon', 'star'],
     ['brush', 'blob'], ['pencil', 'smooth'],
     ['eraser', 'scissors'],
+    ['shapebuilder'],
     ['rotate', 'reflect'], ['scale', 'shear'],
     ['freetransform'],
-    ['gradient', 'eyedropper'],
+    ['gradient', 'eyedropper'], ['width'],
     ['artboard'],
     ['zoom', 'hand']
   ];

@@ -78,4 +78,23 @@
     '#800000', '#9a6324', '#808000', '#469990',
     '#000075', '#fabebe', '#ffd8b1', '#aaffc3'
   ];
+
+  /* 그레이디언트의 t 위치 색을 보간해 돌려준다 (정지점 추가 · 재색상화에 쓴다) */
+  C.sampleGradient = function (g, t) {
+    if (!g || !g.stops || !g.stops.length) return '#000000';
+    var st = g.stops.slice().sort(function (a, b) { return a.t - b.t; });
+    if (t <= st[0].t) return st[0].color;
+    for (var i = 1; i < st.length; i++) {
+      if (t <= st[i].t) {
+        var a = st[i - 1], b = st[i];
+        var k = (b.t - a.t) < 1e-9 ? 0 : (t - a.t) / (b.t - a.t);
+        var ca = C.hexToRgb(a.color), cb = C.hexToRgb(b.color);
+        return C.rgbToHex(
+          Math.round(ca.r + (cb.r - ca.r) * k),
+          Math.round(ca.g + (cb.g - ca.g) * k),
+          Math.round(ca.b + (cb.b - ca.b) * k));
+      }
+    }
+    return st[st.length - 1].color;
+  };
 })(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

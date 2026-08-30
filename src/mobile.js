@@ -396,7 +396,7 @@
       var list = U.el('div', 'm-list');
       [['color', '색상'], ['gradient', '그레이디언트'], ['swatches', '견본'], ['stroke', '획'],
       ['type', '문자'], ['transform', '변형'], ['align', '정렬'], ['pathfinder', '패스파인더'],
-      ['effects', '효과'], ['artboards', '대지'], ['layers', '레이어'], ['properties', '속성']]
+      ['appearance', '모양'], ['effects', '효과'], ['artboards', '대지'], ['layers', '레이어'], ['properties', '속성']]
         .forEach(function (o) {
           var b = listItem(o[1]);
           U.on(b, 'click', function () { openPanel(o[0], o[1]); });

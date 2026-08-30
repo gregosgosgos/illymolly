@@ -22,6 +22,7 @@
     buildStroke();
     buildAlign();
     buildPathfinder();
+    buildAppearance();
     buildEffects();
     buildArtboards();
     UI.buildLayers(a);
@@ -616,6 +617,15 @@
     '<option value="square">사각형</option>' +
     '<option value="bar">막대</option>';
 
+  /* 일러스트레이터의 가변 폭 프로파일에 대응 */
+  var WIDTH_PROFILES = {
+    uniform: null,
+    taper: [{ t: 0, w: 1 }, { t: 1, w: 0.05 }],
+    taper2: [{ t: 0, w: 0.05 }, { t: 0.5, w: 1 }, { t: 1, w: 0.05 }],
+    bulge: [{ t: 0, w: 0.4 }, { t: 0.5, w: 1.8 }, { t: 1, w: 0.4 }],
+    wave: [{ t: 0, w: 0.5 }, { t: 0.25, w: 1.6 }, { t: 0.5, w: 0.5 }, { t: 0.75, w: 1.6 }, { t: 1, w: 0.5 }]
+  };
+
   function buildStroke() {
     var p = document.getElementById('p-stroke');
     p.innerHTML =
@@ -640,6 +650,14 @@
       '<button class="mini-btn" id="sk-aswap" title="화살표 뒤바꾸기">⇄</button>' +
       '<select class="fld" id="sk-a2" title="끝 화살표">' + ARROW_OPTS + '</select></div>' +
       '<div class="row"><label style="min-width:30px">비율</label><input class="fld" id="sk-ascale" value="100"><span style="color:#9a9a9a">%</span></div>' +
+      '<div class="row"><label style="min-width:30px">프로파일</label>' +
+      '<select class="fld" id="sk-prof">' +
+      '<option value="uniform">균일</option>' +
+      '<option value="taper">한쪽 가늘게</option>' +
+      '<option value="taper2">양쪽 가늘게</option>' +
+      '<option value="bulge">가운데 굵게</option>' +
+      '<option value="wave">물결</option>' +
+      '</select></div>' +
       '<div class="hint">점선은 공백으로 구분해 입력 (비우면 실선).<br>안쪽·바깥쪽 정렬은 닫힌 패스에만 적용됩니다.<br>화살표는 열린 패스의 시작·끝점에 표시됩니다.</div>';
 
     num(U.q('#sk-w', p), function () { return 1; }, function (v) {
@@ -699,6 +717,25 @@
       E.applyStrokeProp(app, 'arrowEnd', a2.value);
       app.history.commit(); app.invalidate(); UI.syncStyle(app);
     });
+    /* 가변 폭 프로파일 (폭 도구로 만든 것과 같은 데이터) */
+    U.on(U.q('#sk-prof', p), 'change', function () {
+      if (syncing) return;
+      var prof = WIDTH_PROFILES[this.value];
+      app.history.begin('폭 프로파일', app.doc);
+      app.sel.forEach(function (it) {
+        (function rec(o) {
+          if (o.type === 'group') { o.children.forEach(rec); return; }
+          if (!o.stroke) return;
+          if (prof) o.stroke.widthProfile = U.deepCopy(prof);
+          else delete o.stroke.widthProfile;
+          AI.appearance.pushDown(o);
+        })(it);
+      });
+      app.history.commit();
+      app.invalidate();
+      UI.syncStyle(app);
+    });
+
     num(U.q('#sk-ascale', p), function () { return app.arrowScale == null ? 100 : app.arrowScale; }, function (v) {
       v = U.clamp(v, 1, 1000);
       app.arrowScale = v;
@@ -763,6 +800,89 @@
     else s += '<g fill="#333">' + A + '</g><g fill="' + f + '">' + B + '</g>';
     return s + '</svg>';
   }
+
+  /* ================= 모양 (Appearance) ================= */
+  function buildAppearance() {
+    var p = document.getElementById('p-appearance');
+    if (!p) return;
+    p.innerHTML =
+      '<div id="ap-list" class="ap-list"></div>' +
+      '<div class="grid4" style="margin-top:5px">' +
+      '<button class="btn" data-apcmd="addFill" title="새 칠 추가">칠+</button>' +
+      '<button class="btn" data-apcmd="addStroke" title="새 획 추가">획+</button>' +
+      '<button class="btn" data-apcmd="up" title="선택한 겹을 위로">▲</button>' +
+      '<button class="btn" data-apcmd="down" title="선택한 겹을 아래로">▼</button>' +
+      '</div>' +
+      '<div class="grid2" style="margin-top:5px">' +
+      '<button class="btn" data-apcmd="remove" title="선택한 겹 삭제">겹 삭제</button>' +
+      '<button class="btn" data-cmd="expandAppearance" title="각 겹을 실제 오브젝트로">모양 확장</button>' +
+      '</div>' +
+      '<div class="hint">겹을 클릭해 선택하고 색을 바꾸세요. 목록 위쪽이 앞(위)에 그려집니다.</div>';
+    U.qa('[data-apcmd]', p).forEach(function (b) {
+      U.on(b, 'click', function () { apCommand(b.dataset.apcmd); });
+    });
+    U.qa('[data-cmd]', p).forEach(function (b) { U.on(b, 'click', function () { C.run(b.dataset.cmd); }); });
+  }
+
+  function apTarget(a) { return a.sel.length === 1 && AI.appearance.supports(a.sel[0]) ? a.sel[0] : null; }
+
+  function apCommand(cmd) {
+    var it = apTarget(app);
+    if (!it) { U.toast('오브젝트를 하나만 선택하세요'); return; }
+    var AP = AI.appearance;
+    var n = AP.list(it).length;
+    var i = app.apIndex == null ? n - 1 : U.clamp(app.apIndex, 0, n - 1);
+    app.history.begin('모양', app.doc);
+    var ok = true;
+    if (cmd === 'addFill') { AP.addFill(it); app.apIndex = null; }
+    else if (cmd === 'addStroke') { AP.addStroke(it); app.apIndex = null; }
+    else if (cmd === 'remove') { ok = AP.removeAt(it, i); app.apIndex = null; }
+    else if (cmd === 'up') { ok = AP.moveAt(it, i, 1); if (ok) app.apIndex = i + 1; }
+    else if (cmd === 'down') { ok = AP.moveAt(it, i, -1); if (ok) app.apIndex = i - 1; }
+    if (!ok) { app.history.abort(); U.toast('더 이상 할 수 없습니다'); }
+    else app.history.commit();
+    app.invalidate();
+    UI.syncAll(app);
+  }
+
+  UI.syncAppearance = function (a) {
+    var host = document.getElementById('ap-list');
+    if (!host) return;
+    var AP = AI.appearance;
+    var it = apTarget(a);
+    if (!it) {
+      host.innerHTML = '<div class="fx-empty">' +
+        (a.sel.length ? '패스나 문자를 하나만 선택하세요' : '선택 없음') + '</div>';
+      return;
+    }
+    var list = AP.list(it);
+    if (a.apIndex != null) a.apIndex = U.clamp(a.apIndex, 0, list.length - 1);
+    /* 일러스트레이터처럼 위쪽이 앞(스택의 끝)이므로 뒤집어 보여 준다 */
+    var rows = [];
+    for (var i = list.length - 1; i >= 0; i--) {
+      var e = list[i];
+      var sw = e.kind === 'fill' ? Col.paintPreviewCss(e.paint)
+        : (e.stroke && e.stroke.type !== 'none' ? Col.paintPreviewCss(e.stroke) : 'transparent');
+      rows.push('<div class="ap-row' + (i === a.apIndex ? ' on' : '') + '" data-i="' + i + '">' +
+        '<span class="ap-sw" style="background:' + sw + '"></span>' +
+        '<span class="ap-name">' + U.esc(AP.label(e)) + '</span></div>');
+    }
+    host.innerHTML = rows.join('');
+    U.qa('.ap-row', host).forEach(function (row) {
+      U.on(row, 'click', function () {
+        a.apIndex = +row.dataset.i;
+        var e = AP.entry(it, a.apIndex);
+        /* 선택한 겹을 색상 패널의 편집 대상으로 삼는다 */
+        a.fillFocus = (e && e.kind === 'fill');
+        UI.syncAll(a);
+      });
+      U.on(row, 'dblclick', function () {
+        var e = AP.entry(it, +row.dataset.i);
+        if (!e) return;
+        UI.openColorPicker(a, row);
+      });
+    });
+  };
 
   /* ================= 효과 (모양) ================= */
   function buildEffects() {
@@ -1148,6 +1268,24 @@
       if (!el) return;
       el.value = (sst && sst[o[1]]) || a[o[1]] || 'none';
     });
+    var pf = document.getElementById('sk-prof');
+    if (pf) {
+      var wp = sst && sst.widthProfile;
+      var name = 'uniform';
+      if (wp) {
+        Object.keys(WIDTH_PROFILES).forEach(function (k) {
+          if (WIDTH_PROFILES[k] && JSON.stringify(WIDTH_PROFILES[k]) === JSON.stringify(wp)) name = k;
+        });
+        if (name === 'uniform') name = 'custom';
+      }
+      if (name === 'custom') {
+        if (!U.q('option[value=custom]', pf)) {
+          var o = U.el('option'); o.value = 'custom'; o.textContent = '사용자 정의(폭 도구)';
+          pf.appendChild(o);
+        }
+      }
+      pf.value = name;
+    }
     var asc = document.getElementById('sk-ascale');
     if (asc && document.activeElement !== asc) {
       asc.value = String((sst && sst.arrowScale != null) ? sst.arrowScale : (a.arrowScale == null ? 100 : a.arrowScale));
@@ -1197,6 +1335,7 @@
     UI.syncStatus(a);
     UI.updateZoom(a);
     UI.syncIsolation(a);
+    UI.syncAppearance(a);
     UI.syncEffects(a);
     UI.syncArtboards(a);
     UI.buildLayers(a);

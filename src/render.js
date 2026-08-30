@@ -30,16 +30,128 @@
   Rn.fontCss = function (t) {
     return (t.italic ? 'italic ' : '') + (t.weight || 400) + ' ' + t.size + 'px ' + t.family;
   };
-  Rn.textLines = function (it) { return String(it.text.content).split('\n'); };
-  Rn.measureText = function (it) {
-    var t = it.text, lines = Rn.textLines(it);
-    var w = 0;
-    for (var i = 0; i < lines.length; i++) {
-      var m = Rn.measureLine(lines[i], t) + Math.max(0, lines[i].length - 1) * (t.tracking || 0);
-      if (m > w) w = m;
-    }
+  Rn.textLines = function (it) { return Rn.layoutText(it).lines; };
+
+  /* ---------------- 텍스트 레이아웃 ----------------
+     점 문자: 줄바꿈 문자로만 나뉜다.
+     영역 문자(it.text.area): 상자 폭(또는 도형의 가로 span)에 맞춰 자동 줄바꿈하고,
+     상자 높이를 넘는 줄은 넘침으로 표시한다.                                  */
+  Rn.layoutText = function (it) {
+    var t = it.text;
     var lh = t.size * (t.leading || 1.2);
-    return { w: w, h: (lines.length - 1) * lh + t.size, lineH: lh, lines: lines, asc: t.size * 0.8 };
+    var asc = t.size * 0.8;
+    var tr = t.tracking || 0;
+    function widthOf(str) { return Rn.measureLine(str, t) + Math.max(0, str.length - 1) * tr; }
+
+    if (!t.area) {
+      var raw = String(t.content).split('\n');
+      var w0 = 0;
+      raw.forEach(function (l) { w0 = Math.max(w0, widthOf(l)); });
+      return {
+        lines: raw, xs: raw.map(function () { return 0; }), widths: raw.map(widthOf),
+        w: w0, h: (raw.length - 1) * lh + t.size, lineH: lh, asc: asc, overflow: false, area: null
+      };
+    }
+
+    var area = t.area;
+    var lines = [], xs = [], widths = [];
+    var y = asc;                                   /* 첫 줄의 기준선 */
+    var overflow = false;
+    var paras = String(t.content).split('\n');
+
+    for (var pi = 0; pi < paras.length; pi++) {
+      var rest = paras[pi];
+      do {
+        var span = spanAt(it, y, lh);
+        if (!span) {                               /* 이 높이에는 글자를 놓을 자리가 없다 */
+          y += lh;
+          if (y - asc > area.h + lh * 4) { overflow = rest.length > 0; break; }
+          continue;
+        }
+        var avail = span.x2 - span.x;
+        var take = fitLine(rest, avail, widthOf);
+        var line = take.line;
+        lines.push(line);
+        widths.push(widthOf(line));
+        xs.push(alignX(span, widthOf(line), t.align));
+        rest = take.rest;
+        y += lh;
+        if (y - asc > area.h && (rest.length || pi < paras.length - 1)) { overflow = true; rest = ''; pi = paras.length; break; }
+      } while (rest.length);
+      if (pi >= paras.length) break;
+    }
+    if (!lines.length) { lines.push(''); xs.push(alignX({ x: 0, x2: area.w }, 0, t.align)); widths.push(0); }
+
+    return {
+      lines: lines, xs: xs, widths: widths,
+      w: area.w, h: area.h, lineH: lh, asc: asc, overflow: overflow, area: area
+    };
+  };
+
+  function alignX(span, w, align) {
+    if (align === 'center') return (span.x + span.x2) / 2 - w / 2;
+    if (align === 'right') return span.x2 - w;
+    return span.x;
+  }
+
+  /* 한 줄에 들어갈 만큼 잘라 낸다 — 공백 우선, 안 되면 글자 단위 (한글 대응) */
+  function fitLine(str, avail, widthOf) {
+    if (!str.length) return { line: '', rest: '' };
+    if (widthOf(str) <= avail) return { line: str, rest: '' };
+    var lastSpace = -1;
+    for (var i = 1; i <= str.length; i++) {
+      if (widthOf(str.slice(0, i)) > avail) {
+        var cut = (lastSpace > 0) ? lastSpace : Math.max(1, i - 1);
+        var line = str.slice(0, cut).replace(/\s+$/, '');
+        var rest = str.slice(cut).replace(/^\s+/, '');
+        return { line: line, rest: rest };
+      }
+      if (str[i - 1] === ' ') lastSpace = i;
+    }
+    return { line: str, rest: '' };
+  }
+
+  /* 기준선 y 위치에서 글자를 놓을 수 있는 가로 구간
+     — 사각형 상자면 [0,w], 도형이면 스캔라인 교차의 가장 넓은 구간 */
+  function spanAt(it, y, lh) {
+    var area = it.text.area;
+    if (y - it.text.size * 0.8 > area.h) return null;
+    var shape = it.text.areaShape;
+    if (!shape || !shape.length) return { x: 0, x2: area.w };
+    /* 글자 높이 밴드의 위·아래에서 각각 교차 구간을 구해 겹치는 부분을 쓴다 */
+    var top = scanSpans(shape, y - it.text.size * 0.72);
+    var bot = scanSpans(shape, y + it.text.size * 0.1);
+    var best = null;
+    top.forEach(function (a) {
+      bot.forEach(function (b) {
+        var x = Math.max(a.x, b.x), x2 = Math.min(a.x2, b.x2);
+        if (x2 - x > it.text.size * 0.6 && (!best || x2 - x > best.x2 - best.x)) best = { x: x, x2: x2 };
+      });
+    });
+    return best;
+  }
+
+  var scanCache = null;
+  function scanSpans(subs, y) {
+    var xs = [];
+    subs.forEach(function (sub) {
+      var pts = G.flattenSub(sub, 0.4);
+      var n = pts.length;
+      for (var i = 0; i < n; i++) {
+        var a = pts[i], b = pts[(i + 1) % n];
+        if ((a.y > y) === (b.y > y)) continue;
+        xs.push(a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y));
+      }
+    });
+    xs.sort(function (p, q) { return p - q; });
+    var out = [];
+    for (var k = 0; k + 1 < xs.length; k += 2) out.push({ x: xs[k], x2: xs[k + 1] });
+    return out;
+  }
+
+  Rn.measureText = function (it) {
+    var L = Rn.layoutText(it);
+    return { w: L.w, h: L.h, lineH: L.lineH, lines: L.lines, asc: L.asc, xs: L.xs, overflow: L.overflow, area: L.area };
   };
   /* ---------------- 이미지 캐시 ---------------- */
   Rn.imageCache = Object.create(null);
@@ -61,6 +173,7 @@
     if (it.type === 'image') return { x: 0, y: 0, x2: it.w, y2: it.h };
     if (it.type === 'text') {
       var m = Rn.measureText(it), t = it.text, x0 = 0;
+      if (t.area) return { x: 0, y: 0, x2: t.area.w, y2: t.area.h };
       if (t.align === 'center') x0 = -m.w / 2; else if (t.align === 'right') x0 = -m.w;
       var last = (m.lines.length - 1) * m.lineH;
       return { x: x0, y: -m.asc, x2: x0 + m.w, y2: last + t.size * 0.25 };
@@ -97,9 +210,15 @@
       return r;
     }
     var b = (it.type === 'path') ? G.pathBounds(it, m) : Rn.xformBounds(Rn.localBounds(it), m);
-    if (!geo && it.type === 'path' && it.stroke && it.stroke.type !== 'none') {
-      var al = it.stroke.align, k = al === 'inside' ? 0 : al === 'outside' ? 1 : 0.5;
-      b = R.grow(b, (it.stroke.width || 0) * (sw == null ? 1 : sw) * k);
+    if (!geo && it.type === 'path') {
+      var maxPad = 0;
+      AI.appearance.strokes(it).forEach(function (e) {
+        var st = e.stroke;
+        if (!st || st.type === 'none') return;
+        var al = st.align, k = al === 'inside' ? 0 : al === 'outside' ? 1 : 0.5;
+        maxPad = Math.max(maxPad, (st.width || 0) * k);
+      });
+      if (maxPad) b = R.grow(b, maxPad * (sw == null ? 1 : sw));
     }
     if (!geo && AI.effects.has(it)) b = R.grow(b, AI.effects.padding(it) * (sw == null ? 1 : sw));
     return b;
@@ -117,12 +236,26 @@
   };
 
   /* ---------------- paint -> canvas style ---------------- */
-  function paintStyle(ctx, paint, viewBounds) {
+  function paintStyle(ctx, paint, viewBounds, m) {
     if (!paint || paint.type === 'none') return null;
     if (paint.type === 'solid') return Col.toCss(paint.color, paint.alpha);
     var b = viewBounds;
     if (R.isEmpty(b)) return Col.toCss(paint.stops[0].color, paint.stops[0].alpha);
     var g;
+    /* 그레이디언트 주석자로 직접 지정한 기하가 있으면 그것을 쓴다 (로컬 좌표) */
+    if (m && paint.p0 && paint.p1) {
+      var a0 = M.apply(m, paint.p0.x, paint.p0.y), a1 = M.apply(m, paint.p1.x, paint.p1.y);
+      if (paint.type === 'radial') {
+        var rr = Math.max(U.dist(a0.x, a0.y, a1.x, a1.y), 0.01);
+        g = ctx.createRadialGradient(a0.x, a0.y, 0, a0.x, a0.y, rr);
+      } else {
+        g = ctx.createLinearGradient(a0.x, a0.y, a1.x, a1.y);
+      }
+      paint.stops.slice().sort(function (p, q) { return p.t - q.t; }).forEach(function (st) {
+        g.addColorStop(U.clamp(st.t, 0, 1), Col.toCss(st.color, st.alpha));
+      });
+      return g;
+    }
     if (paint.type === 'radial') {
       var cx = b.x + R.w(b) * (paint.cx == null ? .5 : paint.cx);
       var cy = b.y + R.h(b) * (paint.cy == null ? .5 : paint.cy);
@@ -237,20 +370,83 @@
 
   /* 효과가 있는 아이템은 오프스크린에 그린 뒤 필터를 걸어 합성한다.
      칠·획을 각각 그리면 그림자가 두 번 생기므로 반드시 한 번에 합성해야 한다. */
+  var pads = [null, null, null];
+  function pad(i, w, h) {
+    var o = pads[i];
+    if (!o) {
+      if (!U.hasDOM) return null;
+      o = pads[i] = { cv: document.createElement('canvas'), ctx: null };
+      o.ctx = o.cv.getContext('2d', { willReadFrequently: i === 2 });
+    }
+    if (o.cv.width < w || o.cv.height < h) {
+      o.cv.width = Math.max(o.cv.width, w);
+      o.cv.height = Math.max(o.cv.height, h);
+    }
+    o.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    o.ctx.globalCompositeOperation = 'source-over';
+    o.ctx.globalAlpha = 1;
+    o.ctx.filter = 'none';
+    o.ctx.clearRect(0, 0, o.cv.width, o.cv.height);
+    return o;
+  }
   var scratch = null, sctx = null;
   function getScratch(w, h) {
-    if (!scratch) {
-      if (!U.hasDOM) return null;
-      scratch = document.createElement('canvas');
-      sctx = scratch.getContext('2d');
-    }
-    if (scratch.width < w || scratch.height < h) {
-      scratch.width = Math.max(scratch.width, w);
-      scratch.height = Math.max(scratch.height, h);
-    }
-    sctx.setTransform(1, 0, 0, 1, 0, 0);
-    sctx.clearRect(0, 0, scratch.width, scratch.height);
+    var o = pad(0, w, h);
+    if (!o) return null;
+    scratch = o.cv; sctx = o.ctx;
     return sctx;
+  }
+
+  /* ---------------- 불투명도 마스크 ----------------
+     마스크 아이템의 밝기(luminance)를 알파로 써서 내용을 가린다.
+     SVG <mask> 와 같은 규칙이라 내보내기와 화면이 일치한다. */
+  function drawWithMask(ctx, app, it, m, a, inIso) {
+    var dpr = app.dpr || 1;
+    var sc = (app.view && app.view.scale) || 1;
+    var b = Rn.boundsM(it, m, false, sc);
+    if (R.isEmpty(b)) return;
+    var mb = Rn.boundsM(it.opacityMask, M.mul(m, it.opacityMask.m), false, sc);
+    /* 마스크 밖은 검정(=투명)이므로 내용 영역만 있으면 된다 */
+    var x0 = Math.floor(b.x - 2), y0 = Math.floor(b.y - 2);
+    var w = Math.ceil(R.w(b)) + 4, h = Math.ceil(R.h(b)) + 4;
+    if (w <= 0 || h <= 0 || w * dpr > 6000 || h * dpr > 6000) { drawPlain(ctx, app, it, m, a, inIso); return; }
+
+    var content = pad(1, Math.ceil(w * dpr), Math.ceil(h * dpr));
+    var maskP = pad(2, Math.ceil(w * dpr), Math.ceil(h * dpr));
+    if (!content || !maskP) { drawPlain(ctx, app, it, m, a, inIso); return; }
+
+    content.ctx.setTransform(dpr, 0, 0, dpr, -x0 * dpr, -y0 * dpr);
+    drawPlain(content.ctx, app, it, m, 1, inIso);
+
+    /* 마스크를 검정 바탕 위에 그린 뒤 밝기를 알파로 바꾼다 */
+    maskP.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    maskP.ctx.fillStyle = '#000000';
+    maskP.ctx.fillRect(0, 0, Math.ceil(w * dpr), Math.ceil(h * dpr));
+    maskP.ctx.setTransform(dpr, 0, 0, dpr, -x0 * dpr, -y0 * dpr);
+    drawPlain(maskP.ctx, app, it.opacityMask, M.mul(m, it.opacityMask.m), 1, inIso);
+    maskP.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    var iw = Math.ceil(w * dpr), ih = Math.ceil(h * dpr);
+    try {
+      var img = maskP.ctx.getImageData(0, 0, iw, ih);
+      var d = img.data, inv = !!it.maskInvert;
+      for (var i = 0; i < d.length; i += 4) {
+        var lum = (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]);
+        d[i + 3] = inv ? 255 - lum : lum;
+      }
+      maskP.ctx.putImageData(img, 0, 0);
+    } catch (e) { drawPlain(ctx, app, it, m, a, inIso); return; }
+
+    content.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    content.ctx.globalCompositeOperation = 'destination-in';
+    content.ctx.drawImage(maskP.cv, 0, 0, iw, ih, 0, 0, iw, ih);
+    content.ctx.globalCompositeOperation = 'source-over';
+
+    ctx.save();
+    ctx.globalAlpha = a;
+    if (it.blend && it.blend !== 'normal') ctx.globalCompositeOperation = it.blend;
+    if (AI.effects.has(it)) ctx.filter = AI.effects.filterString(it, sc) || 'none';
+    ctx.drawImage(content.cv, 0, 0, iw, ih, x0, y0, w, h);
+    ctx.restore();
   }
 
   function drawWithEffects(ctx, app, it, m, a, inIso) {
@@ -261,7 +457,7 @@
     var strokePad = 0;
     (function scan(o) {
       if (o.type === 'group') { o.children.forEach(scan); return; }
-      if (o.stroke && o.stroke.type !== 'none') strokePad = Math.max(strokePad, o.stroke.width);
+      strokePad = Math.max(strokePad, AI.appearance.maxStrokeWidth(o));
     })(it);
     var pad = (AI.effects.padding(it) + strokePad) * sc + 6;
     var x0 = Math.floor(b.x - pad), y0 = Math.floor(b.y - pad);
@@ -290,6 +486,10 @@
     if (iso && !inIso && it.type !== 'group') a *= 0.28;
     if (a <= 0.001) return;
 
+    if (it.opacityMask && !app.prefs.outline && Rn.hasCanvas()) {
+      drawWithMask(ctx, app, it, m, a, inIso);
+      return;
+    }
     if (AI.effects.has(it) && !app.prefs.outline && Rn.hasCanvas()) {
       drawWithEffects(ctx, app, it, m, a, inIso);
       return;
@@ -344,24 +544,32 @@
   }
 
   function drawPath(ctx, app, it, m) {
-    var vb = null;
+    var vb = viewBoundsOf(it, m);
+    var stack = AI.appearance.list(it);
+    for (var i = 0; i < stack.length; i++) {
+      var e = stack[i];
+      if (e.kind === 'fill') fillLayer(ctx, app, it, m, e.paint, vb);
+      else strokeLayer(ctx, app, it, m, e.stroke, vb);
+    }
+  }
+
+  function fillLayer(ctx, app, it, m, paint, vb) {
+    if (!Col.isPaint(paint)) return;
     ctx.beginPath();
     G.tracePath(ctx, it, m);
-    if (Col.isPaint(it.fill)) {
-      vb = viewBoundsOf(it, m);
-      ctx.fillStyle = paintStyle(ctx, it.fill, vb);
-      ctx.fill('nonzero');
-    }
-    var s = it.stroke;
+    ctx.fillStyle = paintStyle(ctx, paint, vb, m);
+    ctx.fill('nonzero');
+  }
+
+  function strokeLayer(ctx, app, it, m, s, vb) {
     if (!s || s.type === 'none' || !(s.width > 0)) return;
-    if (!vb) vb = viewBoundsOf(it, m);
 
     var allClosed = it.subs.length > 0 && it.subs.every(function (sub) { return sub.closed; });
     var align = (s.align === 'inside' || s.align === 'outside') && allClosed ? s.align : 'center';
     var w = Math.max(s.width * app.view.scale, 0.08);
 
     function setup(lw, doubled) {
-      ctx.strokeStyle = paintStyle(ctx, s, vb);
+      ctx.strokeStyle = paintStyle(ctx, s, vb, m);
       ctx.lineWidth = lw;
       /* 두께를 2배로 그려 클리핑하는 방식에서는 둥근 끝이 2배가 되어
          점선 바깥 가장자리가 톱니처럼 보인다. 이 경우에만 butt 로 대체. */
@@ -373,13 +581,20 @@
       ctx.lineDashOffset = (s.dashOffset || 0) * app.view.scale;
     }
 
+    /* 가변 폭 프로파일이 있으면 구간마다 두께를 바꿔 그린다 */
+    if (s.widthProfile && s.widthProfile.length > 1 && align === 'center') {
+      drawVariableStroke(ctx, app, it, m, s, vb);
+      drawArrows(ctx, app, it, m, s);
+      return;
+    }
+
     if (align === 'center') {
       setup(w);
       ctx.beginPath();
       G.tracePath(ctx, it, m);
       ctx.stroke();
       ctx.setLineDash([]);
-      drawArrows(ctx, app, it, m);
+      drawArrows(ctx, app, it, m, s);
       return;
     }
 
@@ -402,7 +617,55 @@
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.restore();
-    drawArrows(ctx, app, it, m);
+    drawArrows(ctx, app, it, m, s);
+  }
+
+  /* ---------------- 가변 폭 (폭 도구) ---------------- */
+  /* widthProfile = [{t:0..1, w:배율}, …] — 패스를 따라 두께를 보간해 그린다.
+     구간을 잘게 나눠 각 조각을 그 지점의 두께로 그리는 방식이라
+     캔버스의 단일 lineWidth 제약을 우회한다. */
+  Rn.profileAt = function (prof, t) {
+    if (!prof || !prof.length) return 1;
+    if (t <= prof[0].t) return prof[0].w;
+    for (var i = 1; i < prof.length; i++) {
+      if (t <= prof[i].t) {
+        var a = prof[i - 1], b = prof[i];
+        var k = (b.t - a.t) < 1e-9 ? 0 : (t - a.t) / (b.t - a.t);
+        return a.w + (b.w - a.w) * k;
+      }
+    }
+    return prof[prof.length - 1].w;
+  };
+
+  function drawVariableStroke(ctx, app, it, m, s, vb) {
+    var sc = app.view.scale;
+    ctx.save();
+    ctx.strokeStyle = paintStyle(ctx, s, vb, m);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.setLineDash([]);
+    it.subs.forEach(function (sub) {
+      var pts = G.flattenSub(sub, 0.25 / Math.max(sc, 0.05));
+      if (pts.length < 2) return;
+      /* 누적 길이로 t 를 매긴다 */
+      var len = [0], total = 0, i;
+      for (i = 1; i < pts.length; i++) {
+        total += U.dist(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y);
+        len.push(total);
+      }
+      if (total < 1e-6) return;
+      for (i = 1; i < pts.length; i++) {
+        var t = (len[i - 1] + len[i]) / 2 / total;
+        var a = M.apply(m, pts[i - 1].x, pts[i - 1].y);
+        var b = M.apply(m, pts[i].x, pts[i].y);
+        ctx.lineWidth = Math.max(s.width * Rn.profileAt(s.widthProfile, t) * sc, 0.08);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      }
+    });
+    ctx.restore();
   }
 
   function drawImage(ctx, app, it, m) {
@@ -466,8 +729,8 @@
     return out;
   }
 
-  function drawArrows(ctx, app, it, m) {
-    var s = it.stroke;
+  function drawArrows(ctx, app, it, m, stroke) {
+    var s = stroke || it.stroke;
     if (!s || s.type === 'none' || !(s.width > 0)) return;
     if ((s.arrowStart || 'none') === 'none' && (s.arrowEnd || 'none') === 'none') return;
     var sc = app.view.scale;
@@ -501,32 +764,47 @@
     ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
     ctx.font = Rn.fontCss(t);
     ctx.textBaseline = 'alphabetic';
-    ctx.textAlign = t.align === 'center' ? 'center' : t.align === 'right' ? 'right' : 'left';
-    var vb = { x: (t.align === 'center' ? -mt.w / 2 : t.align === 'right' ? -mt.w : 0), y: -mt.asc };
-    vb.x2 = vb.x + mt.w; vb.y2 = vb.y + mt.h;
-    var fs = Col.isPaint(it.fill) ? paintStyle(ctx, it.fill, vb) : null;
-    var ss = (it.stroke && it.stroke.type !== 'none' && it.stroke.width > 0) ? paintStyle(ctx, it.stroke, vb) : null;
-    for (var i = 0; i < mt.lines.length; i++) {
-      var y = i * mt.lineH;
-      var line = mt.lines[i];
-      if (t.tracking) {
-        drawTracked(ctx, line, 0, y, t, fs, ss, it, mt);
+    /* 영역 문자는 줄마다 x 오프셋을 직접 계산하므로 정렬은 left 로 고정한다 */
+    ctx.textAlign = t.area ? 'left' : (t.align === 'center' ? 'center' : t.align === 'right' ? 'right' : 'left');
+    var vb = t.area
+      ? { x: 0, y: 0, x2: t.area.w, y2: t.area.h }
+      : { x: (t.align === 'center' ? -mt.w / 2 : t.align === 'right' ? -mt.w : 0), y: -mt.asc };
+    if (!t.area) { vb.x2 = vb.x + mt.w; vb.y2 = vb.y + mt.h; }
+    /* 문자도 모양 스택을 그대로 따른다 (아래 겹부터) */
+    AI.appearance.list(it).forEach(function (e) {
+      var fs = null, ss = null, lw = 1;
+      if (e.kind === 'fill') {
+        if (!Col.isPaint(e.paint)) return;
+        fs = paintStyle(ctx, e.paint, vb);
       } else {
-        if (fs) { ctx.fillStyle = fs; ctx.fillText(line, 0, y); }
-        if (ss) { ctx.strokeStyle = ss; ctx.lineWidth = it.stroke.width; ctx.strokeText(line, 0, y); }
+        var st = e.stroke;
+        if (!st || st.type === 'none' || !(st.width > 0)) return;
+        ss = paintStyle(ctx, st, vb);
+        lw = st.width;
       }
-    }
+      for (var i = 0; i < mt.lines.length; i++) {
+        var y = t.area ? (mt.asc + i * mt.lineH) : (i * mt.lineH);
+        var x = (mt.xs && mt.xs[i]) || 0;
+        var line = mt.lines[i];
+        if (t.tracking) {
+          drawTracked(ctx, line, x, y, t, fs, ss, lw);
+        } else {
+          if (fs) { ctx.fillStyle = fs; ctx.fillText(line, x, y); }
+          if (ss) { ctx.strokeStyle = ss; ctx.lineWidth = lw; ctx.strokeText(line, x, y); }
+        }
+      }
+    });
     ctx.restore();
   }
 
-  function drawTracked(ctx, line, x, y, t, fs, ss, it, mt) {
+  function drawTracked(ctx, line, x, y, t, fs, ss, lw) {
     var w = ctx.measureText(line).width + Math.max(0, line.length - 1) * t.tracking;
-    var cx = t.align === 'center' ? -w / 2 : t.align === 'right' ? -w : 0;
+    var cx = t.area ? x : (t.align === 'center' ? -w / 2 : t.align === 'right' ? -w : 0);
     var prev = ctx.textAlign; ctx.textAlign = 'left';
     for (var i = 0; i < line.length; i++) {
       var ch = line[i];
       if (fs) { ctx.fillStyle = fs; ctx.fillText(ch, cx, y); }
-      if (ss) { ctx.strokeStyle = ss; ctx.lineWidth = it.stroke.width; ctx.strokeText(ch, cx, y); }
+      if (ss) { ctx.strokeStyle = ss; ctx.lineWidth = lw; ctx.strokeText(ch, cx, y); }
       cx += ctx.measureText(ch).width + t.tracking;
     }
     ctx.textAlign = prev;
@@ -576,6 +854,34 @@
         if (it.type === 'path') G.tracePath(ctx, it, wm);
         else outlineBox(ctx, Rn.localBounds(it), wm);
         ctx.strokeStyle = lc.get(it) || UIC.blue; ctx.lineWidth = 1; ctx.setLineDash([]); ctx.stroke();
+      });
+
+      /* 영역 문자: 상자 테두리와 넘침 표시 (일러스트레이터의 빨간 ⊞) */
+      app.sel.forEach(function (it) {
+        if (it.type !== 'text' || !it.text.area) return;
+        var wm2 = M.mul(vm, Model.worldMatrix(app.doc, it));
+        var L = Rn.layoutText(it);
+        ctx.save();
+        if (it.text.areaShape) {
+          ctx.beginPath();
+          it.text.areaShape.forEach(function (sub) {
+            G.tracePath(ctx, { subs: [sub] }, wm2);
+          });
+          ctx.strokeStyle = 'rgba(45,140,235,.45)';
+          ctx.setLineDash([4, 3]); ctx.lineWidth = 1; ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        if (L.overflow) {
+          var c = M.apply(wm2, it.text.area.w, it.text.area.h);
+          ctx.fillStyle = '#e2483c';
+          ctx.fillRect(c.x - 5, c.y - 5, 11, 11);
+          ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.4;
+          ctx.beginPath();
+          ctx.moveTo(c.x - 2.5, c.y); ctx.lineTo(c.x + 2.5, c.y);
+          ctx.moveTo(c.x, c.y - 2.5); ctx.lineTo(c.x, c.y + 2.5);
+          ctx.stroke();
+        }
+        ctx.restore();
       });
 
       /* 바운딩 박스 */

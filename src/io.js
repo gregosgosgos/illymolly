@@ -122,6 +122,19 @@
     var stops = paint.stops.slice().sort(function (a, b) { return a.t - b.t; }).map(function (s) {
       return '<stop offset="' + U.round(s.t * 100, 2) + '%" stop-color="' + s.color + '" stop-opacity="' + (s.alpha == null ? 1 : s.alpha) + '"/>';
     }).join('');
+    /* 주석자로 지정한 기하가 있으면 사용자 좌표계로 내보낸다 */
+    if (paint.p0 && paint.p1) {
+      if (paint.type === 'radial') {
+        var rr = U.round(Math.hypot(paint.p1.x - paint.p0.x, paint.p1.y - paint.p0.y), 3) || 0.01;
+        defs.push('<radialGradient id="' + id + '" gradientUnits="userSpaceOnUse" cx="' + U.round(paint.p0.x, 3) +
+          '" cy="' + U.round(paint.p0.y, 3) + '" r="' + rr + '">' + stops + '</radialGradient>');
+      } else {
+        defs.push('<linearGradient id="' + id + '" gradientUnits="userSpaceOnUse" x1="' + U.round(paint.p0.x, 3) +
+          '" y1="' + U.round(paint.p0.y, 3) + '" x2="' + U.round(paint.p1.x, 3) +
+          '" y2="' + U.round(paint.p1.y, 3) + '">' + stops + '</linearGradient>');
+      }
+      return { attr: 'url(#' + id + ')', op: 1 };
+    }
     if (paint.type === 'radial') {
       defs.push('<radialGradient id="' + id + '" cx="' + (paint.cx || .5) + '" cy="' + (paint.cy || .5) + '" r="' + (paint.r || .5) + '">' + stops + '</radialGradient>');
     } else {
@@ -141,6 +154,23 @@
       var fdef = AI.effects.svgFilter(it, fid);
       if (fdef) { defs.push(fdef); op += ' filter="url(#' + fid + ')"'; }
     }
+    /* 불투명도 마스크 — SVG <mask> 는 기본이 luminance 라 화면과 규칙이 같다 */
+    if (it.opacityMask) {
+      var mid = 'omask' + (++gradSeq);
+      var mb = Rn.localBounds(it);
+      var inner2 = itemSvg(doc, it.opacityMask, defs);
+      defs.push('<mask id="' + mid + '" maskUnits="userSpaceOnUse" x="' + U.round(mb.x - 4, 3) +
+        '" y="' + U.round(mb.y - 4, 3) + '" width="' + U.round(mb.x2 - mb.x + 8, 3) +
+        '" height="' + U.round(mb.y2 - mb.y + 8, 3) + '">' +
+        (it.maskInvert ? '<rect x="' + U.round(mb.x - 4, 3) + '" y="' + U.round(mb.y - 4, 3) +
+          '" width="' + U.round(mb.x2 - mb.x + 8, 3) + '" height="' + U.round(mb.y2 - mb.y + 8, 3) +
+          '" fill="#ffffff"/><g style="mix-blend-mode:difference">' + inner2 + '</g>' : inner2) +
+        '</mask>');
+      var body2 = it.type === 'group'
+        ? it.children.map(function (c) { return itemSvg(doc, c, defs); }).join('')
+        : itemSvg(doc, maskless(it), defs);
+      return '<g' + tr + op + ' mask="url(#' + mid + ')">' + body2 + '</g>';
+    }
     if (it.type === 'group') {
       var inner = it.children.map(function (c) { return itemSvg(doc, c, defs); }).join('');
       if (it.clip && it.children.length) {
@@ -153,16 +183,27 @@
       return '<g' + tr + op + '>' + inner + '</g>';
     }
     var b = Rn.localBounds(it);
-    var f = paintSvg(it.fill, defs, b);
-    var s = paintSvg(it.stroke && it.stroke.type !== 'none' ? it.stroke : null, defs, b);
-    var style = ' fill="' + f.attr + '"' + (f.op < 1 ? ' fill-opacity="' + U.round(f.op, 3) + '"' : '');
-    if (it.stroke && it.stroke.type !== 'none') {
-      style += ' stroke="' + s.attr + '" stroke-width="' + U.round(it.stroke.width, 3) + '"';
-      if (s.op < 1) style += ' stroke-opacity="' + U.round(s.op, 3) + '"';
-      if (it.stroke.cap && it.stroke.cap !== 'butt') style += ' stroke-linecap="' + it.stroke.cap + '"';
-      if (it.stroke.join && it.stroke.join !== 'miter') style += ' stroke-linejoin="' + it.stroke.join + '"';
-      if (it.stroke.dash && it.stroke.dash.length) style += ' stroke-dasharray="' + it.stroke.dash.join(' ') + '"';
-      style += arrowMarkers(it, defs);
+    var style = styleFor(it, it.fill, it.stroke, defs, b);
+
+    /* 가변 폭 획: 칠 패스 + 윤곽 리본 패스로 나눠 내보낸다 */
+    if (it.type === 'path' && it.stroke && it.stroke.type !== 'none' &&
+        it.stroke.widthProfile && it.stroke.widthProfile.length > 1) {
+      var fillOnly = styleFor(it, it.fill, null, defs, b);
+      var ribbon = variableStrokePath(it, it.stroke);
+      var sp = paintSvg(it.stroke, defs, b);
+      return '<g' + tr + op + '><path d="' + G.toSvgD(it, null) + '"' + fillOnly + '/>' +
+        (ribbon ? '<path d="' + ribbon + '" fill="' + sp.attr + '"' +
+          (sp.op < 1 ? ' fill-opacity="' + U.round(sp.op, 3) + '"' : '') + '/>' : '') + '</g>';
+    }
+
+    /* 모양 스택(칠·획 여러 겹)은 SVG 에 대응이 없으므로 같은 패스를 겹쳐 그린다 */
+    if (AI.appearance.isCustom(it) && it.type === 'path') {
+      var layers = AI.appearance.list(it).map(function (e) {
+        var st = styleFor(it, e.kind === 'fill' ? e.paint : AI.color.none(),
+          e.kind === 'stroke' ? e.stroke : null, defs, b);
+        return '<path d="' + G.toSvgD(it, null) + '"' + st + '/>';
+      }).join('');
+      return '<g' + tr + op + '>' + layers + '</g>';
     }
     if (it.type === 'path') return '<path' + tr + op + ' d="' + G.toSvgD(it, null) + '"' + style + '/>';
     if (it.type === 'image') {
@@ -180,13 +221,17 @@
         '" preserveAspectRatio="none" href="' + escXml(it.src) + '"/>';
     }
     if (it.type === 'text') {
-      var t = it.text, lh = t.size * (t.leading || 1.2);
-      var lines = String(t.content).split('\n').map(function (l, i) {
-        return '<tspan x="0" y="' + U.round(i * lh, 3) + '">' + escXml(l) + '</tspan>';
+      var t = it.text;
+      var L = Rn.layoutText(it);
+      /* 영역 문자는 줄바꿈 결과를 그대로 tspan 으로 굳혀 내보낸다 (SVG 에 자동 흐름이 없다) */
+      var lines = L.lines.map(function (l, i) {
+        var lx = t.area ? U.round(L.xs[i] || 0, 3) : 0;
+        var ly = t.area ? U.round(L.asc + i * L.lineH, 3) : U.round(i * L.lineH, 3);
+        return '<tspan x="' + lx + '" y="' + ly + '">' + escXml(l) + '</tspan>';
       }).join('');
       return '<text' + tr + op + ' font-family="' + escXml(t.family) + '" font-size="' + t.size + '"' +
         (t.weight !== 400 ? ' font-weight="' + t.weight + '"' : '') +
-        (t.align !== 'left' ? ' text-anchor="' + (t.align === 'center' ? 'middle' : 'end') + '"' : '') +
+        (!t.area && t.align !== 'left' ? ' text-anchor="' + (t.align === 'center' ? 'middle' : 'end') + '"' : '') +
         (t.tracking ? ' letter-spacing="' + t.tracking + '"' : '') +
         style + '>' + lines + '</text>';
     }
@@ -201,13 +246,65 @@
     square: 'M-2.6 -1.3 h2.6 v2.6 h-2.6 z',
     bar: 'M-0.35 -1.5 h0.7 v3 h-0.7 z'
   };
+  /* 마스크를 뗀 사본 — 재귀가 무한히 돌지 않게 한다 */
+  function maskless(it) {
+    var c = Object.create(null);
+    for (var k in it) if (Object.prototype.hasOwnProperty.call(it, k)) c[k] = it[k];
+    delete c.opacityMask;
+    c.m = [1, 0, 0, 1, 0, 0];
+    return c;
+  }
+
+  /* 가변 폭 획은 SVG 에 대응이 없으므로 리본 모양으로 윤곽을 떠서 채운다 */
+  function variableStrokePath(it, stroke) {
+    var out = [];
+    it.subs.forEach(function (sub) {
+      var pts = G.flattenSub(sub, 0.3);
+      if (pts.length < 2) return;
+      var acc = [0], total = 0, i;
+      for (i = 1; i < pts.length; i++) {
+        total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+        acc.push(total);
+      }
+      if (total < 1e-6) return;
+      var left = [], right = [];
+      for (i = 0; i < pts.length; i++) {
+        var a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+        var dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy) || 1;
+        var nx = -dy / l, ny = dx / l;
+        var hw = stroke.width * Rn.profileAt(stroke.widthProfile, acc[i] / total) / 2;
+        left.push({ x: pts[i].x + nx * hw, y: pts[i].y + ny * hw });
+        right.push({ x: pts[i].x - nx * hw, y: pts[i].y - ny * hw });
+      }
+      var ring = left.concat(right.reverse());
+      out.push('M' + ring.map(function (p) { return U.round(p.x, 2) + ' ' + U.round(p.y, 2); }).join('L') + 'Z');
+    });
+    return out.join('');
+  }
+
+  /* 칠 · 획 한 쌍을 SVG 속성 문자열로 */
+  function styleFor(it, fill, stroke, defs, b) {
+    var f = paintSvg(fill, defs, b);
+    var out = ' fill="' + f.attr + '"' + (f.op < 1 ? ' fill-opacity="' + U.round(f.op, 3) + '"' : '');
+    if (stroke && stroke.type !== 'none' && stroke.width > 0) {
+      var s = paintSvg(stroke, defs, b);
+      out += ' stroke="' + s.attr + '" stroke-width="' + U.round(stroke.width, 3) + '"';
+      if (s.op < 1) out += ' stroke-opacity="' + U.round(s.op, 3) + '"';
+      if (stroke.cap && stroke.cap !== 'butt') out += ' stroke-linecap="' + stroke.cap + '"';
+      if (stroke.join && stroke.join !== 'miter') out += ' stroke-linejoin="' + stroke.join + '"';
+      if (stroke.dash && stroke.dash.length) out += ' stroke-dasharray="' + stroke.dash.join(' ') + '"';
+      out += arrowMarkers(it, defs, stroke);
+    }
+    return out;
+  }
+
   /* 화살표는 열린 패스의 끝점에만 붙는다 — 렌더러와 같은 규칙 */
   function hasOpenSub(it) {
     if (it.type !== 'path' || !it.subs) return false;
     return it.subs.some(function (sub) { return !sub.closed && sub.pts.length >= 2; });
   }
-  function arrowMarkers(it, defs) {
-    var s = it.stroke, out = '';
+  function arrowMarkers(it, defs, stroke) {
+    var s = stroke || it.stroke, out = '';
     if (!s || !hasOpenSub(it)) return '';
     var sc = (s.arrowScale == null ? 100 : s.arrowScale) / 100;
     [['arrowStart', 'marker-start', true], ['arrowEnd', 'marker-end', false]].forEach(function (o) {

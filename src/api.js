@@ -830,6 +830,40 @@
     }
   });
 
+  op('offsetPath', {
+    undoable: true, group: '패스', desc: '패스를 지정한 거리만큼 밖(양수)·안(음수)으로 이동한 새 패스를 만듭니다.',
+    params: {
+      query: Q, offset: p('number', '이동 거리 (음수면 안쪽)', { required: true }),
+      replace: p('boolean', '원본을 대체할지', { default: false })
+    },
+    returns: 'id[]',
+    run: function (ctx, a) {
+      var okRes;
+      withSel(ctx, a.query, 'offsetPath', function () {
+        okRes = E.offsetPath(ctx, a.offset, { replace: !!a.replace });
+      });
+      if (okRes === false) throw err('OFFSET_EMPTY', 'offsetPath: 결과가 비어 있습니다');
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+  op('simplify', {
+    undoable: true, group: '패스', desc: '앵커 수를 줄여 패스를 단순화합니다.',
+    params: {
+      query: Q,
+      precision: p('number', '곡선 정밀도 % (100 = 원본에 가깝게)', { default: 90 }),
+      angle: p('number', '이 각도보다 뾰족한 지점은 코너로 유지 (0 = 사용 안 함)', { default: 0 }),
+      curves: p('boolean', '곡선으로 맞춤', { default: true })
+    },
+    run: function (ctx, a) {
+      var r;
+      withSel(ctx, a.query, 'simplify', function () {
+        r = E.simplifyPaths(ctx, { precision: a.precision, angle: a.angle, curves: a.curves });
+      });
+      if (r === false) throw err('NO_PATH', 'simplify: 단순화할 패스가 없습니다');
+      return { anchorsBefore: r.before, anchorsAfter: r.after };
+    }
+  });
+
   op('clipMask', {
     undoable: true, group: '패스', desc: '맨 앞 오브젝트를 마스크로 클리핑 그룹을 만듭니다.', params: { query: Q }, returns: 'id',
     run: function (ctx, a) {
@@ -1006,6 +1040,128 @@
     run: function (ctx) {
       if (E.releaseGuides(ctx) === false) throw err('NO_GUIDES', '안내선이 없습니다');
       return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+
+  /* ---------- 모양 (다중 칠/획) ---------- */
+  op('appearance', {
+    undoable: false, group: '모양', desc: '오브젝트의 모양 스택(칠·획 겹)을 아래→위 순서로 반환합니다.',
+    params: { query: Q },
+    run: function (ctx, a) {
+      return need(ctx, a.query, 'appearance').map(function (it) {
+        return {
+          id: it.id,
+          custom: AI.appearance.isCustom(it),
+          layers: AI.appearance.list(it).map(function (e) {
+            return e.kind === 'fill'
+              ? { kind: 'fill', fill: paintOut(e.paint) }
+              : { kind: 'stroke', stroke: strokeOut(e.stroke) };
+          })
+        };
+      });
+    }
+  });
+  op('addFill', {
+    undoable: true, group: '모양', desc: '모양 스택에 칠을 한 겹 더합니다.',
+    params: { query: Q, color: p('color', '새 칠 색상') }, returns: 'id[]',
+    run: function (ctx, a) {
+      withSel(ctx, a.query, 'addFill', function (list) {
+        list.forEach(function (it) {
+          if (!AI.appearance.supports(it)) return;
+          AI.appearance.addFill(it, a.color === undefined ? null : paint(a.color));
+        });
+      });
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+  op('addStroke', {
+    undoable: true, group: '모양', desc: '모양 스택에 획을 한 겹 더합니다.',
+    params: { query: Q, color: p('color', '새 획 색상'), width: p('number', '새 획 두께') },
+    returns: 'id[]',
+    run: function (ctx, a) {
+      withSel(ctx, a.query, 'addStroke', function (list) {
+        list.forEach(function (it) {
+          if (!AI.appearance.supports(it)) return;
+          var st = Model.mkStroke(a.color ? (normalizeHex(a.color) || '#000000') : '#000000',
+            a.width == null ? 1 : a.width);
+          AI.appearance.addStroke(it, st);
+        });
+      });
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+  op('setAppearanceLayer', {
+    undoable: true, group: '모양', desc: '모양 스택의 한 겹(index, 0 = 맨 아래)을 수정합니다.',
+    params: {
+      query: Q, index: p('number', '겹 번호 (0 = 맨 아래)', { required: true }),
+      color: p('color', '색상'), width: p('number', '획 두께 (획 겹만)')
+    },
+    returns: 'id[]',
+    run: function (ctx, a) {
+      withSel(ctx, a.query, 'setAppearanceLayer', function (list) {
+        list.forEach(function (it) {
+          if (!AI.appearance.supports(it)) return;
+          AI.appearance.materialize(it);
+          var e = AI.appearance.entry(it, Math.round(a.index));
+          if (!e) throw err('NO_LAYER', 'setAppearanceLayer: 겹 ' + a.index + ' 이(가) 없습니다');
+          if (e.kind === 'fill') {
+            if (a.color !== undefined) e.paint = paint(a.color);
+          } else {
+            if (a.color !== undefined) {
+              var np = paint(a.color);
+              if (np.type === 'none') e.stroke.type = 'none';
+              else { e.stroke.type = 'solid'; e.stroke.color = np.color; e.stroke.alpha = np.alpha; }
+            }
+            if (a.width != null) { e.stroke.width = a.width; if (e.stroke.type === 'none') e.stroke.type = 'solid'; }
+          }
+          AI.appearance.sync(it);
+        });
+      });
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+  op('removeAppearanceLayer', {
+    undoable: true, group: '모양', desc: '모양 스택에서 한 겹을 제거합니다.',
+    params: { query: Q, index: p('number', '겹 번호 (0 = 맨 아래)', { required: true }) },
+    returns: 'id[]',
+    run: function (ctx, a) {
+      withSel(ctx, a.query, 'removeAppearanceLayer', function (list) {
+        list.forEach(function (it) {
+          if (!AI.appearance.supports(it)) return;
+          AI.appearance.materialize(it);
+          if (!AI.appearance.removeAt(it, Math.round(a.index))) {
+            throw err('LAST_LAYER', 'removeAppearanceLayer: 마지막 겹은 지울 수 없습니다');
+          }
+        });
+      });
+      return ctx.sel.map(function (i) { return i.id; });
+    }
+  });
+  op('expandAppearance', {
+    undoable: true, group: '모양', desc: '모양 스택의 각 겹을 실제 오브젝트(그룹)로 펼칩니다.',
+    params: { query: Q }, returns: 'id[]',
+    run: function (ctx, a) {
+      var out = [], any = false;
+      withSel(ctx, a.query, 'expandAppearance', function (list) {
+        list.slice().forEach(function (it) {
+          var parts = AI.appearance.expand(it);
+          if (!parts) { out.push(it); return; }
+          var g = Model.newGroup(parts);
+          g.name = it.name + ' (확장)';
+          g.m = it.m.slice();
+          g.opacity = it.opacity;
+          g.blend = it.blend;
+          if (AI.effects.has(it)) g.effects = U.deepCopy(it.effects);
+          parts.forEach(function (c) { c.m = M.ident(); });
+          var loc = Model.locate(ctx.doc, it);
+          if (loc) loc.list.splice(loc.index, 1, g); else Model.activeLayer(ctx.doc).children.push(g);
+          out.push(g);
+          any = true;
+        });
+      });
+      if (!any) throw err('NOTHING_TO_EXPAND', 'expandAppearance: 확장할 모양 스택이 없습니다');
+      ctx.sel = out;
+      return out.map(function (i) { return i.id; });
     }
   });
 

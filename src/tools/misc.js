@@ -4,7 +4,7 @@
    ========================================================================= */
 (function (AI) {
   'use strict';
-  var U = AI.util, M = AI.mat, R = AI.rect, Model = AI.model, T = AI.tools, H = AI.hit, G = AI.geom, Col = AI.color, E = AI.edit;
+  var U = AI.util, M = AI.mat, R = AI.rect, Model = AI.model, T = AI.tools, H = AI.hit, G = AI.geom, Col = AI.color, E = AI.edit, Rn = AI.render;
 
   var st = null;
 
@@ -74,51 +74,169 @@
     }
   });
 
-  /* ---------------- 그레이디언트 ---------------- */
+  /* ---------------- 그레이디언트 (주석자 포함) ---------------- */
+  /* 일러스트레이터처럼 캔버스 위에 막대를 띄우고, 시작점 · 끝점 · 정지점을
+     직접 끌어 각도 · 길이 · 위치를 정한다. 기하는 paint.p0 / paint.p1 (로컬 좌표). */
+  function gradTarget(app) {
+    for (var i = 0; i < app.sel.length; i++) {
+      var it = app.sel[i];
+      if (it.type !== 'group' && it.fill && (it.fill.type === 'linear' || it.fill.type === 'radial')) return it;
+    }
+    return null;
+  }
+  function gradEnds(app, it) {
+    var g = it.fill;
+    var b = Rn.localBounds(it);
+    var p0, p1;
+    if (g.p0 && g.p1) { p0 = g.p0; p1 = g.p1; }
+    else {
+      var cx = (b.x + b.x2) / 2, cy = (b.y + b.y2) / 2;
+      var a = U.rad(g.angle || 0);
+      var len = (Math.abs(Math.cos(a)) * (b.x2 - b.x) + Math.abs(Math.sin(a)) * (b.y2 - b.y)) / 2;
+      if (g.type === 'radial') { p0 = { x: cx, y: cy }; p1 = { x: cx + len, y: cy }; }
+      else { p0 = { x: cx - Math.cos(a) * len, y: cy - Math.sin(a) * len }; p1 = { x: cx + Math.cos(a) * len, y: cy + Math.sin(a) * len }; }
+    }
+    var wm = M.mul(AI.viewT.matrix(app), Model.worldMatrix(app.doc, it));
+    return { p0: p0, p1: p1, s0: M.apply(wm, p0.x, p0.y), s1: M.apply(wm, p1.x, p1.y), wm: wm };
+  }
+  function setEnds(it, p0, p1) {
+    it.fill.p0 = { x: p0.x, y: p0.y };
+    it.fill.p1 = { x: p1.x, y: p1.y };
+    it.fill.angle = U.deg(Math.atan2(p1.y - p0.y, p1.x - p0.x));
+    AI.appearance.pushDown(it);
+  }
+
   T.mk({
     id: 'gradient', name: '그레이디언트 도구', key: 'g', cursor: 'crosshair',
     onDown: function (app, e) {
       if (!app.sel.length) { U.toast('오브젝트를 선택하세요'); return; }
+      var it = gradTarget(app);
+      /* 주석자 손잡이를 잡았는지 먼저 확인한다 */
+      if (it) {
+        var g = gradEnds(app, it);
+        if (U.dist(e.x, e.y, g.s0.x, g.s0.y) < 8) {
+          app.history.begin('그레이디언트', app.doc);
+          st = { mode: 'p0', it: it, g: g }; return;
+        }
+        if (U.dist(e.x, e.y, g.s1.x, g.s1.y) < 8) {
+          app.history.begin('그레이디언트', app.doc);
+          st = { mode: 'p1', it: it, g: g }; return;
+        }
+        var si = stopAt(app, it, g, e.x, e.y);
+        if (si >= 0) {
+          app.history.begin('그레이디언트 정지점', app.doc);
+          st = { mode: 'stop', it: it, g: g, si: si }; return;
+        }
+      }
       app.history.begin('그레이디언트', app.doc);
-      st = { start: AI.viewT.toDoc(app, e.x, e.y), moved: false };
-      app.sel.forEach(function (it) {
-        if (it.type === 'group') return;
-        if (!it.fill || it.fill.type === 'none' || it.fill.type === 'solid') {
-          var base = (it.fill && it.fill.type === 'solid') ? it.fill.color : '#ffffff';
-          it.fill = Col.gradient('linear', base, '#000000');
+      st = { mode: 'draw', start: AI.viewT.toDoc(app, e.x, e.y), moved: false };
+      app.sel.forEach(function (o) {
+        if (o.type === 'group') return;
+        if (!o.fill || o.fill.type === 'none' || o.fill.type === 'solid') {
+          var base = (o.fill && o.fill.type === 'solid') ? o.fill.color : '#ffffff';
+          o.fill = Col.gradient('linear', base, '#000000');
+          AI.appearance.pushDown(o);
         }
       });
       app.invalidate();
     },
     onMove: function (app, e) {
       if (!st || !e.down) return;
-      var d = AI.viewT.toDoc(app, e.x, e.y);
-      var ang = Math.atan2(d.y - st.start.y, d.x - st.start.x);
-      if (e.shift) ang = Math.round(ang / (Math.PI / 4)) * (Math.PI / 4);
-      st.moved = true;
-      st.end = d; st.angle = ang;
-      app.sel.forEach(function (it) {
-        if (it.fill && (it.fill.type === 'linear' || it.fill.type === 'radial')) it.fill.angle = U.deg(ang);
-      });
+      if (st.mode === 'draw') {
+        var d = AI.viewT.toDoc(app, e.x, e.y);
+        var ang = Math.atan2(d.y - st.start.y, d.x - st.start.x);
+        if (e.shift) ang = Math.round(ang / (Math.PI / 4)) * (Math.PI / 4);
+        var dist = U.dist(st.start.x, st.start.y, d.x, d.y);
+        st.moved = true;
+        st.end = { x: st.start.x + Math.cos(ang) * dist, y: st.start.y + Math.sin(ang) * dist };
+        app.sel.forEach(function (it) {
+          if (!it.fill || (it.fill.type !== 'linear' && it.fill.type !== 'radial')) return;
+          var inv = M.invert(Model.worldMatrix(app.doc, it));
+          setEnds(it, M.apply(inv, st.start.x, st.start.y), M.apply(inv, st.end.x, st.end.y));
+        });
+      } else if (st.mode === 'p0' || st.mode === 'p1') {
+        var inv2 = M.invert(st.g.wm);
+        var lp = M.apply(inv2, e.x, e.y);
+        if (st.mode === 'p0') setEnds(st.it, lp, st.g.p1);
+        else {
+          var p1 = lp;
+          if (e.shift) {
+            var a2 = Math.round(Math.atan2(lp.y - st.g.p0.y, lp.x - st.g.p0.x) / (Math.PI / 4)) * (Math.PI / 4);
+            var L = U.dist(st.g.p0.x, st.g.p0.y, lp.x, lp.y);
+            p1 = { x: st.g.p0.x + Math.cos(a2) * L, y: st.g.p0.y + Math.sin(a2) * L };
+          }
+          setEnds(st.it, st.g.p0, p1);
+        }
+      } else if (st.mode === 'stop') {
+        var t = projectT(st.g, e.x, e.y);
+        st.it.fill.stops[st.si].t = U.clamp(t, 0, 1);
+        st.it.fill.stops.sort(function (a, b) { return a.t - b.t; });
+        AI.appearance.pushDown(st.it);
+      }
       app.invalidate();
       AI.ui && AI.ui.syncStyle && AI.ui.syncStyle(app);
     },
-    onUp: function (app) { if (st) { app.history.commit(); st = null; app.invalidate(); } },
+    onUp: function (app) {
+      if (!st) return;
+      app.history.commit();
+      st = null;
+      app.invalidate();
+      AI.ui && AI.ui.syncAll && AI.ui.syncAll(app);
+    },
+    onDblClick: function (app, e) {
+      /* 막대를 더블클릭하면 그 위치에 정지점을 추가한다 */
+      var it = gradTarget(app);
+      if (!it) return;
+      var g = gradEnds(app, it);
+      var t = projectT(g, e.x, e.y);
+      if (t < -0.02 || t > 1.02) return;
+      app.history.begin('정지점 추가', app.doc);
+      it.fill.stops.push({ t: U.clamp(t, 0, 1), color: Col.sampleGradient ? Col.sampleGradient(it.fill, t) : '#888888', alpha: 1 });
+      it.fill.stops.sort(function (a, b) { return a.t - b.t; });
+      AI.appearance.pushDown(it);
+      app.history.commit();
+      app.invalidate();
+      AI.ui.syncAll(app);
+    },
     drawUI: function (ctx, app) {
-      if (!st || !st.end) return;
-      var a = AI.viewT.toScreen(app, st.start.x, st.start.y);
-      var b = AI.viewT.toScreen(app, st.end.x, st.end.y);
+      var it = gradTarget(app);
+      if (!it) return;
+      var g = gradEnds(app, it);
       ctx.save();
       ctx.strokeStyle = '#000'; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(g.s0.x, g.s0.y); ctx.lineTo(g.s1.x, g.s1.y); ctx.stroke();
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-      ctx.fillStyle = '#fff'; ctx.strokeStyle = '#000';
-      ctx.beginPath(); ctx.arc(a.x, a.y, 5, 0, 6.2832); ctx.fill(); ctx.stroke();
-      ctx.beginPath(); ctx.rect(b.x - 5, b.y - 5, 10, 10); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(g.s0.x, g.s0.y); ctx.lineTo(g.s1.x, g.s1.y); ctx.stroke();
+      /* 시작점(원) · 끝점(사각) */
+      ctx.fillStyle = '#fff'; ctx.strokeStyle = '#000'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(g.s0.x, g.s0.y, 5, 0, 6.2832); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.rect(g.s1.x - 5, g.s1.y - 5, 10, 10); ctx.fill(); ctx.stroke();
+      /* 정지점 */
+      it.fill.stops.forEach(function (sp) {
+        var p = lerpPt(g.s0, g.s1, sp.t);
+        ctx.fillStyle = Col.toCss(sp.color, sp.alpha);
+        ctx.beginPath(); ctx.arc(p.x, p.y, 4.5, 0, 6.2832); ctx.fill();
+        ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 5.8, 0, 6.2832); ctx.stroke();
+      });
       ctx.restore();
     }
   });
+
+  function lerpPt(a, b, t) { return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }; }
+  function projectT(g, x, y) {
+    var dx = g.s1.x - g.s0.x, dy = g.s1.y - g.s0.y, l2 = dx * dx + dy * dy;
+    if (l2 < 1e-9) return 0;
+    return ((x - g.s0.x) * dx + (y - g.s0.y) * dy) / l2;
+  }
+  function stopAt(app, it, g, x, y) {
+    for (var i = 0; i < it.fill.stops.length; i++) {
+      var p = lerpPt(g.s0, g.s1, it.fill.stops[i].t);
+      if (U.dist(x, y, p.x, p.y) < 7) return i;
+    }
+    return -1;
+  }
 
   /* ---------------- 가위 ---------------- */
   T.mk({

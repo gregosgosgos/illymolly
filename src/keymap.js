@@ -44,9 +44,9 @@
     'T': 'type', '\\': 'line',
     'M': 'rect', 'L': 'ellipse',
     'B': 'brush', 'Shift+B': 'blob', 'N': 'pencil',
-    'Shift+E': 'eraser', 'C': 'scissors',
+    'Shift+E': 'eraser', 'C': 'scissors', 'Shift+M': 'shapebuilder',
     'R': 'rotate', 'O': 'reflect', 'S': 'scale', 'E': 'freetransform',
-    'G': 'gradient', 'I': 'eyedropper',
+    'G': 'gradient', 'I': 'eyedropper', 'Shift+W': 'width',
     'Shift+O': 'artboard', 'Z': 'zoom', 'H': 'hand'
   };
 
