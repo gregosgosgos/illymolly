@@ -464,6 +464,57 @@
         { id: 'color', label: '색상', type: 'color', value: e.color },
         { id: 'alpha', label: '불투명도', type: 'num', value: Math.round(e.alpha * 100), unit: '%' }
       ];
+    },
+    /* ---- 왜곡 및 변형 (벡터 효과) ---- */
+    zigzag: function (e) {
+      return [
+        { id: 'size', label: '크기', type: 'num', value: e.size, unit: 'pt', step: 1 },
+        { id: 'ridges', label: '각 세그먼트에 대한 융기 수', type: 'num', value: e.ridges, step: 1 },
+        { id: 'smooth', label: '매끄럽게', type: 'check', value: !!e.smooth }
+      ];
+    },
+    roughen: function (e) {
+      return [
+        { id: 'size', label: '크기', type: 'num', value: e.size, unit: 'pt', step: 1 },
+        { id: 'detail', label: '세부', type: 'num', value: e.detail, unit: '/인치', step: 1 },
+        { id: 'smooth', label: '매끄럽게', type: 'check', value: !!e.smooth }
+      ];
+    },
+    puckerBloat: function (e) {
+      return [
+        { id: 'amount', label: '오목(-) · 볼록(+)', type: 'num', value: e.amount, unit: '%', step: 5 }
+      ];
+    },
+    twist: function (e) {
+      return [{ id: 'angle', label: '각도', type: 'num', value: e.angle, unit: '°', step: 5 }];
+    },
+    transformFx: function (e) {
+      return [
+        { id: 'scaleX', label: '가로 비율', type: 'num', value: e.scaleX, unit: '%' },
+        { id: 'scaleY', label: '세로 비율', type: 'num', value: e.scaleY, unit: '%' },
+        { type: 'sep' },
+        { id: 'moveX', label: '가로 이동', type: 'num', value: e.moveX, unit: 'pt' },
+        { id: 'moveY', label: '세로 이동', type: 'num', value: e.moveY, unit: 'pt' },
+        { id: 'angle', label: '각도', type: 'num', value: e.angle, unit: '°' },
+        { type: 'sep' },
+        { id: 'reflectX', label: 'X 반사', type: 'check', value: !!e.reflectX },
+        { id: 'reflectY', label: 'Y 반사', type: 'check', value: !!e.reflectY },
+        { id: 'copies', label: '사본', type: 'num', value: e.copies, step: 1 },
+        { id: 'anchor', label: '기준점', type: 'ref', value: e.anchor == null ? 4 : e.anchor }
+      ];
+    },
+    freeDistort: function (e) {
+      return [
+        { id: 'tlx', label: '왼쪽 위 X', type: 'num', value: e.tl[0], unit: '%' },
+        { id: 'tly', label: '왼쪽 위 Y', type: 'num', value: e.tl[1], unit: '%' },
+        { id: 'trx', label: '오른쪽 위 X', type: 'num', value: e.tr[0], unit: '%' },
+        { id: 'try', label: '오른쪽 위 Y', type: 'num', value: e.tr[1], unit: '%' },
+        { type: 'sep' },
+        { id: 'brx', label: '오른쪽 아래 X', type: 'num', value: e.br[0], unit: '%' },
+        { id: 'bry', label: '오른쪽 아래 Y', type: 'num', value: e.br[1], unit: '%' },
+        { id: 'blx', label: '왼쪽 아래 X', type: 'num', value: e.bl[0], unit: '%' },
+        { id: 'bly', label: '왼쪽 아래 Y', type: 'num', value: e.bl[1], unit: '%' }
+      ];
     }
   };
   var FX_BUILD = {
@@ -479,11 +530,40 @@
         type: 'glow', blur: Math.max(0, v.blur),
         color: v.color || '#ffd166', alpha: U.clamp(v.alpha / 100, 0, 1)
       };
+    },
+    zigzag: function (v) {
+      return {
+        type: 'zigzag', size: v.size,
+        ridges: U.clamp(Math.round(v.ridges), 1, 100), smooth: !!v.smooth
+      };
+    },
+    roughen: function (v) {
+      return {
+        type: 'roughen', size: Math.max(0, v.size),
+        detail: U.clamp(v.detail, 0.5, 200), smooth: !!v.smooth
+      };
+    },
+    puckerBloat: function (v) { return { type: 'puckerBloat', amount: U.clamp(v.amount, -200, 200) }; },
+    twist: function (v) { return { type: 'twist', angle: v.angle }; },
+    transformFx: function (v) {
+      return {
+        type: 'transformFx', scaleX: v.scaleX, scaleY: v.scaleY,
+        moveX: v.moveX, moveY: v.moveY, angle: v.angle,
+        copies: U.clamp(Math.round(v.copies), 0, 60),
+        anchor: v.anchor == null ? 4 : v.anchor,
+        reflectX: !!v.reflectX, reflectY: !!v.reflectY
+      };
+    },
+    freeDistort: function (v) {
+      return {
+        type: 'freeDistort',
+        tl: [v.tlx, v.tly], tr: [v.trx, v.try], br: [v.brx, v.bry], bl: [v.blx, v.bly]
+      };
     }
   };
 
   Dlg.effect = function (app, type) {
-    var FX = AI.effects, def = FX.DEFS[type];
+    var FX = AI.effects, def = FX.def(type);
     if (!def || !FX_FIELDS[type]) return;
     if (!app.sel.length) { U.toast('오브젝트를 먼저 선택하세요'); return; }
     var sel = app.sel.slice();

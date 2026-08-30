@@ -168,8 +168,19 @@
   };
 
   /* ---------------- 아이템 바운딩 (로컬) ---------------- */
+  /* 기하 효과(왜곡 및 변형)가 걸려 있으면 변형된 결과들의 합집합이 바운딩이다 */
+  Rn.pathBoundsFx = function (it, m) {
+    var px = AI.distort.proxies(it);
+    if (!px) return G.pathBounds(it, m);
+    var r = R.empty();
+    for (var i = 0; i < px.length; i++) {
+      r = R.union(r, G.pathBounds(px[i], m ? M.mul(m, px[i].fxm) : px[i].fxm));
+    }
+    return r;
+  };
+
   Rn.localBounds = function (it) {
-    if (it.type === 'path') return G.pathBounds(it, null);
+    if (it.type === 'path') return Rn.pathBoundsFx(it, null);
     if (it.type === 'image') return { x: 0, y: 0, x2: it.w, y2: it.h };
     if (it.type === 'symbol') {
       var def = Rn.symbolDef && Rn.symbolDef(it);
@@ -214,7 +225,7 @@
       if (!geo && AI.effects.has(it) && !R.isEmpty(r)) r = R.grow(r, AI.effects.padding(it) * (sw == null ? 1 : sw));
       return r;
     }
-    var b = (it.type === 'path') ? G.pathBounds(it, m) : Rn.xformBounds(Rn.localBounds(it), m);
+    var b = (it.type === 'path') ? Rn.pathBoundsFx(it, m) : Rn.xformBounds(Rn.localBounds(it), m);
     if (!geo && it.type === 'path') {
       var maxPad = 0;
       AI.appearance.strokes(it).forEach(function (e) {
@@ -530,7 +541,7 @@
       if (it.clip && it.children.length) {
         var cp = it.children[it.children.length - 1];
         ctx.beginPath();
-        G.tracePath(ctx, cp, M.mul(m, cp.m));
+        traceFx(ctx, cp, M.mul(m, cp.m));
         ctx.clip();
         for (var i = 0; i < it.children.length - 1; i++) Rn.item(ctx, app, it.children[i], m, a, inIso);
       } else {
@@ -546,7 +557,7 @@
 
     if (app.prefs.outline) {
       ctx.beginPath();
-      if (it.type === 'path') G.tracePath(ctx, it, m);
+      if (it.type === 'path') traceFx(ctx, it, m);
       else {
         var bb = Rn.localBounds(it);
         var q = [[bb.x, bb.y], [bb.x2, bb.y], [bb.x2, bb.y2], [bb.x, bb.y2]].map(function (p) { return M.apply(m, p[0], p[1]); });
@@ -565,12 +576,26 @@
     ctx.restore();
   }
 
+  /* 기하 효과까지 반영해 경로를 그린다 (클립·윤곽선 보기용) */
+  function traceFx(ctx, it, m) {
+    var px = AI.distort.proxies(it);
+    if (!px) { G.tracePath(ctx, it, m); return; }
+    for (var i = 0; i < px.length; i++) G.tracePath(ctx, px[i], M.mul(m, px[i].fxm));
+  }
+  Rn.traceFx = traceFx;
+
   function viewBoundsOf(it, m) {
-    if (it.type === 'path') return G.pathBounds(it, m);
+    if (it.type === 'path') return Rn.pathBoundsFx(it, m);
     return Rn.xformBounds(Rn.localBounds(it), m);
   }
 
   function drawPath(ctx, app, it, m) {
+    /* 왜곡 및 변형 — 변형된 기하마다 원본과 똑같은 겹으로 다시 그린다 */
+    var px = AI.distort.proxies(it);
+    if (px) {
+      for (var k = 0; k < px.length; k++) drawPath(ctx, app, px[k], M.mul(m, px[k].fxm));
+      return;
+    }
     var vb = viewBoundsOf(it, m);
     var stack = AI.appearance.list(it);
     for (var i = 0; i < stack.length; i++) {

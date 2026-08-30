@@ -1083,6 +1083,16 @@
     var p = document.getElementById('p-effects');
     if (!p) return;
     p.innerHTML =
+      '<div class="sec">왜곡 및 변형</div>' +
+      '<div class="grid4">' +
+      UI.btn({ icon: 'fxZigzag', title: '지그재그', cmd: 'fxZigzag' }) +
+      UI.btn({ icon: 'fxRoughen', title: '거칠게 하기', cmd: 'fxRoughen' }) +
+      UI.btn({ icon: 'fxPucker', title: '오목· 볼록', cmd: 'fxPuckerBloat' }) +
+      UI.btn({ icon: 'fxTwist', title: '비틀기', cmd: 'fxTwist' }) +
+      UI.btn({ icon: 'fxTransformFx', title: '변형', cmd: 'fxTransform' }) +
+      UI.btn({ icon: 'fxFreeDistort', title: '자유 왜곡', cmd: 'fxFreeDistort' }) +
+      '</div>' +
+      '<div class="sec">흐림 효과 · 스타일화</div>' +
       '<div class="grid4">' +
       UI.btn({ icon: 'fxBlur', title: '가우시안 흐림', cmd: 'fxBlur' }) +
       UI.btn({ icon: 'fxShadow', title: '그림자 만들기', cmd: 'fxShadow' }) +

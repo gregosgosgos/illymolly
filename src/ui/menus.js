@@ -83,7 +83,7 @@
       if (app.sel.some(function (it) { return it.type === 'image'; })) {
         items = items.concat(['imageTrace', 'cropImage', '-']);
       }
-      if (app.sel.some(function (it) { return AI.effects.has(it); })) {
+      if (app.sel.some(function (it) { return AI.effects.hasAny(it); })) {
         items = items.concat(['fxClear', '-']);
       }
       items = items.concat(['lock', 'hide', '-', 'cut', 'copy', 'paste']);

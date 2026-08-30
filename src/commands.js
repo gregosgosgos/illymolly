@@ -35,6 +35,10 @@
     };
   }
   var hasSel = function (a) { return a.sel.length > 0; };
+  /* 기하 효과(왜곡 및 변형)는 패스에만 얹힌다 */
+  var hasPathSel = function (a) {
+    return a.sel.some(function (it) { return it.type === 'path'; });
+  };
 
   /* ================= 파일 ================= */
   def('new', '새로 만들기...', 'Ctrl+N', function (a) { AI.dialogs.newDocument(a); });
@@ -348,6 +352,18 @@
   def('fxBlur', '가우시안 흐림...', null, function (a) { fxDialog(a, 'blur'); }, { enabled: hasSel });
   def('fxShadow', '그림자 만들기...', null, function (a) { fxDialog(a, 'shadow'); }, { enabled: hasSel });
   def('fxGlow', '외부 광선...', null, function (a) { fxDialog(a, 'glow'); }, { enabled: hasSel });
+  /* --- 왜곡 및 변형 (벡터 효과) --- */
+  function geoDialog(a, type) {
+    if (!hasPathSel(a)) { U.toast('왜곡 및 변형은 패스에만 적용됩니다'); return; }
+    fxDialog(a, type);
+  }
+  def('fxZigzag', '지그재그...', null, function (a) { geoDialog(a, 'zigzag'); }, { enabled: hasPathSel });
+  def('fxRoughen', '거칠게 하기...', null, function (a) { geoDialog(a, 'roughen'); }, { enabled: hasPathSel });
+  def('fxPuckerBloat', '오목· 볼록...', null, function (a) { geoDialog(a, 'puckerBloat'); }, { enabled: hasPathSel });
+  def('fxTwist', '비틀기...', null, function (a) { geoDialog(a, 'twist'); }, { enabled: hasPathSel });
+  def('fxTransform', '변형...', null, function (a) { geoDialog(a, 'transformFx'); }, { enabled: hasPathSel });
+  def('fxFreeDistort', '자유 왜곡...', null, function (a) { geoDialog(a, 'freeDistort'); }, { enabled: hasPathSel });
+
   def('fxLast', '마지막 효과 적용', 'Ctrl+Shift+E', hist('효과 적용', function (a) {
     if (!a.sel.length) return false;
     var last = a.lastEffect;
@@ -363,30 +379,59 @@
   }, { enabled: function (a) { return a.sel.length > 0 && !!a.lastEffect; } });
   def('fxClear', '모양 지우기', null, hist('모양 지우기', function (a) {
     var any = false;
-    a.sel.forEach(function (it) { if (AI.effects.has(it)) { AI.effects.clear(it); any = true; } });
+    a.sel.forEach(function (it) { if (AI.effects.hasAny(it)) { AI.effects.clear(it); any = true; } });
     if (!any) { U.toast('적용된 효과가 없습니다'); return false; }
     U.toast('효과 지움');
   }), { enabled: hasSel });
+  /* 왜곡 및 변형(기하 효과)을 실제 패스로 굳힌다 — 결과가 여럿이면 사본마다 하나씩 */
+  function bakeGeo(it) {
+    var res = AI.distort.expand(it);
+    if (!res) return null;
+    var raster = (it.effects || []).filter(function (e) { return !AI.distort.isGeo(e.type); });
+    return res.map(function (entry, i) {
+      var c = U.deepCopy(it);
+      c.id = U.uid(it.type);
+      c.subs = entry.subs;
+      c.m = M.mul(it.m, entry.m);
+      if (res.length > 1) c.name = it.name + ' ' + (i + 1);
+      if (raster.length) c.effects = raster.map(function (e) { return U.deepCopy(e); });
+      else delete c.effects;
+      return c;
+    });
+  }
+
   def('expandAppearance', '모양 확장', null, hist('모양 확장', function (a) {
     var made = [], expanded = 0, rasterLeft = 0;
     a.sel.slice().forEach(function (it) {
-      var parts = AI.appearance.expand(it);
-      if (!parts) {
+      var baked = bakeGeo(it);
+      var units = baked || [it];
+      var repl = [];
+      units.forEach(function (u) {
+        var parts = AI.appearance.expand(u);
+        if (!parts) { repl.push(u); return; }
+        /* 각 겹을 실제 오브젝트로 펼치고 원본 자리에 그룹으로 넣는다 */
+        var g = Model.newGroup(parts);
+        g.name = u.name + ' (확장)';
+        g.m = u.m.slice();
+        g.opacity = u.opacity;
+        g.blend = u.blend;
+        if (AI.effects.has(u)) g.effects = U.deepCopy(u.effects);
+        parts.forEach(function (c) { c.m = M.ident(); });
+        repl.push(g);
+      });
+      if (!baked && repl[0] === it) {
         if (AI.effects.has(it)) rasterLeft++;
         made.push(it);
         return;
       }
-      /* 각 겹을 실제 오브젝트로 펼치고 원본 자리에 그룹으로 넣는다 */
-      var g = Model.newGroup(parts);
-      g.name = it.name + ' (확장)';
-      g.m = it.m.slice();
-      g.opacity = it.opacity;
-      g.blend = it.blend;
-      if (AI.effects.has(it)) g.effects = U.deepCopy(it.effects);
-      parts.forEach(function (c) { c.m = M.ident(); });
+      var node = repl[0];
+      if (repl.length > 1) {
+        node = Model.newGroup(repl);
+        node.name = it.name + ' (확장)';
+      }
       var loc = Model.locate(a.doc, it);
-      if (loc) loc.list.splice(loc.index, 1, g); else Model.activeLayer(a.doc).children.push(g);
-      made.push(g);
+      if (loc) loc.list.splice(loc.index, 1, node); else Model.activeLayer(a.doc).children.push(node);
+      made.push(node);
       expanded++;
     });
     if (!expanded) {
@@ -660,6 +705,7 @@
     {
       title: '효과', items: [
         'fxLast', 'fxLastDialog', '-',
+        'fxZigzag', 'fxRoughen', 'fxPuckerBloat', 'fxTwist', 'fxTransform', 'fxFreeDistort', '-',
         'fxBlur', '-',
         'fxShadow', 'fxGlow', '-',
         'expandAppearance', 'fxClear'

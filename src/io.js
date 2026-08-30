@@ -156,6 +156,13 @@
     return { attr: 'url(#' + id + ')', op: 1 };
   }
 
+  /* 기하 효과까지 반영한 d 문자열 */
+  function svgDFx(it, m) {
+    var px = AI.distort.proxies(it);
+    if (!px) return G.toSvgD(it, m);
+    return px.map(function (p) { return G.toSvgD(p, m ? M.mul(m, p.fxm) : p.fxm); }).join(' ');
+  }
+
   function itemSvg(doc, it, defs) {
     if (!it.visible) return '';
     var tr = M.isIdent(it.m) ? '' : ' transform="matrix(' + it.m.map(function (v) { return U.round(v, 4); }).join(' ') + ')"';
@@ -182,6 +189,16 @@
         : itemSvg(doc, maskless(it), defs);
       return '<g' + tr + op + ' mask="url(#' + mid + ')">' + body2 + '</g>';
     }
+    /* 왜곡 및 변형 — 변형된 기하마다 같은 스타일로 한 벌씩 내보낸다 */
+    var gpx = (it.type === 'path') ? AI.distort.proxies(it) : null;
+    if (gpx) {
+      var gbody = gpx.map(function (p) {
+        var q = Object.create(p);
+        q.m = p.fxm; q.opacity = 1; q.opacityMask = null;
+        return itemSvg(doc, q, defs);
+      }).join('');
+      return '<g' + tr + op + '>' + gbody + '</g>';
+    }
     if (it.type === 'symbol') {
       var sdef = AI.assets.findSymbol(doc, it.symbolId);
       if (!sdef) return '';
@@ -192,7 +209,7 @@
       if (it.clip && it.children.length) {
         var cp = it.children[it.children.length - 1];
         var cid = 'clip' + (++gradSeq);
-        defs.push('<clipPath id="' + cid + '"><path d="' + G.toSvgD(cp, cp.m) + '"/></clipPath>');
+        defs.push('<clipPath id="' + cid + '"><path d="' + svgDFx(cp, cp.m) + '"/></clipPath>');
         inner = it.children.slice(0, -1).map(function (c) { return itemSvg(doc, c, defs); }).join('');
         return '<g' + tr + op + ' clip-path="url(#' + cid + ')">' + inner + '</g>';
       }

@@ -1837,6 +1837,105 @@ await check('세그먼트 컨트롤이 현재 획 설정을 비춘다', async ()
   return `cap ${on.cap} · join ${on.join} · align ${on.align} → 클릭으로 ${after.model}`;
 });
 
+/* ---------------- 효과 > 왜곡 및 변형 ---------------- */
+await check('효과 > 왜곡 및 변형 — 지그재그가 실제로 기하를 바꾼다', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 400));
+    const r = AI.model.newRect(100, 100, 200, 100, 0);
+    r.fill = AI.color.solid('#3366cc');
+    app.doc.layers[0].children.push(r);
+    AI.sel.set(app, [r]);
+  });
+  const before = await ev(() => {
+    const it = AI.app.sel[0];
+    return { pts: it.subs[0].pts.length, w: Math.round(AI.render.worldBounds(AI.app.doc, it, true).x2 - AI.render.worldBounds(AI.app.doc, it, true).x) };
+  });
+  await ev(() => AI.commands.run('fxZigzag'));
+  await page.waitForSelector('.dlg');
+  await page.fill('#dlgf-size', '20');
+  await page.fill('#dlgf-ridges', '3');
+  await page.press('#dlgf-ridges', 'Tab');
+  await page.waitForTimeout(60);
+  const live = await ev(() => AI.distort.result(AI.app.sel[0])[0].subs[0].pts.length);
+  await page.click('.dlg-btn:has-text("확인")');
+  await page.waitForTimeout(80);
+  const after = await ev(() => {
+    const it = AI.app.sel[0];
+    const b = AI.render.worldBounds(AI.app.doc, it, true);
+    return {
+      srcPts: it.subs[0].pts.length,          /* 원본은 그대로 (비파괴) */
+      fxPts: AI.distort.result(it)[0].subs[0].pts.length,
+      grew: Math.round((b.x2 - b.x) - 200),   /* 융기가 바깥으로 나가 바운딩이 커진다 */
+      label: AI.effects.label(it.effects[0]),
+      rows: document.querySelectorAll('#fx-list .list-row').length
+    };
+  });
+  if (after.srcPts !== before.pts) throw new Error('원본 패스가 바뀜=' + after.srcPts);
+  if (after.fxPts <= before.pts) throw new Error('기하가 안 바뀜=' + after.fxPts);
+  if (live !== after.fxPts) throw new Error('미리 보기와 결과가 다름 ' + live + '/' + after.fxPts);
+  if (after.grew < 10) throw new Error('바운딩이 안 커짐=' + after.grew);
+  if (after.rows !== 1) throw new Error('효과 패널 행=' + after.rows);
+  return `원본 ${after.srcPts}점 유지 · 효과 ${after.fxPts}점 · 바운딩 +${after.grew}pt · ${after.label}`;
+});
+
+await check('왜곡 효과가 히트 · SVG · 모양 확장까지 따라온다', async () => {
+  /* 앞 테스트에서 지그재그가 걸린 사각형이 그대로 선택되어 있다 */
+  const svg = await ev(() => AI.io.toSVG(AI.app));
+  const d = (svg.match(/<path d="([^"]*)"/) || [, ''])[1];
+  const verts = (d.match(/[LC]/g) || []).length;   /* 원본 사각형이면 4 — 지그재그가 반영되면 더 많다 */
+  if (verts < 12) throw new Error('SVG 에 왜곡이 반영되지 않음=' + verts);
+  const hit = await ev(() => {
+    const it = AI.app.sel[0];
+    const vm = AI.viewT.matrix(AI.app);
+    const b = AI.render.worldBounds(AI.app.doc, it, true);
+    const c = AI.mat.apply(vm, (b.x + b.x2) / 2, (b.y + b.y2) / 2);
+    return AI.hit.itemAt(AI.app, c.x, c.y, true) === it;
+  });
+  const exp = await ev(() => {
+    AI.commands.run('expandAppearance');
+    const it = AI.app.doc.layers[0].children[0];
+    return { type: it.type, pts: it.subs ? it.subs[0].pts.length : 0, fx: !!it.effects };
+  });
+  if (!hit) throw new Error('히트 실패');
+  if (exp.type !== 'path' || exp.fx) throw new Error('확장 결과=' + JSON.stringify(exp));
+  if (exp.pts < 8) throw new Error('확장된 점 수=' + exp.pts);
+  const after = await ev(() => AI.io.toSVG(AI.app).indexOf('<path') >= 0);
+  await ev(() => AI.commands.run('undo'));
+  const back = await ev(() => !!AI.app.doc.layers[0].children[0].effects);
+  if (!after) throw new Error('SVG 에 패스 없음');
+  if (!back) throw new Error('실행 취소로 효과가 복원되지 않음');
+  return `SVG 정점 ${verts}개 · 히트 · 확장 ${exp.pts}점 · 실행 취소로 복원`;
+});
+
+await check('변형 효과의 사본 · 자유 왜곡 · 오목·볼록 (API)', async () => {
+  const r = await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(600, 400));
+    illy.rect({ x: 50, y: 50, width: 100, height: 100, fill: '#cc3333' });
+    /* 변형: 40pt 씩 옮긴 사본 3개 → 폭이 100 + 3×40 = 220 이 된다 */
+    illy.applyEffect({ type: 'transformFx', moveX: 40, copies: 3 });
+    const b = illy.get(illy.select({ type: 'path' })[0].id).geometricBounds;
+    /* 오목·볼록 */
+    illy.applyEffect({ type: 'puckerBloat', amount: 60 });
+    const b2 = illy.get(illy.select({ type: 'path' })[0].id).geometricBounds;
+    const list = illy.effects({})[0].effects.map(e => e.type);
+    return { w: Math.round(b.w), bloatW: Math.round(b2.w), list: list.join(','), copies: AI.distort.result(AI.app.doc.layers[0].children[0]).length };
+  });
+  const free = await ev(() => {
+    illy.clearEffects({});
+    illy.applyEffect({ type: 'freeDistort', corners: [0, 0, 0, 0, 0, 0, -50, 0] });
+    const b = illy.get(illy.select({ type: 'path' })[0].id).geometricBounds;
+    return Math.round(b.w);
+  });
+  if (r.w !== 220) throw new Error('사본 폭=' + r.w);
+  if (r.copies !== 4) throw new Error('사본 수=' + r.copies);
+  if (r.bloatW <= 220) throw new Error('볼록이 안 커짐=' + r.bloatW);
+  if (r.list !== 'transformFx,puckerBloat') throw new Error('효과 목록=' + r.list);
+  if (free !== 150) throw new Error('자유 왜곡 폭=' + free);
+  return `사본 4벌 220pt · 볼록 ${r.bloatW}pt · 자유 왜곡 ${free}pt`;
+});
+
 /* ---------------- 결과 ---------------- */
 console.log('\n=== Illymolly E2E ===');
 for (const [n, s, d] of results) console.log(`${s === 'OK' ? '✔' : '✘'} ${n}${d ? ' — ' + d : ''}`);

@@ -33,22 +33,32 @@
     }
   };
 
+  /* 효과 정의는 래스터(FX.DEFS)와 기하(AI.distort.DEFS) 두 곳에 나뉘어 있다 */
+  FX.def = function (type) {
+    return FX.DEFS[type] || (AI.distort && AI.distort.DEFS[type]) || null;
+  };
   FX.create = function (type) {
-    var d = FX.DEFS[type];
+    var d = FX.def(type);
     return d ? d.make() : null;
   };
   FX.label = function (e) {
-    var d = FX.DEFS[e.type];
+    var d = FX.def(e.type);
     return d ? d.label(e) : e.type;
   };
 
   FX.list = function (it) { return (it && it.effects) || []; };
-  FX.has = function (it) { return !!(it && it.effects && it.effects.length); };
+
+  /* 기하 효과(왜곡 및 변형)는 래스터 필터가 아니라 패스 자체를 바꾼다.
+     아래 함수들은 래스터 효과만 다루므로 기하 효과는 건너뛴다. */
+  function isGeo(e) { return !!(AI.distort && AI.distort.isGeo(e.type)); }
+  FX.raster = function (it) { return FX.list(it).filter(function (e) { return !isGeo(e); }); };
+  FX.has = function (it) { return FX.raster(it).length > 0; };
+  FX.hasAny = function (it) { return !!(it && it.effects && it.effects.length); };
 
   /* 효과가 그림을 얼마나 밖으로 밀어내는가 (문서 단위) */
   FX.padding = function (it) {
     var p = 0;
-    FX.list(it).forEach(function (e) {
+    FX.raster(it).forEach(function (e) {
       if (e.type === 'blur') p = Math.max(p, e.radius * 3);
       else if (e.type === 'shadow') p = Math.max(p, e.blur * 3 + Math.abs(e.dx) + Math.abs(e.dy));
       else if (e.type === 'glow') p = Math.max(p, e.blur * 3);
@@ -60,7 +70,7 @@
   FX.filterString = function (it, scale) {
     var s = scale == null ? 1 : scale;
     var out = [];
-    FX.list(it).forEach(function (e) {
+    FX.raster(it).forEach(function (e) {
       if (e.type === 'blur') {
         out.push('blur(' + U.round(e.radius * s, 3) + 'px)');
       } else if (e.type === 'shadow') {
@@ -75,7 +85,7 @@
 
   /* SVG <filter> 정의 — io.js 가 defs 에 넣는다 */
   FX.svgFilter = function (it, id) {
-    var list = FX.list(it);
+    var list = FX.raster(it);
     if (!list.length) return null;
     var body = [], src = 'SourceGraphic';
     var pad = FX.padding(it);

@@ -67,6 +67,13 @@
     });
   }
 
+  /* 기하 효과(왜곡 및 변형)까지 반영한 경로 */
+  function pathOpsFx(w, it, m) {
+    var px = AI.distort.proxies(it);
+    if (!px) { pathOps(w, it, m); return; }
+    px.forEach(function (p) { pathOps(w, p, M.mul(m, p.fxm)); });
+  }
+
   /* 그레이디언트·패턴은 PDF 셰이딩까지 가지 않고 대표색으로 근사한다 */
   function flatColor(paint) {
     if (!paint || paint.type === 'none') return null;
@@ -104,7 +111,7 @@
       w.w('q');
       if (it.clip && it.children.length) {
         var cp = it.children[it.children.length - 1];
-        pathOps(w, cp, M.mul(wm, cp.m));
+        pathOpsFx(w, cp, M.mul(wm, cp.m));
         w.w('W n');
         for (var i = 0; i < it.children.length - 1; i++) drawItem(w, doc, it.children[i], wm, a);
       } else {
@@ -116,6 +123,17 @@
     if (it.type === 'image') { drawImage(w, it, wm, a); return; }
     if (it.type === 'text') { drawText(w, it, wm, a); return; }
     if (it.type !== 'path') return;
+
+    /* 왜곡 및 변형 — 변형된 기하마다 같은 겹으로 한 벌씩 */
+    var gpx = AI.distort.proxies(it);
+    if (gpx) {
+      gpx.forEach(function (p) {
+        var q = Object.create(p);
+        q.m = p.fxm; q.opacity = 1;
+        drawItem(w, doc, q, wm, a);
+      });
+      return;
+    }
 
     AI.appearance.list(it).forEach(function (e) {
       if (e.kind === 'fill') {

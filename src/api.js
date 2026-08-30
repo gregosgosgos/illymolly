@@ -559,7 +559,7 @@
                 return e2.kind === 'fill' ? '칠' : '획';
               }).join('+'));
             }
-            if (AI.effects.has(it)) {
+            if (AI.effects.hasAny(it)) {
               parts.push('효과 ' + AI.effects.list(it).map(function (e3) { return AI.effects.label(e3); }).join(' / '));
             }
             if (it.opacityMask) parts.push('불투명도 마스크' + (it.maskInvert ? '(반전)' : ''));
@@ -1438,7 +1438,7 @@
           g.m = it.m.slice();
           g.opacity = it.opacity;
           g.blend = it.blend;
-          if (AI.effects.has(it)) g.effects = U.deepCopy(it.effects);
+          if (AI.effects.hasAny(it)) g.effects = U.deepCopy(it.effects);
           parts.forEach(function (c) { c.m = M.ident(); });
           var loc = Model.locate(ctx.doc, it);
           if (loc) loc.list.splice(loc.index, 1, g); else Model.activeLayer(ctx.doc).children.push(g);
@@ -1458,28 +1458,55 @@
     dx: p('number', 'X 오프셋 (shadow)'), dy: p('number', 'Y 오프셋 (shadow)'),
     blur: p('number', '흐림 정도 (shadow · glow)'),
     color: p('color', '효과 색상 (shadow · glow)'),
-    alpha: p('number', '효과 불투명도 0~1 (shadow · glow)')
+    alpha: p('number', '효과 불투명도 0~1 (shadow · glow)'),
+    /* 왜곡 및 변형 (기하 효과) */
+    size: p('number', '크기 pt (zigzag · roughen)'),
+    ridges: p('number', '세그먼트당 융기 수 (zigzag)'),
+    detail: p('number', '세부 (roughen)'),
+    smooth: p('boolean', '매끄러운 점으로 (zigzag · roughen)'),
+    amount: p('number', '오목(-) · 볼록(+) % (puckerBloat)'),
+    angle: p('number', '각도 ° (twist · transformFx)'),
+    scaleX: p('number', '가로 비율 % (transformFx)'),
+    scaleY: p('number', '세로 비율 % (transformFx)'),
+    moveX: p('number', '가로 이동 pt (transformFx)'),
+    moveY: p('number', '세로 이동 pt (transformFx)'),
+    copies: p('number', '사본 수 (transformFx)'),
+    anchor: p('number', '기준점 0~8 (transformFx)'),
+    reflectX: p('boolean', 'X 반사 (transformFx)'),
+    reflectY: p('boolean', 'Y 반사 (transformFx)'),
+    corners: p('number[]', '네 모퉁이 이동량 % [tlx,tly,trx,try,brx,bry,blx,bly] (freeDistort)')
   };
+  var FX_KEYS = ['radius', 'dx', 'dy', 'blur', 'alpha', 'size', 'ridges', 'detail',
+    'smooth', 'amount', 'angle', 'scaleX', 'scaleY', 'moveX', 'moveY', 'copies',
+    'anchor', 'reflectX', 'reflectY'];
+  var FX_ENUM = ['blur', 'shadow', 'glow',
+    'zigzag', 'roughen', 'puckerBloat', 'twist', 'transformFx', 'freeDistort'];
   op('applyEffect', {
     undoable: true, group: '효과', desc: '비파괴 효과를 적용합니다. 같은 종류가 이미 있으면 값을 갱신합니다.',
     params: (function () {
-      var o = { query: Q, type: p('string', '효과 종류', { enum: ['blur', 'shadow', 'glow'], required: true }) };
+      var o = { query: Q, type: p('string', '효과 종류', { enum: FX_ENUM, required: true }) };
       for (var k in FX_PARAMS) o[k] = FX_PARAMS[k];
       return o;
     })(),
     returns: 'id[]',
     run: function (ctx, a) {
       var FX = AI.effects;
-      if (!FX.DEFS[a.type]) throw err('BAD_EFFECT', '알 수 없는 효과: ' + a.type);
+      if (!FX.def(a.type)) throw err('BAD_EFFECT', '알 수 없는 효과: ' + a.type);
       withSel(ctx, a.query, 'applyEffect', function (list) {
         list.forEach(function (it) {
           var base = null;
           (it.effects || []).forEach(function (e) { if (!base && e.type === a.type) base = e; });
           var e2 = base || FX.create(a.type);
-          ['radius', 'dx', 'dy', 'blur', 'alpha'].forEach(function (k) {
+          FX_KEYS.forEach(function (k) {
             if (a[k] != null && e2[k] !== undefined) e2[k] = a[k];
           });
           if (a.color != null && e2.color !== undefined) e2.color = normalizeHex(a.color) || e2.color;
+          /* 자유 왜곡의 네 모퉁이는 한 배열로 받는다 */
+          if (a.corners && e2.tl) {
+            var c = a.corners;
+            e2.tl = [+c[0] || 0, +c[1] || 0]; e2.tr = [+c[2] || 0, +c[3] || 0];
+            e2.br = [+c[4] || 0, +c[5] || 0]; e2.bl = [+c[6] || 0, +c[7] || 0];
+          }
           if (!base) { it.effects = it.effects || []; it.effects.push(e2); }
         });
       });

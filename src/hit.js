@@ -46,6 +46,14 @@
       return p.x >= b.x - 1 && p.x <= b.x2 + 1 && p.y >= b.y - 1 && p.y <= b.y2 + 1;
     }
     if (it.type !== 'path') return false;
+    /* 왜곡 및 변형 — 변형된 기하 중 하나라도 맞으면 맞은 것 */
+    var px = AI.distort.proxies(it);
+    if (px) {
+      for (var k = 0; k < px.length; k++) {
+        if (H.testItemM(app, px[k], sx, sy, M.mul(m, px[k].fxm))) return true;
+      }
+      return false;
+    }
     if (!hctx) return geomTest(app, it, sx, sy, m);
     hctx.setTransform(1, 0, 0, 1, 0, 0);
     hctx.beginPath();
