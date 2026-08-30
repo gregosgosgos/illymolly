@@ -386,10 +386,11 @@
     });
   }
 
-  IO.toSVG = function (app) {
+  IO.toSVG = function (app, abIndex) {
     gradSeq = 0;
     IO.__doc = app.doc;
-    var ab = app.doc.artboards[app.doc.activeArtboard];
+    var ab = app.doc.artboards[abIndex == null ? app.doc.activeArtboard : abIndex] ||
+      app.doc.artboards[app.doc.activeArtboard];
     var defs = [];
     var body = app.doc.layers.filter(function (l) { return l.visible; })
       .map(function (l) { return '<g id="' + escXml(l.name) + '">' + l.children.map(function (c) { return itemSvg(app.doc, c, defs); }).join('') + '</g>'; })
@@ -401,36 +402,111 @@
   };
 
   IO.exportSVG = function (app) {
+    if (app.doc.artboards.length > 1) { IO.exportArtboards(app, 'svg'); return; }
     var svg = IO.toSVG(app);
-    download(app.doc.name.replace(/\.[a-z.]+$/i, '') + '.svg', new Blob([svg], { type: 'image/svg+xml' }));
+    download(baseName(app) + '.svg', new Blob([svg], { type: 'image/svg+xml' }));
     U.toast('SVG 내보내기 완료');
+  };
+
+  function baseName(app) { return app.doc.name.replace(/\.[a-z.]+$/i, ''); }
+
+  /* 대지 이름을 파일 이름에 쓸 수 있게 다듬는다 */
+  function safeName(s) {
+    return String(s || '').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim() || '대지';
+  }
+
+  /* '1-3, 5' 같은 범위 문자열 -> 0 부터 시작하는 인덱스 배열 */
+  IO.parseRange = function (text, n) {
+    var out = [], seen = {};
+    String(text || '').split(',').forEach(function (part) {
+      var m = /^\s*(\d+)\s*(?:-\s*(\d+))?\s*$/.exec(part);
+      if (!m) return;
+      var a = +m[1], b = m[2] ? +m[2] : a;
+      if (b < a) { var t = a; a = b; b = t; }
+      for (var i = a; i <= b; i++) {
+        var k = i - 1;
+        if (k >= 0 && k < n && !seen[k]) { seen[k] = 1; out.push(k); }
+      }
+    });
+    return out;
+  };
+
+  /* 한 대지를 캔버스로 그린다 (PNG 내보내기 · 미리 보기 공용) */
+  IO.renderArtboard = function (app, abIndex, scale, withBg) {
+    var ab = app.doc.artboards[abIndex];
+    var cv = document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(ab.w * scale));
+    cv.height = Math.max(1, Math.round(ab.h * scale));
+    Rn.scene(cv.getContext('2d'), {
+      doc: app.doc, dpr: 1, exporting: true, exportBg: withBg !== false,
+      view: { scale: scale, tx: -ab.x * scale, ty: -ab.y * scale },
+      prefs: { grid: false, guides: false, outline: false },
+      canvas: cv, sel: [], selPts: [], invalidate: function () { }
+    });
+    return cv;
+  };
+
+  /* ---------------- 대지별 내보내기 ----------------
+     일러스트레이터의 [내보내기 > 화면에 맞게 내보내기] 처럼 대지마다 파일을
+     하나씩 만든다. 이름은 "문서-대지이름.확장자". */
+  IO.exportArtboards = function (app, format) {
+    AI.dialogs.exportArtboards(app, format, function (o) {
+      var idx = o.which === 'current' ? [app.doc.activeArtboard]
+        : o.which === 'range' ? IO.parseRange(o.range, app.doc.artboards.length)
+          : app.doc.artboards.map(function (_, i) { return i; });
+      if (!idx.length) { U.toast('내보낼 대지가 없습니다 — 범위를 확인하세요'); return; }
+      o.indexes = idx;
+      o.single = idx.length === 1 && o.which === 'current';
+      IO.exportArtboardsNow(app, o);
+    });
+  };
+
+  /* 실제로 파일을 만들어 내려받는다 (대화상자 없이 — 자동화에서도 쓴다) */
+  IO.exportArtboardsNow = function (app, o) {
+    var idx = o.indexes || app.doc.artboards.map(function (_, i) { return i; });
+    var base = baseName(app);
+    var one = o.single || app.doc.artboards.length === 1;
+    var fmt = o.format || 'png';
+    var names = [];
+    idx.forEach(function (i, k) {
+      var ab = app.doc.artboards[i];
+      var name = base + (one ? '' : '-' + safeName(ab.name || ('대지 ' + (i + 1))));
+      names.push(name + '.' + fmt);
+      /* 브라우저가 연달아 오는 다운로드를 놓치지 않도록 조금씩 띄운다 */
+      setTimeout(function () {
+        if (fmt === 'svg') {
+          download(name + '.svg', new Blob([IO.toSVG(app, i)], { type: 'image/svg+xml' }));
+        } else if (fmt === 'pdf') {
+          if (!AI.pdf) return;
+          var bytes = AI.pdf.toBytes(AI.pdf.toPDF(app, { artboard: i, background: o.background !== false }));
+          download(name + '.pdf', new Blob([bytes], { type: 'application/pdf' }));
+        } else {
+          var cv = IO.renderArtboard(app, i, o.scale || 2, o.background);
+          cv.toBlob(function (blob) { download(name + '.png', blob); }, 'image/png');
+        }
+      }, k * 120);
+    });
+    U.toast(idx.length + '개 대지를 ' + fmt.toUpperCase() + ' 로 내보냅니다');
+    IO.lastExportNames = names;      /* 방금 만든 파일 이름 (자동화·테스트에서 확인용) */
+    return names;
   };
 
   IO.exportPDF = function (app) {
     if (!AI.pdf) { U.toast('PDF 모듈이 없습니다'); return; }
+    if (app.doc.artboards.length > 1) { IO.exportArtboards(app, 'pdf'); return; }
     var str = AI.pdf.toPDF(app);
     var bytes = AI.pdf.toBytes(str);
-    download(app.doc.name.replace(/\.[a-z.]+$/i, '') + '.pdf', new Blob([bytes], { type: 'application/pdf' }));
+    download(baseName(app) + '.pdf', new Blob([bytes], { type: 'application/pdf' }));
     U.toast('PDF 내보내기 완료' +
       (AI.pdf.lastDroppedText ? ' — 한글 등 비ASCII 글자 ' + AI.pdf.lastDroppedText + '자는 ?로 대체되었습니다 (윤곽선 만들기 권장)' : ''));
   };
 
   IO.exportPNG = function (app) {
+    if (app.doc.artboards.length > 1) { IO.exportArtboards(app, 'png'); return; }
     AI.dialogs.exportPNG(app, function (scale, withBg) {
-      var ab = app.doc.artboards[app.doc.activeArtboard];
-      var cv = document.createElement('canvas');
-      cv.width = Math.max(1, Math.round(ab.w * scale));
-      cv.height = Math.max(1, Math.round(ab.h * scale));
-      var ctx = cv.getContext('2d');
-      var fake = {
-        doc: app.doc, dpr: 1, exporting: true, exportBg: withBg,
-        view: { scale: scale, tx: -ab.x * scale, ty: -ab.y * scale },
-        prefs: { grid: false, guides: false, outline: false },
-        canvas: cv, sel: [], selPts: [], invalidate: function () { }
-      };
-      Rn.scene(ctx, fake);
+      var cv = IO.renderArtboard(app, app.doc.activeArtboard, scale, withBg);
       cv.toBlob(function (blob) {
-        download(app.doc.name.replace(/\.[a-z.]+$/i, '') + '.png', blob);
+        download(baseName(app) + '.png', blob);
         U.toast('PNG 내보내기 완료 (' + cv.width + '×' + cv.height + ')');
       }, 'image/png');
     });

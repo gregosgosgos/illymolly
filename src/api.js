@@ -1788,8 +1788,46 @@
 
   /* ---------- 출력 ---------- */
   op('toSVG', {
-    undoable: false, group: '출력', desc: '활성 대지를 SVG 문자열로 반환합니다.', params: {}, returns: 'string', 
-    run: function (ctx) { return AI.io.toSVG(ctx); }
+    undoable: false, group: '출력', desc: '대지 하나를 SVG 문자열로 반환합니다 (생략 시 활성 대지).',
+    params: { artboard: p('number', '대지 번호 (0부터)') }, returns: 'string',
+    run: function (ctx, a) { return AI.io.toSVG(ctx, a.artboard); }
+  });
+  op('exportArtboards', {
+    undoable: false, group: '출력',
+    desc: '대지마다 하나씩 내보냅니다. 브라우저에서는 파일로 내려받고, 그 밖에는 문자열 목록을 반환합니다.',
+    params: {
+      format: p('string', '형식', { enum: ['svg', 'png', 'pdf'], default: 'svg' }),
+      artboards: p('number[]', '대지 번호 목록 (0부터, 생략 시 전체)'),
+      scale: p('number', 'PNG 배율', { default: 2 }),
+      background: p('boolean', '대지 배경 포함', { default: true }),
+      download: p('boolean', '브라우저에서 파일로 내려받기', { default: false })
+    },
+    run: function (ctx, a) {
+      var all = ctx.doc.artboards.map(function (_, i) { return i; });
+      var idx = (a.artboards && a.artboards.length)
+        ? a.artboards.map(function (v) { return U.clamp(Math.round(v), 0, all.length - 1); })
+        : all;
+      if (a.download) {
+        if (!U.hasDOM) throw err('NO_DOM', 'download 는 브라우저에서만 쓸 수 있습니다');
+        return AI.io.exportArtboardsNow(ctx, {
+          format: a.format, indexes: idx, scale: a.scale, background: a.background !== false
+        });
+      }
+      return idx.map(function (i) {
+        var ab = ctx.doc.artboards[i];
+        var o = { index: i, name: ab.name, width: ab.w, height: ab.h };
+        if (a.format === 'svg') o.svg = AI.io.toSVG(ctx, i);
+        else if (a.format === 'pdf') {
+          if (!AI.pdf) throw err('NO_PDF', 'PDF 모듈을 찾을 수 없습니다');
+          o.pdf = AI.pdf.toPDF(ctx, { artboard: i, background: a.background !== false });
+        } else {
+          if (!U.hasDOM) throw err('NO_CANVAS', 'PNG 는 브라우저에서만 만들 수 있습니다');
+          o.png = AI.io.renderArtboard(ctx, i, U.clamp(a.scale == null ? 2 : a.scale, 0.05, 20),
+            a.background !== false).toDataURL('image/png');
+        }
+        return o;
+      });
+    }
   });
   op('toJSON', {
     undoable: false, group: '출력', desc: '문서 전체를 저장 형식(JSON 문자열)으로 반환합니다.', params: {}, returns: 'string', 
@@ -1818,21 +1856,18 @@
 
   op('toPNG', {
     undoable: false, group: '출력', desc: '활성 대지를 PNG data URL 로 반환합니다 (브라우저 전용).',
-    params: { scale: p('number', '배율', { default: 2 }), background: p('boolean', '대지 배경 포함', { default: true }) },
-    returns: 'string', 
+    params: {
+      scale: p('number', '배율', { default: 2 }),
+      background: p('boolean', '대지 배경 포함', { default: true }),
+      artboard: p('number', '대지 번호 (생략 시 활성 대지)')
+    },
+    returns: 'string',
     run: function (ctx, a) {
       if (!U.hasDOM) throw err('NO_CANVAS', 'toPNG 는 브라우저에서만 사용할 수 있습니다. Node 에서는 toSVG 를 쓰세요.');
-      var ab = ctx.doc.artboards[ctx.doc.activeArtboard];
+      var i = a.artboard == null ? ctx.doc.activeArtboard
+        : U.clamp(Math.round(a.artboard), 0, ctx.doc.artboards.length - 1);
       var scale = U.clamp(a.scale == null ? 2 : a.scale, 0.05, 20);
-      var cv = document.createElement('canvas');
-      cv.width = Math.max(1, Math.round(ab.w * scale));
-      cv.height = Math.max(1, Math.round(ab.h * scale));
-      Rn.scene(cv.getContext('2d'), {
-        doc: ctx.doc, dpr: 1, exporting: true, exportBg: a.background !== false,
-        view: { scale: scale, tx: -ab.x * scale, ty: -ab.y * scale },
-        prefs: {}, canvas: cv, sel: [], selPts: [], invalidate: function () { }
-      });
-      return cv.toDataURL('image/png');
+      return AI.io.renderArtboard(ctx, i, scale, a.background !== false).toDataURL('image/png');
     }
   });
 

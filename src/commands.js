@@ -49,6 +49,7 @@
   def('exportSvg', 'SVG로 내보내기...', 'Ctrl+Alt+Shift+S', function (a) { AI.io.exportSVG(a); });
   def('exportPng', 'PNG로 내보내기...', 'Ctrl+Alt+E', function (a) { AI.io.exportPNG(a); });
   def('exportPdf', 'PDF로 내보내기...', null, function (a) { AI.io.exportPDF(a); });
+  def('exportArtboards', '대지별로 내보내기...', null, function (a) { AI.io.exportArtboards(a, 'png'); });
   def('closeDoc', '닫기', 'Ctrl+W', function (a) { AI.docs.close(a); });
   def('nextDoc', '다음 문서', 'Ctrl+Tab', function (a) { AI.docs.next(a, 1); },
     { enabled: function (a) { return AI.docs.count(a) > 1; } });
@@ -744,7 +745,7 @@
   /* ================= 메뉴 구조 ================= */
   C.MENUS = [
     {
-      title: '파일', items: ['new', 'open', 'closeDoc', '-', 'save', 'saveAs', '-', 'place', '-', 'exportSvg', 'exportPng', 'exportPdf', '-', 'docSetup']
+      title: '파일', items: ['new', 'open', 'closeDoc', '-', 'save', 'saveAs', '-', 'place', '-', 'exportSvg', 'exportPng', 'exportPdf', 'exportArtboards', '-', 'docSetup']
     },
     {
       title: '편집', items: ['undo', 'redo', '-', 'cut', 'copy', 'paste', 'pasteFront', 'pasteBack', 'pasteInPlace', '-', 'clear', 'duplicate', '-', 'preferences']

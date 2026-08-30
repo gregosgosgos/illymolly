@@ -366,6 +366,55 @@
     });
   };
 
+  /* ---------- 대지별 내보내기 ---------- */
+  Dlg.exportArtboards = function (app, format, run) {
+    var n = app.doc.artboards.length;
+    function count(v) {
+      if (v.which === 'current') return 1;
+      if (v.which === 'range') return AI.io.parseRange(v.range, n).length;
+      return n;
+    }
+    function sizeText(v) {
+      var ab = app.doc.artboards[app.doc.activeArtboard];
+      var c = count(v);
+      var px = v.format === 'png'
+        ? ' · 활성 대지 ' + Math.round(ab.w * +v.scale) + ' × ' + Math.round(ab.h * +v.scale) + ' px'
+        : '';
+      return c ? c + '개 파일' + px : '내보낼 대지 없음 — 범위를 확인하세요';
+    }
+
+    D.open({
+      title: '대지별 내보내기',
+      fields: [
+        { id: 'format', label: '형식', type: 'select', value: format || 'png', width: 110,
+          options: [['png', 'PNG'], ['svg', 'SVG'], ['pdf', 'PDF']] },
+        { type: 'sep' },
+        { id: 'which', label: '대지', type: 'radio', value: 'all',
+          options: [['all', '모두 (' + n + '개)'], ['current', '현재 대지'], ['range', '범위']] },
+        { id: 'range', label: '범위', type: 'text', value: '1-' + n, width: 130 },
+        { type: 'sep' },
+        { id: 'scale', label: '배율 (PNG)', type: 'select', value: '2', width: 110,
+          options: [['0.5', '0.5× (50%)'], ['1', '1× (100%)'], ['2', '2× (200%)'], ['3', '3× (300%)'], ['4', '4× (400%)']] },
+        { id: 'background', label: '대지 배경 포함', type: 'check', value: true },
+        { type: 'sep' },
+        { id: 'info', label: '', type: 'info' }
+      ],
+      onChange: function (v) {
+        var el = document.querySelector('.dlg-info');
+        if (el) el.textContent = sizeText(v);
+      },
+      onDone: function (v) {
+        run({
+          format: v.format, which: v.which, range: v.range,
+          scale: +v.scale || 1, background: v.background !== false
+        });
+      }
+    });
+    /* 처음 열릴 때의 안내 문구 */
+    var el = document.querySelector('.dlg-info');
+    if (el) el.textContent = sizeText({ which: 'all', format: format || 'png', scale: '2' });
+  };
+
   /* ---------- 평균점 연결 ---------- */
   Dlg.average = function (app, run) {
     D.open({

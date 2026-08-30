@@ -2214,6 +2214,73 @@ await check('라이브 다각형 — 변의 수 위젯을 끌면 변이 늘어�
   return `변 6 → ${up.n} (앵커 ${up.pts}) · 실행 취소로 6 복원`;
 });
 
+/* ---------------- 대지별 내보내기 ---------------- */
+await check('대지별 내보내기 — 대지마다 파일 하나 · 대지 이름이 파일 이름에', async () => {
+  await ev(() => {
+    const app = AI.app;
+    while (illy.documents().length > 1) AI.docs.close(app, illy.documents().length - 1, true);
+    app.setDoc(AI.model.newDoc(200, 200));
+    app.history.reset(app.doc, '새 문서');
+    app.doc.name = '책';
+    app.doc.artboards[0].name = '표지';
+    illy.rect({ x: 20, y: 20, width: 100, height: 100, fill: '#ff0000' });
+    illy.addArtboard({ width: 300, height: 150, name: '내지' });
+    illy.rect({ x: 250, y: 20, width: 60, height: 60, fill: '#00ff00' });
+  });
+  await refreshBox();
+
+  /* 자동화 경로: 대지마다 결과가 하나씩 */
+  const api = await ev(() => {
+    const svgs = illy.exportArtboards({ format: 'svg' });
+    const one = illy.exportArtboards({ format: 'png', scale: 1, artboards: [1] });
+    return {
+      n: svgs.length,
+      names: svgs.map(o => o.name),
+      /* 각 SVG 는 자기 대지 영역만 담는다 */
+      boxes: svgs.map(o => (o.svg.match(/viewBox="([^"]*)"/) || [])[1]),
+      colors: svgs.map(o => (o.svg.match(/fill="(#[0-9a-f]{6})"/) || [])[1]),
+      png: one.length + ':' + one[0].name
+    };
+  });
+  if (api.n !== 2) throw new Error('대지 수=' + api.n);
+  if (api.names.join(',') !== '표지,내지') throw new Error('이름=' + api.names);
+  if (api.boxes[0] !== '0 0 200 200' || api.boxes[1] !== '240 0 300 150') throw new Error('viewBox=' + JSON.stringify(api.boxes));
+  if (api.png !== '1:내지') throw new Error('대지 지정 내보내기=' + api.png);
+
+  /* 두 번째 대지 PNG 에 실제로 초록 사각형이 찍혔는지 픽셀로 확인 */
+  const px = await ev(() => {
+    const url = illy.exportArtboards({ format: 'png', scale: 1, artboards: [1] })[0].png;
+    return new Promise(res => {
+      const im = new Image();
+      im.onload = () => {
+        const cv = document.createElement('canvas');
+        cv.width = im.width; cv.height = im.height;
+        const c = cv.getContext('2d');
+        c.drawImage(im, 0, 0);
+        const d = c.getImageData(20, 40, 1, 1).data;   /* 대지 로컬 (250,20)~(310,80) 안쪽 */
+        return res([im.width, im.height, d[0], d[1], d[2]].join(','));
+      };
+      im.src = url;
+    });
+  });
+  if (px !== '300,150,0,255,0') throw new Error('PNG 픽셀=' + px);
+
+  /* GUI 경로: 대화상자 → 대지 수만큼 파일이 내려온다 */
+  await ev(() => AI.commands.run('exportArtboards'));
+  await page.waitForSelector('.dlg');
+  await page.selectOption('#dlgf-format', 'svg');
+  const info = await page.textContent('.dlg-info');
+  const dl = [];
+  page.on('download', d => dl.push(d.suggestedFilename()));
+  await page.click('.dlg-btn:has-text("확인")');
+  await page.waitForTimeout(600);
+  if (dl.length !== 2) throw new Error('내려받은 파일 수=' + dl.length + ' (' + dl + ')');
+  const names = await ev(() => AI.io.lastExportNames.join(','));
+  if (names !== '책-표지.svg,책-내지.svg') throw new Error('파일 이름=' + names);
+  if (info.indexOf('2개 파일') < 0) throw new Error('안내 문구=' + info);
+  return `SVG ${api.n}개 · 각자 자기 대지 영역 · PNG 픽셀 검증 · 파일 ${names}`;
+});
+
 /* ---------------- 자동 저장 · 복구 ----------------
    (페이지를 새로 고치므로 다른 테스트 뒤에 둔다) */
 await check('자동 저장 · 복구 — 새로 고쳐도 작업이 살아남는다', async () => {
