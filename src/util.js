@@ -101,6 +101,66 @@
     return r;
   };
 
+  /* ---------- 구조 공유 복사 ----------
+     실행 취소 스냅샷은 문서 전체를 통째로 베껴 두는 방식이라, 점 하나만 옮겨도
+     수천 개의 오브젝트가 새로 만들어졌다. 직전 스냅샷과 비교해 **바뀌지 않은
+     가지는 그대로 다시 쓴다**. 저장된 스냅샷은 절대 수정되지 않으므로
+     (되돌릴 때도 deepCopy 로 꺼낸다) 여러 스냅샷이 같은 가지를 나눠 가져도 안전하다.
+
+       U.copyShare(현재, 직전스냅샷) -> 새 스냅샷 (바뀐 부분만 새 객체)
+       U.copyShare.allocated  방금 새로 만든 노드 수 (메모리 예산 계산용)          */
+  var _same = false, _alloc = 0;
+
+  function cs(cur, old) {
+    if (cur === null || typeof cur !== 'object') { _same = (cur === old); return cur; }
+
+    if (Array.isArray(cur)) {
+      var oldArr = Array.isArray(old) ? old : null;
+      var allSame = !!oldArr && oldArr.length === cur.length;
+      var out = new Array(cur.length);
+      for (var i = 0; i < cur.length; i++) {
+        out[i] = cs(cur[i], oldArr ? oldArr[i] : undefined);
+        if (!_same) allSame = false;
+      }
+      if (allSame) { _same = true; return old; }
+      _alloc++; _same = false; return out;
+    }
+
+    var oldObj = (old && typeof old === 'object' && !Array.isArray(old)) ? old : null;
+    var o = {}, n = 0, allSame2 = !!oldObj;
+    for (var k in cur) {
+      if (!Object.prototype.hasOwnProperty.call(cur, k)) continue;
+      n++;
+      o[k] = cs(cur[k], oldObj ? oldObj[k] : undefined);
+      if (!_same) allSame2 = false;
+    }
+    if (allSame2) {
+      /* 키 개수까지 같아야 같은 것 (지워진 키를 놓치지 않는다) */
+      var m = 0;
+      for (var k2 in oldObj) if (Object.prototype.hasOwnProperty.call(oldObj, k2)) m++;
+      if (m === n) { _same = true; return old; }
+    }
+    _alloc++; _same = false; return o;
+  }
+
+  U.copyShare = function (cur, old) {
+    _same = false; _alloc = 0;
+    var v = cs(cur, old);
+    U.copyShare.allocated = _alloc;
+    U.copyShare.unchanged = _same;
+    return v;
+  };
+  U.copyShare.allocated = 0;
+
+  /* 객체 트리의 노드 수 (메모리 사용량 어림) */
+  U.nodeCount = function (o) {
+    if (o === null || typeof o !== 'object') return 0;
+    var n = 1;
+    if (Array.isArray(o)) { for (var i = 0; i < o.length; i++) n += U.nodeCount(o[i]); return n; }
+    for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) n += U.nodeCount(o[k]);
+    return n;
+  };
+
   U.hasDOM = (typeof document !== 'undefined' && !!document.createElement);
   U.isMac = (typeof navigator !== 'undefined') &&
     /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');

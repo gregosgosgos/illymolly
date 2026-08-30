@@ -204,8 +204,7 @@
     if (restore && dragSnap) {
       app.history.abort();
       if (app.history.stack.length > dragSnap.depth) {
-        app.history.stack.length = dragSnap.depth;
-        app.history.index = Math.min(dragSnap.index, app.history.stack.length - 1);
+        app.history.truncateTo(dragSnap.depth, dragSnap.index);
       }
       app.setDoc(dragSnap.doc);
       app.sel = dragSnap.sel.map(function (id) { return Model.find(app.doc, id); }).filter(Boolean);

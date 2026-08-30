@@ -1906,12 +1906,15 @@
     }
   });
   op('history', {
-    undoable: false, group: '히스토리', desc: '실행 취소 스택 상태를 반환합니다.', params: {}, 
+    undoable: false, group: '히스토리',
+    desc: '실행 취소 스택 상태를 반환합니다 (단계 수와 대략의 메모리 포함).', params: {},
     run: function (ctx) {
+      var st = ctx.history.stats ? ctx.history.stats() : { nodes: 0, approxMB: 0, redo: 0 };
       return {
         canUndo: ctx.history.canUndo(), canRedo: ctx.history.canRedo(),
         undoLabel: ctx.history.undoLabel(), redoLabel: ctx.history.redoLabel(),
-        depth: ctx.history.stack.length
+        depth: ctx.history.stack.length,
+        redoDepth: st.redo, nodes: st.nodes, approxMB: st.approxMB
       };
     }
   });

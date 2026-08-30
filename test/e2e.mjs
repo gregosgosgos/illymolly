@@ -2214,6 +2214,55 @@ await check('라이브 다각형 — 변의 수 위젯을 끌면 변이 늘어�
   return `변 6 → ${up.n} (앵커 ${up.pts}) · 실행 취소로 6 복원`;
 });
 
+/* ---------------- 실행 취소 메모리 ---------------- */
+await check('실행 취소가 바뀌지 않은 가지를 나눠 쓴다 (메모리 절감)', async () => {
+  const r = await ev(() => {
+    const app = AI.app;
+    while (illy.documents().length > 1) AI.docs.close(app, illy.documents().length - 1, true);
+    app.setDoc(AI.model.newDoc(2000, 2000));
+    /* 앵커 6000개짜리 문서 */
+    for (let i = 0; i < 500; i++) {
+      illy.addStar({ cx: (i % 25) * 80 + 40, cy: Math.floor(i / 25) * 80 + 40, radius: 30, points: 6, fill: '#3366cc' });
+    }
+    app.history.reset(app.doc, '새 문서');
+    const base = AI.util.nodeCount(app.doc);
+    const ids = illy.find({ type: 'path' });
+    for (let i = 0; i < 60; i++) {
+      app.history.begin('이동', app.doc);
+      illy.move([ids[i]], { dx: 1, dy: 1 });
+      app.history.commit();
+    }
+    const h = illy.history();
+    return { base, naive: base * 61, nodes: h.nodes, steps: h.depth, mb: h.approxMB, last: ids[59] };
+  });
+  if (r.base < 5000) throw new Error('문서가 너무 작다=' + r.base);
+  if (r.steps !== 61) throw new Error('단계 수=' + r.steps);
+  /* 전체 복사였다면 문서 크기 × 단계 수 — 실제로는 그 10분의 1도 안 되어야 한다 */
+  if (r.nodes > r.naive / 10) throw new Error('절감 실패: ' + r.nodes + ' / ' + r.naive);
+
+  /* 값이 실제로 되돌아가고 다시 실행되는지 */
+  const rt = await page.evaluate((id) => {
+    const x0 = Math.round(illy.get(id).geometricBounds.x);
+    AI.commands.run('undo');
+    const x1 = Math.round(illy.get(id).geometricBounds.x);
+    AI.commands.run('redo');
+    const x2 = Math.round(illy.get(id).geometricBounds.x);
+    return [x0, x1, x2].join(',');
+  }, r.last);
+  const [a0, a1, a2] = rt.split(',').map(Number);
+  if (a1 !== a0 - 1 || a2 !== a0) throw new Error('되돌리기 왕복=' + rt);
+
+  /* 여러 번 되돌려도 문서가 온전한지 */
+  const deep = await ev(() => {
+    for (let i = 0; i < 30; i++) AI.commands.run('undo');
+    const n1 = illy.find({ type: 'path' }).length;
+    for (let i = 0; i < 30; i++) AI.commands.run('redo');
+    return n1 + ',' + illy.find({ type: 'path' }).length;
+  });
+  if (deep !== '500,500') throw new Error('깊은 되돌리기=' + deep);
+  return `문서 ${r.base} 노드 · 61단계에 ${r.nodes} 노드 (전체 복사면 ${r.naive}) · ${Math.round(r.naive / r.nodes)}배 절약 · 왕복 ${rt}`;
+});
+
 /* ---------------- 컴파운드 패스의 구멍 ---------------- */
 await check('패스파인더가 컴파운드 패스의 구멍을 잃지 않는다', async () => {
   const setup = () => {
