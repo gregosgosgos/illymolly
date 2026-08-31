@@ -14,7 +14,10 @@
    ========================================================================= */
 'use strict';
 
-var VERSION = 'illymolly-v1';
+/* 배포할 때 워크플로가 커밋 해시로 바꿔 준다 (.github/workflows/pages.yml).
+   버전이 바뀌면 install 이 다시 돌아 파일을 전부 새로 받고 옛 캐시를 지운다.
+   이걸 안 하면 이미 방문한 사람은 다음다음 방문에야 고친 것을 본다. */
+var VERSION = 'illymolly-dev';
 var EXTRA = [
   './',
   'index.html',

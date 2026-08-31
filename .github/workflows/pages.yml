@@ -41,6 +41,13 @@ jobs:
       - name: 배포할 것만 남기기
         run: rm -rf test node_modules .github
 
+      # 서비스 워커 캐시 버전을 커밋마다 새로 준다. 버전이 그대로면 이미
+      # 방문한 사람의 브라우저가 옛 파일을 계속 내주므로 고친 것이 늦게 간다.
+      - name: 서비스 워커 캐시 버전 찍기
+        run: |
+          sed -i "s/illymolly-dev/illymolly-${GITHUB_SHA::12}/" sw.js
+          grep -n "var VERSION" sw.js
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .
