@@ -72,14 +72,16 @@
   };
 
   /* ---------------- 브라우저에 넘기는 키 ----------------
-     클립보드는 브라우저가 내주는 copy · cut · paste 이벤트에서만 시스템
-     클립보드에 닿을 수 있다. 여기서 preventDefault 를 해 버리면 그 이벤트가
-     아예 오지 않아 다른 프로그램의 이미지를 붙여넣을 수 없다. 그래서 이
-     키들은 막지 않고 넘기고, 실제 처리는 clipboard.js 가 맡는다. */
-  K.NATIVE_CLIPBOARD = {
-    'Ctrl+C': 'center', 'Ctrl+X': 'center',
-    'Ctrl+V': 'center', 'Ctrl+Shift+V': 'place'
-  };
+     붙여넣기는 브라우저가 내주는 paste 이벤트에서만 시스템 클립보드에 닿을
+     수 있다. 여기서 preventDefault 를 해 버리면 그 이벤트가 아예 오지 않아
+     다른 프로그램의 이미지를 붙여넣을 수 없다. 그래서 붙여넣기 키는 막지
+     않고 넘기고, 실제 처리는 clipboard.js 가 맡는다.
+
+     반대로 복사·오려두기는 우리가 직접 처리한다. copy 이벤트는 브라우저·
+     상황에 따라 안 올 수 있는데(선택 영역이 없을 때 등), 그러면 앱 안
+     클립보드마저 비어 "붙여넣을 항목이 없습니다" 로 끝난다. 복사만큼은
+     확실해야 하므로 여기서 끝내고, 시스템 클립보드는 비동기로 채운다. */
+  K.NATIVE_CLIPBOARD = { 'Ctrl+V': 'center', 'Ctrl+Shift+V': 'place' };
 
   /* 이 단축키를 지금 이 환경에서 실제로 쓸 수 있는가 */
   K.isReserved = function (sig) {
@@ -176,6 +178,8 @@
       if (AI.dialog && AI.dialog.isOpen()) return;      /* 모달이 열려 있으면 도구 단축키 차단 */
       var tag = (ev.target && ev.target.tagName || '').toLowerCase();
       var editable = tag === 'input' || tag === 'textarea' || tag === 'select' || (ev.target && ev.target.isContentEditable);
+      /* 붙여넣기 싱크는 편집 요소지만 사용자가 타이핑하는 곳이 아니다 (clipboard.js) */
+      if (editable && AI.clipboard && AI.clipboard.isSink(ev.target)) editable = false;
       if (editable) {
         if (ev.key === 'Escape' && tag !== 'textarea') ev.target.blur();
         return;

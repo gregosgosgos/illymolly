@@ -198,9 +198,19 @@
     return !!t && /^\s*(<\?xml[^>]*\?>\s*)?(<!--[\s\S]*?-->\s*)*(<!DOCTYPE[^>]*>\s*)?<svg[\s>]/i.test(t);
   }
 
+  /* 클립보드에서 아무것도 못 건졌을 때 왜 그런지 — 안내 문구에 그대로 쓴다 */
+  CB.lastReason = '';
+
+  function typeList(dt) {
+    var t = [];
+    try { t = Array.prototype.slice.call(dt.types || []); } catch (e) { }
+    return t;
+  }
+
   /* DataTransfer 하나를 놓고 무엇으로 붙일지 고른다 */
   CB.fromTransfer = function (app, dt, mode, at) {
-    if (!dt) return Promise.resolve(false);
+    CB.lastReason = '';
+    if (!dt) { CB.lastReason = '클립보드를 읽을 수 없습니다'; return Promise.resolve(false); }
 
     /* 1 · 파일이 있으면 파일이 우선이다 (탐색기에서 끌어 온 경우 포함) */
     var files = dt.files && dt.files.length ? Array.prototype.slice.call(dt.files) : [];
@@ -242,6 +252,12 @@
     /* 4 · 그냥 글자 */
     if (text && text.length < MAX_TEXT) return Promise.resolve(CB.placeText(app, text, mode, at));
 
+    var types = typeList(dt);
+    CB.lastReason = !types.length
+      ? '클립보드가 비어 있습니다'
+      : (text && text.length >= MAX_TEXT)
+        ? '글자가 너무 깁니다'
+        : '붙일 수 있는 것이 없습니다 (클립보드: ' + types.join(', ') + ')';
     return Promise.resolve(false);
   };
 
@@ -299,10 +315,17 @@
      메뉴 클릭에는 clipboardData 가 없으므로 비동기 Clipboard API 로 읽는다.
      권한이 없거나 지원하지 않으면 앱 안 클립보드로 되돌아간다. */
   CB.pasteAsync = function (app, mode) {
-    var fallback = function () { return AI.commands.pasteInternal(app, mode); };
-    if (!U.hasDOM || !navigator.clipboard || !navigator.clipboard.read) return Promise.resolve(fallback());
+    var fallback = function () {
+      if (AI.commands.clipboard && AI.commands.clipboard.length) return AI.commands.pasteInternal(app, mode);
+      CB.explain();
+      return false;
+    };
+    if (!U.hasDOM || !navigator.clipboard || !navigator.clipboard.read) {
+      CB.lastReason = '이 브라우저는 메뉴에서 클립보드를 읽지 못합니다 — Ctrl+V 를 눌러 주세요';
+      return Promise.resolve(fallback());
+    }
     return navigator.clipboard.read().then(function (list) {
-      if (!list || !list.length) return fallback();
+      if (!list || !list.length) { CB.lastReason = '클립보드가 비어 있습니다'; return fallback(); }
       var dt = new DataTransfer();
       var reads = [];
       list.forEach(function (item) {
@@ -320,7 +343,60 @@
       return Promise.all(reads).then(function () {
         return CB.fromTransfer(app, dt, mode).then(function (ok) { return ok || fallback(); });
       });
-    }).catch(function () { return fallback(); });
+    }).catch(function (e) {
+      CB.lastReason = '브라우저가 클립보드 읽기를 막았습니다 — Ctrl+V 를 눌러 주세요';
+      return fallback();
+    });
+  };
+
+  /* ---------------- 붙여넣기 싱크 ----------------
+     캔버스는 포커스를 받지 못한다. 그런데 브라우저에 따라 — 특히 iframe 안이나
+     포커스가 아무 데도 없을 때 — paste 이벤트가 아예 안 오거나 빈 clipboardData
+     로 온다. 그래서 화면 밖에 눈에 안 보이는 편집 요소 하나를 두고 늘 포커스를
+     잡아 둔다. 캔버스 앱들이 쓰는 방식이고, 이게 있으면 붙여넣기가 확실해진다.
+     이 요소는 글자를 담지 않는다 — 들어오는 족족 비운다. */
+  var sink = null;
+
+  CB.isSink = function (el) { return !!sink && (el === sink || sink.contains(el)); };
+
+  /* 터치 기기에서는 두지 않는다 — 편집 요소에 포커스가 가면 소프트 키보드가
+     올라온다. 어차피 Ctrl+V 가 없고, 붙이기는 메뉴(비동기 API)로 한다. */
+  function wantSink() {
+    if (!U.hasDOM) return false;
+    return !(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+  }
+
+  function makeSink() {
+    if (!wantSink()) return;
+    sink = document.createElement('div');
+    sink.id = 'paste-sink';
+    sink.contentEditable = 'true';
+    sink.tabIndex = -1;
+    sink.setAttribute('aria-hidden', 'true');
+    sink.setAttribute('inputmode', 'none');      /* 혹시라도 소프트 키보드가 뜨지 않게 */
+    sink.setAttribute('autocorrect', 'off');
+    sink.setAttribute('spellcheck', 'false');
+    document.body.appendChild(sink);
+    /* 글자는 절대 들어가지 않는다 — 한글 입력기의 조합까지 여기서 막는다.
+       붙여넣기는 paste 이벤트에서 이미 preventDefault 하므로 잃는 게 없다. */
+    U.on(sink, 'beforeinput', function (ev) { ev.preventDefault(); });
+    U.on(sink, 'input', function () { sink.textContent = ''; });
+    U.on(sink, 'compositionend', function () { sink.textContent = ''; });
+  }
+
+  /* 진짜 입력란에 포커스가 있으면 건드리지 않는다 — 사용자가 거기 타이핑 중이다 */
+  function realInputFocused() {
+    var el = document.activeElement;
+    if (!el || el === document.body || CB.isSink(el)) return false;
+    var tag = (el.tagName || '').toLowerCase();
+    return tag === 'input' || tag === 'textarea' || tag === 'select' || !!el.isContentEditable;
+  }
+
+  CB.focusSink = function () {
+    if (!sink || realInputFocused()) return;
+    if (AI.dialog && AI.dialog.isOpen()) return;
+    if (AI.tools && AI.tools.isEditingText && AI.tools.isEditingText()) return;
+    if (document.activeElement !== sink) sink.focus({ preventScroll: true });
   };
 
   /* ---------------- 설치 ---------------- */
@@ -329,22 +405,46 @@
   function busy(app) {
     if (AI.dialog && AI.dialog.isOpen()) return true;
     if (AI.tools && AI.tools.isEditingText && AI.tools.isEditingText()) return true;
-    var el = document.activeElement, tag = (el && el.tagName || '').toLowerCase();
-    return tag === 'input' || tag === 'textarea' || tag === 'select' || !!(el && el.isContentEditable);
+    return realInputFocused();
   }
+
+  /* 시스템 클립보드에서 못 건졌고 앱 안 클립보드도 비었을 때 — 왜인지 말해 준다 */
+  CB.explain = function () {
+    var why = CB.lastReason || '클립보드가 비어 있습니다';
+    U.toast(why + ' — 파일에서 가져오려면 [파일 > 가져오기] 를 쓰세요');
+  };
 
   CB.install = function (app) {
     if (!U.hasDOM) return;
+    makeSink();
+    CB.focusSink();
+
+    /* 캔버스나 도구를 누르면 포커스를 싱크로 되돌린다 (입력란은 건드리지 않는다) */
+    U.on(document, 'pointerdown', function (ev) {
+      if (CB.isSink(ev.target)) return;
+      var tag = (ev.target && ev.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' ||
+          (ev.target && ev.target.isContentEditable)) return;
+      setTimeout(CB.focusSink, 0);
+    }, true);
+    U.on(window, 'focus', function () { setTimeout(CB.focusSink, 0); });
+    U.on(document, 'focusout', function () { setTimeout(CB.focusSink, 0); });
 
     U.on(document, 'paste', function (ev) {
       if (busy(app)) return;                       /* 입력란에 붙이는 중이면 브라우저 몫 */
       var dt = ev.clipboardData;
-      if (!dt) return;
       ev.preventDefault();
+      if (sink) sink.textContent = '';
       var mode = CB.pendingMode;
       CB.pendingMode = 'center';
       CB.fromTransfer(app, dt, mode).then(function (ok) {
-        if (!ok) AI.commands.pasteInternal(app, mode);
+        if (ok) return;
+        /* 시스템 클립보드가 비었거나 막혔다 — 앱 안 클립보드로 */
+        if (AI.commands.clipboard && AI.commands.clipboard.length) {
+          AI.commands.pasteInternal(app, mode);
+        } else {
+          CB.explain();
+        }
       });
     });
 

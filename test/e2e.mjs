@@ -3132,7 +3132,7 @@ async function firePaste(types) {
   }, types);
 }
 
-await check('Ctrl+V 를 브라우저에 넘긴다 (넘기지 않으면 paste 이벤트가 안 온다)', async () => {
+await check('Ctrl+V 는 브라우저에 넘기고, Ctrl+C 는 우리가 끝낸다', async () => {
   const r = await page.evaluate(() => {
     function press(code, mods) {
       const e = new KeyboardEvent('keydown', Object.assign({ code: code, key: code.slice(-1).toLowerCase(), bubbles: true, cancelable: true }, mods));
@@ -3141,17 +3141,108 @@ await check('Ctrl+V 를 브라우저에 넘긴다 (넘기지 않으면 paste 이
     }
     return {
       v: press('KeyV', { ctrlKey: true }),
+      shiftV: press('KeyV', { ctrlKey: true, shiftKey: true }),
       c: press('KeyC', { ctrlKey: true }),
       x: press('KeyX', { ctrlKey: true }),
-      shiftV: press('KeyV', { ctrlKey: true, shiftKey: true }),
       g: press('KeyG', { ctrlKey: true }),
       mode: AI.clipboard.pendingMode
     };
   });
-  if (r.v || r.c || r.x || r.shiftV) throw new Error('클립보드 키를 아직 막고 있다=' + JSON.stringify(r));
-  if (!r.g) throw new Error('일반 명령(Ctrl+G)은 계속 막아야 한다');
+  /* 붙여넣기를 막으면 paste 이벤트가 오지 않는다 — 반드시 넘겨야 한다 */
+  if (r.v || r.shiftV) throw new Error('붙여넣기 키를 아직 막고 있다=' + JSON.stringify(r));
   if (r.mode !== 'place') throw new Error('Ctrl+Shift+V 의 붙이는 자리=' + r.mode);
-  return 'Ctrl+C·X·V·Shift+V 넘김 · Ctrl+G 는 차단 · 제자리 모드 전달';
+  /* 복사는 copy 이벤트가 안 올 수 있어 우리가 직접 끝낸다 */
+  if (!r.c || !r.x) throw new Error('복사·오려두기는 우리가 처리해야 한다=' + JSON.stringify(r));
+  if (!r.g) throw new Error('일반 명령(Ctrl+G)은 계속 막아야 한다');
+  return '붙여넣기 넘김 · 복사/오려두기 직접 · Ctrl+G 차단 · 제자리 모드 전달';
+});
+
+await check('Ctrl+C 는 copy 이벤트가 안 와도 앱 안 클립보드를 채운다', async () => {
+  const r = await page.evaluate(async () => {
+    AI.commands.clipboard = [];
+    illy.addRect({ x: 10, y: 10, width: 30, height: 30, fill: '#0abab5' });
+    const L = AI.app.doc.layers[AI.app.doc.activeLayer].children;
+    AI.sel.set(AI.app, [L[L.length - 1]]);
+    let fired = false;
+    const h = () => { fired = true; };
+    document.addEventListener('copy', h, true);
+    /* 브라우저가 copy 이벤트를 안 주는 상황을 그대로 흉내낸다 — keydown 만 온다 */
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyC', key: 'c', ctrlKey: true, bubbles: true, cancelable: true }));
+    await new Promise(r => setTimeout(r, 150));
+    document.removeEventListener('copy', h, true);
+    return { fired, buf: (AI.commands.clipboard || []).length, fill: (AI.commands.clipboard[0] || {}).fill };
+  });
+  if (r.buf !== 1) throw new Error('앱 안 클립보드=' + r.buf + ' (copy 이벤트=' + r.fired + ')');
+  if (!r.fill || r.fill.color !== '#0abab5') throw new Error('복사된 내용=' + JSON.stringify(r.fill));
+  /* 이어서 붙이면 실제로 붙는다 — "붙여넣을 항목이 없습니다" 가 나오면 안 된다 */
+  const p = await page.evaluate(async () => {
+    const msgs = [];
+    const t = AI.util.toast;
+    AI.util.toast = m => { msgs.push(m); };
+    const before = AI.app.doc.layers.reduce((n, l) => n + l.children.length, 0);
+    const dt = new DataTransfer();          /* 시스템 클립보드는 비었다고 치고 */
+    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    await new Promise(r => setTimeout(r, 400));
+    AI.util.toast = t;
+    return { added: AI.app.doc.layers.reduce((n, l) => n + l.children.length, 0) - before, msgs };
+  });
+  if (p.added !== 1) throw new Error('앱 안 클립보드로 안 붙음 (+' + p.added + ') ' + JSON.stringify(p.msgs));
+  if (p.msgs.some(m => m.indexOf('붙여넣을 항목이 없습니다') >= 0)) throw new Error('없다고 함=' + JSON.stringify(p.msgs));
+  return `버퍼 채움 · 시스템 클립보드가 비어도 붙음`;
+});
+
+await check('붙일 게 정말 없으면 왜인지 말해 준다', async () => {
+  const r = await page.evaluate(async () => {
+    AI.commands.clipboard = [];
+    const msgs = [];
+    const t = AI.util.toast;
+    AI.util.toast = m => { msgs.push(m); };
+    const dt = new DataTransfer();
+    dt.setData('application/x-nonsense', 'zz');
+    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    await new Promise(r => setTimeout(r, 400));
+    AI.util.toast = t;
+    return { msgs, reason: AI.clipboard.lastReason };
+  });
+  const m = r.msgs.join(' | ');
+  if (!m) throw new Error('아무 말도 안 함');
+  if (m.indexOf('가져오기') < 0) throw new Error('다음에 뭘 할지 안 알려 줌=' + m);
+  if (r.reason.indexOf('클립보드') < 0) throw new Error('이유=' + r.reason);
+  return `"${m}"`;
+});
+
+await check('붙여넣기 싱크 — 포커스를 잡아 두어 clipboardData 가 오게 한다', async () => {
+  const r = await page.evaluate(async () => {
+    const s = document.getElementById('paste-sink');
+    if (!s) return { missing: true };
+    const cs = getComputedStyle(s);
+    /* 캔버스를 누르면 포커스가 싱크로 돌아온다 */
+    document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 50));
+    const onCanvas = document.activeElement === s;
+    /* 진짜 입력란을 만지는 동안에는 뺏지 않는다 */
+    const inp = document.getElementById('ctl-opacity');
+    inp.focus();
+    inp.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 80));
+    const onInput = document.activeElement === inp;
+    inp.blur();
+    await new Promise(r => setTimeout(r, 80));
+    const backToSink = document.activeElement === s;
+    /* 글자가 흘러들어와도 담아 두지 않는다 */
+    s.textContent = 'ㅁㄴㅇㄹ';
+    s.dispatchEvent(new Event('input', { bubbles: true }));
+    return { onCanvas, onInput, backToSink, kept: s.textContent,
+      editable: s.isContentEditable, opacity: cs.opacity, w: cs.width };
+  });
+  if (r.missing) throw new Error('싱크가 없다');
+  if (!r.editable) throw new Error('편집 가능해야 clipboardData 가 온다');
+  if (r.opacity !== '0') throw new Error('보이면 안 된다 opacity=' + r.opacity);
+  if (!r.onCanvas) throw new Error('캔버스를 눌러도 포커스가 안 옴');
+  if (!r.onInput) throw new Error('입력란의 포커스를 뺏었다');
+  if (!r.backToSink) throw new Error('입력란을 떠나면 되돌아와야 한다');
+  if (r.kept) throw new Error('글자를 담아 둠=' + r.kept);
+  return `${r.w} 투명 · 캔버스 ↔ 입력란 포커스 양보 · 글자 안 담음`;
 });
 
 await check('이미지 붙여넣기 — 다른 프로그램에서 복사한 그림', async () => {

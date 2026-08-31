@@ -572,3 +572,12 @@ select.dlg-input{text-align:left;min-width:110px;cursor:pointer}
   background:rgba(45,140,235,.10);color:#cfe4ff;font-size:13px;font-weight:600;
   text-shadow:0 1px 3px rgba(0,0,0,.6)
 }
+
+/* ---- 붙여넣기 싱크 (clipboard.js) ----
+   캔버스는 포커스를 못 받는다. 포커스 잡힌 편집 요소가 있어야 브라우저가
+   paste 이벤트에 clipboardData 를 실어 주므로, 눈에 안 띄는 것 하나를 둔다. */
+#paste-sink{
+  position:fixed;top:0;left:0;width:1px;height:1px;
+  opacity:0;overflow:hidden;z-index:-1;pointer-events:none;
+  white-space:pre;outline:none;caret-color:transparent
+}
