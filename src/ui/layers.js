@@ -163,7 +163,8 @@
   function itemLabel(it) {
     if (it.type === 'text') return '<' + (it.text.content.split('\n')[0].slice(0, 14) || '텍스트') + '>';
     if (it.type === 'group') return it.isLayer ? (it.name || '하위 레이어') : (it.clip ? '클립 그룹' : '그룹');
-    if (it.type === 'image') return it.name || '이미지';
+    /* 주소만 걸린 그림은 레이어에서 바로 알아볼 수 있게 표시한다 (일러스트레이터의 연결 이미지) */
+    if (it.type === 'image') return (it.name || '이미지') + (it.linked ? ' (연결됨)' : '');
     return it.name || '패스';
   }
 

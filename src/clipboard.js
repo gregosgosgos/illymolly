@@ -150,7 +150,7 @@
   }
 
   /* 이미지 데이터 URL 하나를 오브젝트로 — 크기를 알아야 하므로 비동기다 */
-  CB.placeImageSrc = function (app, src, name, mode, at) {
+  CB.placeImageSrc = function (app, src, name, mode, at, linked) {
     return new Promise(function (res) {
       var probe = new Image();
       probe.onload = function () {
@@ -160,11 +160,17 @@
         var k = Math.min(1, ab.w * 0.8 / iw, ab.h * 0.8 / ih);
         var it = Model.newImage(src, 0, 0, iw * k, ih * k);
         it.name = name || '이미지';
+        if (linked) it.linked = true;      /* 문서에 담기지 않고 주소만 걸린 그림 */
         var ok = place(app, [it], mode, at, '이미지 붙이기');
-        if (ok) U.toast('이미지 붙여넣기: ' + iw + '×' + ih + (k < 1 ? ' (' + Math.round(k * 100) + '% 로 축소)' : ''));
+        if (ok && !linked) {
+          U.toast('이미지 붙여넣기: ' + iw + '×' + ih + (k < 1 ? ' (' + Math.round(k * 100) + '% 로 축소)' : ''));
+        }
         res(ok);
       };
-      probe.onerror = function () { U.toast('이미지를 읽을 수 없습니다'); res(false); };
+      probe.onerror = function () {
+        if (!linked) U.toast('이미지를 읽을 수 없습니다');
+        res(false);
+      };
       probe.src = src;
     });
   };
@@ -184,6 +190,82 @@
       r.onerror = function () { rej(r.error); };
       r.readAsText(file);
     });
+  }
+
+  /* ---------------- 웹페이지에서 복사한 이미지 ----------------
+     사이트에서 이미지를 끌어 고르거나 글과 함께 복사하면, 클립보드에는 그림
+     자체가 아니라 <img src="..."> 가 든 text/html 만 실린다. (오른쪽 단추 >
+     [이미지 복사] 를 눌러야 그림 데이터가 실린다.) 그래서 주소를 보면 그
+     그림을 받아 와 문서에 담는다.
+
+     받아 오는 데 실패하면 — 원본 사이트가 다른 곳에서 못 가져가게 막아 둔
+     경우(CORS) — 주소를 그대로 건 "연결된 이미지" 로 둔다. 화면에는 보이지만
+     문서 안에 그림이 들어 있지는 않다는 뜻이라, 그렇다고 알려 준다. */
+
+  var IMG_EXT = /\.(png|jpe?g|gif|webp|bmp|avif|svg)(\?|#|$)/i;
+
+  CB.imageUrlFrom = function (dt) {
+    var html = '';
+    try { html = dt.getData('text/html') || ''; } catch (e) { }
+    if (html) {
+      var m = /<img\b[^>]*?\ssrc\s*=\s*("([^"]*)"|'([^']*)')/i.exec(html);
+      var src = m && (m[2] != null ? m[2] : m[3]);
+      if (src) {
+        src = src.replace(/&amp;/g, '&').trim();
+        if (/^(https?:|data:image\/)/i.test(src)) return src;
+      }
+    }
+    var text = '';
+    try { text = (dt.getData('text/plain') || '').trim(); } catch (e) { }
+    if (/^data:image\//i.test(text)) return text;
+    /* 그냥 붙인 주소는 그림 확장자일 때만 그림으로 본다 — 링크는 글자로 남긴다 */
+    if (/^https?:\/\/\S+$/i.test(text) && IMG_EXT.test(text)) return text;
+    return null;
+  };
+
+  /* 주소에서 그림을 받아 문서에 담을 수 있는 형태(데이터 URL)로 */
+  CB.fetchAsDataURL = function (url) {
+    if (/^data:/i.test(url)) return Promise.resolve(url);
+    if (!U.hasDOM || typeof fetch !== 'function') return Promise.resolve(null);
+    return fetch(url, { mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer' })
+      .then(function (res) {
+        if (!res || !res.ok) return null;
+        return res.blob();
+      })
+      .then(function (blob) {
+        if (!blob || !/^image\//.test(blob.type || '')) return null;
+        return readAsDataURL(blob);
+      })
+      .catch(function () { return null; });
+  };
+
+  /* 주소로 붙이기 — 되도록 담고, 안 되면 연결해 둔다 */
+  CB.pasteImageUrl = function (app, url, mode, at) {
+    return CB.fetchAsDataURL(url).then(function (data) {
+      if (data) return CB.placeImageSrc(app, data, fileNameOf(url), mode, at);
+      /* 못 받아 왔다 — 주소를 그대로 걸어 본다 */
+      return CB.placeImageSrc(app, url, fileNameOf(url), mode, at, true).then(function (ok) {
+        if (ok) {
+          U.toast('연결된 이미지로 붙였습니다 — 원본 사이트가 파일 복사를 막아 문서에 담기지 못했습니다. ' +
+            '담으려면 그림 위에서 오른쪽 단추 > [이미지 복사] 로 복사해 주세요');
+        } else {
+          CB.lastReason = '그 이미지를 가져올 수 없습니다 (' + shortUrl(url) + ')';
+          U.toast('이미지를 가져오지 못했습니다 — 그림 위에서 오른쪽 단추 > [이미지 복사] 로 복사한 뒤 붙여넣어 주세요');
+        }
+        return ok;
+      });
+    });
+  };
+
+  function fileNameOf(url) {
+    if (/^data:/i.test(url)) return '이미지';
+    try {
+      var n = decodeURIComponent(new URL(url).pathname.split('/').pop() || '');
+      return n || '이미지';
+    } catch (e) { return '이미지'; }
+  }
+  function shortUrl(url) {
+    return url.length > 60 ? url.slice(0, 57) + '…' : url;
   }
 
   /* text/html 안에 들어 있는 <svg> 를 꺼낸다 (피그마 등이 이렇게 준다) */
@@ -249,7 +331,11 @@
       }
     }
 
-    /* 4 · 그냥 글자 */
+    /* 4 · 웹페이지에서 복사한 그림 — 주소만 실려 온 경우 */
+    var url = CB.imageUrlFrom(dt);
+    if (url) return CB.pasteImageUrl(app, url, mode, at);
+
+    /* 5 · 그냥 글자 */
     if (text && text.length < MAX_TEXT) return Promise.resolve(CB.placeText(app, text, mode, at));
 
     var types = typeList(dt);

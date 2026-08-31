@@ -520,7 +520,11 @@
           download(name + '.pdf', new Blob([bytes], { type: 'application/pdf' }));
         } else {
           var cv = IO.renderArtboard(app, i, o.scale || 2, o.background);
-          cv.toBlob(function (blob) { download(name + '.png', blob); }, 'image/png');
+          try {
+            cv.toBlob(function (blob) { download(name + '.png', blob); }, 'image/png');
+          } catch (e) {
+            U.toast(name + ' — 연결된 그림 때문에 PNG 로 만들 수 없습니다');
+          }
         }
       }, k * 120);
     });
@@ -539,14 +543,38 @@
       (AI.pdf.lastDroppedText ? ' — 한글 등 비ASCII 글자 ' + AI.pdf.lastDroppedText + '자는 ?로 대체되었습니다 (윤곽선 만들기 권장)' : ''));
   };
 
+  /* 문서에 담기지 않고 주소만 걸린 그림 — 브라우저가 캔버스를 잠가 버려
+     PNG · PDF 로 내보낼 수 없게 만든다. 미리 이름을 알려 줄 수 있게 모아 둔다. */
+  IO.linkedImages = function (doc) {
+    var out = [];
+    Model.walk(doc, function (it) {
+      if (it.type === 'image' && it.linked) out.push(it.name || '이미지');
+    });
+    return out;
+  };
+  function warnLinked(app) {
+    var n = IO.linkedImages(app.doc);
+    if (!n.length) return false;
+    U.toast('연결된 이미지 ' + n.length + '개(' + n.slice(0, 2).join(', ') +
+      (n.length > 2 ? ' 외' : '') + ') 때문에 래스터로 내보낼 수 없습니다 — ' +
+      '원본을 [이미지 복사] 로 다시 붙여넣거나 SVG 로 내보내 주세요');
+    return true;
+  }
+  IO.warnLinked = warnLinked;
+
   IO.exportPNG = function (app) {
     if (app.doc.artboards.length > 1) { IO.exportArtboards(app, 'png'); return; }
+    if (warnLinked(app)) return;
     AI.dialogs.exportPNG(app, function (scale, withBg) {
       var cv = IO.renderArtboard(app, app.doc.activeArtboard, scale, withBg);
-      cv.toBlob(function (blob) {
-        download(baseName(app) + '.png', blob);
-        U.toast('PNG 내보내기 완료 (' + cv.width + '×' + cv.height + ')');
-      }, 'image/png');
+      try {
+        cv.toBlob(function (blob) {
+          download(baseName(app) + '.png', blob);
+          U.toast('PNG 내보내기 완료 (' + cv.width + '×' + cv.height + ')');
+        }, 'image/png');
+      } catch (e) {
+        U.toast('PNG 로 내보낼 수 없습니다 — 다른 사이트에서 연결된 그림이 들어 있습니다');
+      }
     });
   };
 

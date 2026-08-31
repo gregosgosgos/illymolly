@@ -7,12 +7,29 @@ import { serve } from './server.mjs';
 
 const PORT = 8129;
 const server = await serve(PORT);
+
+/* 웹페이지에서 복사한 그림을 흉내내려면 진짜 다른 오리진이 필요하다.
+   /cors/ 는 가져가게 허용하고, /blocked-by-cors/ 는 막는다. */
+const IMG_PORT = PORT + 1;
+const PNG_BYTES = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAGCAYAAAD68A/GAAAAHElEQVR42mP8z8BQz0AEYBxVSF+FAP5FDvcfRYWgAAAAAElFTkSuQmCC', 'base64');
+const imgHost = (await import('http')).createServer((req, res) => {
+  const h = { 'Content-Type': 'image/png' };
+  if (req.url.includes('/cors/')) h['Access-Control-Allow-Origin'] = '*';
+  res.writeHead(200, h);
+  res.end(PNG_BYTES);
+}).listen(IMG_PORT);
+const imgUrl = (kind, name) => `http://127.0.0.1:${IMG_PORT}/${kind}/${name}`;
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 
 const errors = [];
-page.on('console', m => { if (m.type() === 'error') errors.push('CONSOLE: ' + m.text()); });
-page.on('pageerror', e => errors.push('PAGEERROR: ' + e.message));
+/* CORS 를 일부러 막아 둔 호스트에서 브라우저가 스스로 찍는 줄은 시나리오의 일부다.
+   (막힌 그림을 "연결된 이미지" 로 붙이는 경우 — 우리 코드가 내는 오류가 아니다) */
+const EXPECTED = [/blocked-by-cors/, /has been blocked by CORS policy/, /net::ERR_FAILED/];
+const benign = t => EXPECTED.some(re => re.test(t));
+page.on('console', m => { if (m.type() === 'error' && !benign(m.text())) errors.push('CONSOLE: ' + m.text()); });
+page.on('pageerror', e => { if (!benign(e.message)) errors.push('PAGEERROR: ' + e.message); });
 
 await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'load' });
 await page.waitForTimeout(400);
@@ -3274,6 +3291,81 @@ await check('SVG 붙여넣기 — 그림이 아니라 편집되는 벡터로', a
   return `${r.join(' · ')} · text/html 안의 <svg> 도 ${h[0]}`;
 });
 
+await check('사이트에서 복사한 그림 — 주소만 실려 와도 붙는다', async () => {
+  /* 브라우저에서 그림을 끌어 고르고 복사하면 클립보드에는 그림이 아니라
+     <img src="..."> 가 든 text/html 만 실린다. 가장 흔한 경우다. */
+  await firePaste({ 'text/html': `<meta charset="utf-8"><img src="${imgUrl('cors', '사진.png')}" alt="x">`, 'text/plain': '' });
+  const r = await ev(() => {
+    const it = AI.app.sel[0];
+    if (!it) return null;
+    const bb = AI.render.localBounds(it);
+    return { type: it.type, name: it.name, linked: !!it.linked,
+      embedded: /^data:image\//.test(it.src || ''), w: Math.round(AI.rect.w(bb)), h: Math.round(AI.rect.h(bb)) };
+  });
+  if (!r || r.type !== 'image') throw new Error('결과=' + JSON.stringify(r));
+  if (!r.embedded) throw new Error('문서에 담기지 않았다 (연결만 됨)');
+  if (r.linked) throw new Error('가져올 수 있는데 연결로 처리했다');
+  if (r.w !== 10 || r.h !== 6) throw new Error(`크기=${r.w}×${r.h} (원본 10×6)`);
+  return `받아서 담음 ${r.w}×${r.h} "${r.name}"`;
+});
+
+await check('글과 그림을 함께 복사해도 그림이 우선', async () => {
+  await firePaste({ 'text/html': `<div>설명글<img src="${imgUrl('cors', 'inline.png')}"></div>`, 'text/plain': '설명글' });
+  const t = await ev(() => AI.app.sel[0] && AI.app.sel[0].type);
+  if (t !== 'image') throw new Error('type=' + t);
+  return '문자가 아니라 이미지로';
+});
+
+await check('그림 주소를 붙이면 그림, 그냥 링크는 글자', async () => {
+  await firePaste({ 'text/plain': imgUrl('cors', 'direct.png') });
+  const a = await ev(() => AI.app.sel[0] && AI.app.sel[0].type);
+  await firePaste({ 'text/plain': 'https://example.com/article' });
+  const b = await ev(() => AI.app.sel[0] && AI.app.sel[0].type);
+  if (a !== 'image') throw new Error('그림 주소=' + a);
+  if (b !== 'text') throw new Error('일반 링크=' + b + ' (글자로 남아야 한다)');
+  return '그림 주소 → image · 일반 링크 → text';
+});
+
+await check('원본이 막아 두면 연결된 이미지로 두고 그렇다고 말한다', async () => {
+  const r = await page.evaluate(async url => {
+    const msgs = [];
+    const t = AI.util.toast;
+    AI.util.toast = m => { msgs.push(m); };
+    const dt = new DataTransfer();
+    dt.setData('text/html', `<img src="${url}">`);
+    AI.sel.clear(AI.app);
+    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    await new Promise(r => setTimeout(r, 1500));
+    AI.util.toast = t;
+    const it = AI.app.sel[0];
+    return { type: it && it.type, linked: !!(it && it.linked),
+      w: it ? Math.round(AI.rect.w(AI.render.localBounds(it))) : 0, msgs,
+      layerName: AI.app.doc.layers[AI.app.doc.activeLayer].children.slice(-1)[0] };
+  }, imgUrl('blocked-by-cors', '막힌그림.png'));
+  if (r.type !== 'image') throw new Error('붙지 않음=' + JSON.stringify(r));
+  if (!r.linked) throw new Error('연결 표시가 없다');
+  if (r.w !== 10) throw new Error('크기를 못 읽음=' + r.w);
+  const m = r.msgs.join(' | ');
+  if (m.indexOf('이미지 복사') < 0) throw new Error('무엇을 하면 되는지 안 알려 줌=' + m);
+  /* 래스터 내보내기는 막고 이유를 말한다 (브라우저가 캔버스를 잠근다) */
+  const warn = await ev(() => {
+    const msgs = [];
+    const t = AI.util.toast;
+    AI.util.toast = m => { msgs.push(m); };
+    const stopped = AI.io.warnLinked(AI.app);
+    AI.util.toast = t;
+    return { stopped, names: AI.io.linkedImages(AI.app.doc), msgs };
+  });
+  if (!warn.stopped || warn.names.length !== 1) throw new Error('연결 이미지 감지=' + JSON.stringify(warn));
+  if (warn.msgs.join('').indexOf('SVG') < 0) throw new Error('대안을 안 알려 줌=' + warn.msgs.join(''));
+  /* 레이어 패널에서도 알아볼 수 있어야 한다 */
+  await showPanel('layers');
+  await page.waitForTimeout(120);
+  const shown = await page.$eval('.panel[data-panel="layers"]', n => n.textContent || '');
+  if (shown.indexOf('(연결됨)') < 0) throw new Error('레이어 패널에 (연결됨) 표시가 없다');
+  return `연결됨 표시 · 내보내기 차단 · "${warn.names[0]}"`;
+});
+
 await check('글자를 붙이면 문자 오브젝트가 된다', async () => {
   await firePaste({ 'text/plain': '붙여넣은 글자\n두 번째 줄' });
   const r = await ev(() => { const it = AI.app.sel[0]; return it && { type: it.type, s: it.text && it.text.content }; });
@@ -3562,4 +3654,5 @@ errors.slice(0, 10).forEach(e => console.log('  ' + e));
 
 await browser.close();
 server.close();
+imgHost.close();
 process.exit(failed || errors.length ? 1 : 0);
