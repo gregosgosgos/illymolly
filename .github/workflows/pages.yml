@@ -1,0 +1,47 @@
+# =============================================================================
+# GitHub Pages 배포
+# -----------------------------------------------------------------------------
+# 빌드 단계가 없는 정적 사이트라 저장소를 그대로 올린다.
+# configure-pages 의 enablement 가 Pages 가 꺼져 있으면 켜 준다.
+# =============================================================================
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [claude/adobe-illustrator-webpage-zvh8jk]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 배포는 한 번에 하나만. 진행 중인 것은 끝내고 최신 것으로 간다.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pages 설정 (꺼져 있으면 켠다)
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      # 테스트·개발용 파일은 사이트에 필요 없다
+      - name: 배포할 것만 남기기
+        run: rm -rf test node_modules .github
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
