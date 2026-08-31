@@ -422,6 +422,81 @@
     });
   };
 
+  /* ---------- 반복 (방사형 · 격자 · 미러) ---------- */
+  Dlg.repeat = function (app) {
+    var RP = AI.repeat;
+    var targets = app.sel.filter(RP.has);
+    if (!targets.length) { U.toast('반복이 걸린 오브젝트를 선택하세요'); return; }
+    var it = targets[0];
+    var before = targets.map(function (o) { return U.deepCopy(o.repeat); });
+
+    function build(kind) {
+      var def = RP.DEFS[kind];
+      var cur = (it.repeat.kind === kind) ? it.repeat : RP.defaults(kind);
+      var fields = [
+        { id: 'kind', label: '종류', type: 'select', width: 130, value: kind,
+          options: Object.keys(RP.DEFS).map(function (k) { return [k, RP.DEFS[k].name]; }) },
+        { type: 'sep' }
+      ];
+      def.params.forEach(function (pp) {
+        fields.push({
+          id: pp.id, label: pp.label, type: 'num', unit: pp.unit,
+          min: pp.min, max: pp.max,
+          value: cur[pp.id] == null ? pp.def : cur[pp.id]
+        });
+      });
+      fields.push({ type: 'sep' }, {
+        id: 'info', type: 'info',
+        label: '사본을 만들지 않고 규칙만 걸어 둡니다 — 원본을 고치면 전부 따라 바뀝니다. ' +
+          '실제 오브젝트로 굳히려면 [오브젝트 > 반복 > 반복 확장].'
+      });
+      return fields;
+    }
+
+    function apply(v) {
+      var kind = v.kind || it.repeat.kind;
+      targets.forEach(function (o) {
+        var next = { kind: kind };
+        RP.DEFS[kind].params.forEach(function (pp) {
+          next[pp.id] = v[pp.id] == null ? pp.def : +v[pp.id];
+        });
+        o.repeat = next;
+      });
+      app.invalidate();
+    }
+    function restore() {
+      targets.forEach(function (o, i) { o.repeat = U.deepCopy(before[i]); });
+      app.invalidate();
+    }
+
+    function open(kind) {
+      D.open({
+        title: '반복 옵션',
+        fields: build(kind),
+        onChange: function (v, id, api) {
+          if (id === 'kind' && v.kind !== kind) {
+            /* 종류를 바꾸면 그 종류의 항목으로 다시 그린다 */
+            restore();
+            D.close(true);
+            open(v.kind);
+            return;
+          }
+          if (id != null) apply(v);
+          void api;
+        },
+        onDone: function (v) {
+          restore();
+          app.history.begin('반복 옵션', app.doc);
+          apply(v);
+          app.history.commit();
+          AI.ui.syncAll(app);
+        },
+        onCancel: restore
+      });
+    }
+    open(it.repeat.kind);
+  };
+
   /* ---------- 모퉁이 (라이브 코너) ---------- */
   Dlg.corners = function (app, it, targets) {
     var Model = AI.model, E = AI.edit;

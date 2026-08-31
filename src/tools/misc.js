@@ -206,18 +206,21 @@
         st = { mode: 'none' };
         return;
       }
-      /* 주석자 손잡이를 잡았는지 먼저 확인한다 */
+      /* 주석자 손잡이를 잡았는지 먼저 확인한다.
+         양 끝은 손잡이와 정지점이 겹쳐 있다 — 일러스트레이터처럼 정지점은
+         막대 아래쪽에 그리므로, 아래를 누르면 정지점이 먼저 잡힌다. */
       if (it) {
         var g = gradEnds(app, it);
-        if (U.dist(e.x, e.y, g.s0.x, g.s0.y) < 8) {
+        var siEnd = stopAt(app, it, g, e.x, e.y);
+        if (siEnd < 0 && U.dist(e.x, e.y, g.s0.x, g.s0.y) < 8) {
           app.history.begin('그레이디언트', app.doc);
           st = { mode: 'p0', it: it, g: g }; return;
         }
-        if (U.dist(e.x, e.y, g.s1.x, g.s1.y) < 8) {
+        if (siEnd < 0 && U.dist(e.x, e.y, g.s1.x, g.s1.y) < 8) {
           app.history.begin('그레이디언트', app.doc);
           st = { mode: 'p1', it: it, g: g }; return;
         }
-        var si = stopAt(app, it, g, e.x, e.y);
+        var si = siEnd >= 0 ? siEnd : stopAt(app, it, g, e.x, e.y);
         if (si >= 0) {
           /* Alt+드래그 = 정지점 복제 (일러스트레이터와 같다) */
           if (e.alt) {
@@ -391,7 +394,11 @@
       ctx.beginPath(); ctx.rect(g.s1.x - 5, g.s1.y - 5, 10, 10); ctx.fill(); ctx.stroke();
       /* 정지점 */
       it.fill.stops.forEach(function (sp) {
-        var p = lerpPt(g.s0, g.s1, sp.t);
+        var on = lerpPt(g.s0, g.s1, sp.t);
+        var p = stopPt(g, sp.t);
+        /* 막대와 정지점을 잇는 짧은 선 — 어느 자리인지 눈에 보이게 */
+        ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(on.x, on.y); ctx.lineTo(p.x, p.y); ctx.stroke();
         ctx.fillStyle = Col.toCss(sp.color, sp.alpha);
         ctx.beginPath(); ctx.arc(p.x, p.y, 4.5, 0, 6.2832); ctx.fill();
         ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
@@ -408,15 +415,25 @@
     if (l2 < 1e-9) return 0;
     return ((x - g.s0.x) * dx + (y - g.s0.y) * dy) / l2;
   }
+  /* 정지점은 막대 위가 아니라 살짝 아래에 매달아 그린다 (일러스트레이터의 주석자).
+     그래야 양 끝에서 끝점 손잡이와 정지점이 겹치지 않는다. */
+  var STOP_OFF = 8;
+  function stopPt(g, t) {
+    var p = lerpPt(g.s0, g.s1, t);
+    var dx = g.s1.x - g.s0.x, dy = g.s1.y - g.s0.y;
+    var L = Math.hypot(dx, dy) || 1;
+    return { x: p.x - dy / L * STOP_OFF, y: p.y + dx / L * STOP_OFF };
+  }
+
   /* 막대(주석자)에서 얼마나 떨어져 있나 — 정지점을 끌어내 지울 때 쓴다 */
   function distToBar(g, x, y) {
     var t = U.clamp(projectT(g, x, y), 0, 1);
-    var p = lerpPt(g.s0, g.s1, t);
+    var p = stopPt(g, t);
     return U.dist(x, y, p.x, p.y);
   }
   function stopAt(app, it, g, x, y) {
     for (var i = 0; i < it.fill.stops.length; i++) {
-      var p = lerpPt(g.s0, g.s1, it.fill.stops[i].t);
+      var p = stopPt(g, it.fill.stops[i].t);
       if (U.dist(x, y, p.x, p.y) < 7) return i;
     }
     return -1;

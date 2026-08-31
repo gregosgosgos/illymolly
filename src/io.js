@@ -174,6 +174,17 @@
 
   function itemSvg(doc, it, defs) {
     if (!it.visible) return '';
+    /* 반복 — 규칙이 준 행렬마다 원본을 그대로 한 벌씩 담는다 */
+    if (AI.repeat && AI.repeat.has(it) && !AI.repeat.isOne(it)) {
+      var rms = AI.repeat.matrices(it);
+      if (rms) {
+        var one = AI.repeat.one(it);
+        return rms.map(function (mi) {
+          var t = M.isIdent(mi) ? '' : ' transform="matrix(' + mi.map(function (v) { return U.round(v, 4); }).join(' ') + ')"';
+          return '<g' + t + '>' + itemSvg(doc, one, defs) + '</g>';
+        }).join('');
+      }
+    }
     var tr = M.isIdent(it.m) ? '' : ' transform="matrix(' + it.m.map(function (v) { return U.round(v, 4); }).join(' ') + ')"';
     var op = (it.opacity != null && it.opacity < 1) ? ' opacity="' + U.round(it.opacity, 3) + '"' : '';
     if (AI.effects.has(it)) {

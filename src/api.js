@@ -1837,6 +1837,45 @@
     'smooth', 'amount', 'angle', 'scaleX', 'scaleY', 'moveX', 'moveY', 'copies',
     'anchor', 'reflectX', 'reflectY',
     'depth', 'ax', 'ay', 'az', 'perspective', 'cap', 'shade', 'light', 'ambient'];
+  /* ---------------- 반복 (방사형 · 격자 · 미러) ---------------- */
+  op('repeat', {
+    undoable: true, group: '수정',
+    desc: '오브젝트에 반복을 겁니다 — 사본을 만들지 않고 규칙만 얹습니다 (방사형·격자·미러).',
+    params: {
+      query: Q,
+      kind: p('string', '반복 종류', { required: true, enum: ['radial', 'grid', 'mirror', 'none'] }),
+      count: p('number', '개수 (방사형)'),
+      radius: p('number', '반지름 pt (방사형)'),
+      start: p('number', '시작 각도 ° (방사형)'),
+      span: p('number', '벌어진 각도 ° (방사형)'),
+      cols: p('number', '가로 개수 (격자)'),
+      rows: p('number', '세로 개수 (격자)'),
+      gapX: p('number', '가로 간격 pt (격자)'),
+      gapY: p('number', '세로 간격 pt (격자)'),
+      angle: p('number', '축 각도 ° (미러)'),
+      gap: p('number', '축까지 거리 pt (미러)'),
+      expand: p('boolean', '실제 오브젝트로 굳힐지', { default: false })
+    },
+    returns: 'id[]',
+    run: function (ctx, a) {
+      var list = need(ctx, a.query, 'repeat');
+      var out = [];
+      list.forEach(function (it) {
+        if (a.kind === 'none') { delete it.repeat; out.push(it.id); return; }
+        var next = AI.repeat.defaults(a.kind);
+        AI.repeat.DEFS[a.kind].params.forEach(function (pp) {
+          if (a[pp.id] != null) next[pp.id] = a[pp.id];
+        });
+        it.repeat = next;
+        if (a.expand) {
+          var g = AI.repeat.expand(ctx, it);
+          out.push(g ? g.id : it.id);
+        } else out.push(it.id);
+      });
+      return out;
+    }
+  });
+
   var FX_ENUM = ['blur', 'shadow', 'glow',
     'zigzag', 'roughen', 'puckerBloat', 'twist', 'transformFx', 'freeDistort',
     'extrude', 'rotate3d'];

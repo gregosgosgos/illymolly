@@ -296,6 +296,10 @@
   /* 누적 행렬 m 을 직접 받는 바운딩 — 트리를 되짚지 않으므로 O(항목수)
      sw: 획 두께에 곱할 배율 (화면 좌표계 계산 시 view.scale) */
   Rn.boundsM = function (it, m, geo, sw) {
+    if (AI.repeat && AI.repeat.has(it) && !AI.repeat.isOne(it)) {
+      var rb = AI.repeat.boundsM(it, m, geo, sw);
+      if (rb) return rb;
+    }
     if (it.type === 'group') {
       var r = R.empty();
       for (var i = 0; i < it.children.length; i++) {
@@ -704,6 +708,15 @@
 
   Rn.item = function (ctx, app, it, pm, alpha, inIso) {
     if (!it.visible || it.__editing) return;
+    /* 반복(방사형·격자·미러) — 규칙이 준 행렬마다 원본을 그대로 다시 그린다 */
+    if (AI.repeat && AI.repeat.has(it) && !AI.repeat.isOne(it)) {
+      var rms = AI.repeat.matrices(it);
+      if (rms) {
+        var one = AI.repeat.one(it);
+        for (var ri = 0; ri < rms.length; ri++) Rn.item(ctx, app, one, M.mul(pm, rms[ri]), alpha, inIso);
+        return;
+      }
+    }
     var iso = app.isolation && app.isolation.length;
     if (iso && inIso === undefined) inIso = false;
     if (iso && !inIso && app.isolation.indexOf(it) >= 0) inIso = true;
@@ -1351,7 +1364,10 @@
   Rn.bboxFrame = function (app) {
     if (!app.sel.length) return null;
     var vm = AI.viewT.matrix(app);
-    if (app.sel.length === 1) {
+    /* 반복이 걸린 것은 회전 상자로 감쌀 수 없다 — 여러 벌 전체를 두르는
+       축 정렬 상자를 쓴다 (아래 여러 개 선택했을 때와 같은 길) */
+    var single = app.sel.length === 1 && !(AI.repeat && AI.repeat.has(app.sel[0]));
+    if (single) {
       var it = app.sel[0];
       var wm = M.mul(vm, Model.worldMatrix(app.doc, it));
       var b = Rn.localBounds(it);
@@ -1481,6 +1497,30 @@
   }
   Rn.drawLiveWidgets = drawLiveWidgets;
 
+  /* 키 오브젝트 — 정렬의 기준이 되는 하나. 일러스트레이터처럼 굵게 두른다.
+     ([정렬] 패널의 대상이 "키 오브젝트" 일 때만 보여 준다 — 평소엔 방해가 된다) */
+  function drawKeyObject(ctx, app, color) {
+    if (app.alignTo !== 'key') return;
+    var k = app.keyObject;
+    if (!k || app.sel.length < 2 || app.sel.indexOf(k) < 0) return;
+    var b = Rn.worldBounds(app.doc, k, false);
+    if (R.isEmpty(b)) return;
+    var vm = AI.viewT.matrix(app);
+    var q = [[b.x, b.y], [b.x2, b.y], [b.x2, b.y2], [b.x, b.y2]]
+      .map(function (p) { return M.apply(vm, p[0], p[1]); });
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(q[0].x, q[0].y);
+    for (var i = 1; i < 4; i++) ctx.lineTo(q[i].x, q[i].y);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+  }
+  Rn.drawKeyObject = drawKeyObject;
+
   function drawCornerWidgets(ctx, app, color) {
     var cw = Rn.cornerWidgets(app);
     if (!cw) return;
@@ -1515,6 +1555,7 @@
     var f = Rn.bboxFrame(app);
     if (!f) return;
     color = color || UIC.box;
+    drawKeyObject(ctx, app, color);
     ctx.save();
     ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash([]);
     ctx.beginPath();

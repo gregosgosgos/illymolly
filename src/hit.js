@@ -85,6 +85,31 @@
 
   /* 클릭 지점의 아이템 — deep=true 면 그룹 내부 아이템 반환
      행렬을 하향 누적하고 화면 바운딩으로 먼저 걸러 O(n) 로 동작한다. */
+  /* 반복 오브젝트 — 인스턴스 하나라도 맞으면 맞은 것으로 본다 */
+  function hitRepeat(app, it, sx, sy, pm, deep) {
+    var ms = AI.repeat.matrices(it);
+    if (!ms) return false;
+    var one = AI.repeat.one(it);
+    for (var i = 0; i < ms.length; i++) {
+      var mi = M.mulAll(pm, ms[i], it.m);
+      if (one.type === 'group') {
+        if (hitList(app, one.children, sx, sy, mi)) return true;
+      } else if (H.testItemM(app, one, sx, sy, mi)) return true;
+    }
+    void deep;
+    return false;
+  }
+  function hitList(app, list, sx, sy, pm) {
+    for (var i = list.length - 1; i >= 0; i--) {
+      var c = list[i];
+      if (!c.visible) continue;
+      var m = M.mul(pm, c.m);
+      if (c.type === 'group') { if (hitList(app, c.children, sx, sy, m)) return true; }
+      else if (H.testItemM(app, c, sx, sy, m)) return true;
+    }
+    return false;
+  }
+
   H.itemAt = function (app, sx, sy, deep) {
     var vm = AI.viewT.matrix(app), doc = app.doc, tol = H.TOL + 2, sc = app.view.scale;
 
@@ -95,6 +120,11 @@
         var m = M.mul(pm, it.m);
         var b = Rn.boundsM(it, m, false, sc);
         if (R.isEmpty(b) || !R.has(R.grow(b, tol), sx, sy)) continue;
+        /* 반복 — 어느 벌을 눌러도 원본이 잡힌다 (일러스트레이터와 같다) */
+        if (AI.repeat && AI.repeat.has(it)) {
+          if (hitRepeat(app, it, sx, sy, pm, deep)) return it;
+          continue;
+        }
         if (it.type === 'group') {
           var inner = scan(it.children, m);
           if (inner) return deep ? inner : it;

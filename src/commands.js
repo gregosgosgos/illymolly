@@ -189,6 +189,39 @@
   });
 
   /* ================= 오브젝트 ================= */
+  /* ---------------- 반복 (방사형 · 격자 · 미러) ---------------- */
+  C.REPEAT_ITEMS = [];
+  Object.keys(AI.repeat.DEFS).forEach(function (kind) {
+    var id = 'repeat_' + kind;
+    C.REPEAT_ITEMS.push(id);
+    def(id, AI.repeat.DEFS[kind].name, null, hist('반복: ' + AI.repeat.DEFS[kind].name, function (a) {
+      var n = 0;
+      a.sel.forEach(function (it) {
+        it.repeat = (it.repeat && it.repeat.kind === kind)
+          ? it.repeat : AI.repeat.defaults(kind);
+        n++;
+      });
+      if (!n) return false;
+      U.toast(AI.repeat.DEFS[kind].name + ' 반복 — 옵션은 [오브젝트 > 반복 > 옵션]');
+    }), { enabled: hasSel });
+  });
+  def('repeatOptions', '반복 옵션...', null, function (a) { AI.dialogs.repeat(a); }, {
+    enabled: function (a) { return a.sel.some(AI.repeat.has); }
+  });
+  def('repeatExpand', '반복 확장', null, hist('반복 확장', function (a) {
+    var list = a.sel.filter(AI.repeat.has);
+    if (!list.length) return false;
+    var out = list.map(function (it) { return AI.repeat.expand(a, it); }).filter(Boolean);
+    AI.sel.set(a, out);
+    U.toast(out.length + '개 반복을 오브젝트로 확장');
+  }), { enabled: function (a) { return a.sel.some(AI.repeat.has); } });
+  def('repeatRelease', '반복 해제', null, hist('반복 해제', function (a) {
+    var n = 0;
+    a.sel.forEach(function (it) { if (AI.repeat.has(it)) { delete it.repeat; n++; } });
+    if (!n) return false;
+    U.toast(n + '개 반복 해제');
+  }), { enabled: function (a) { return a.sel.some(AI.repeat.has); } });
+
   def('corners', '모퉁이...', null, function (a) { AI.dialogs.corners(a); }, {
     enabled: function (a) {
       return a.sel.some(function (it) { return it.type === 'path' && it.shape && it.shape.kind === 'rect'; });
@@ -878,7 +911,7 @@
       title: '오브젝트', items: [
         'transformAgain', 'moveDialog', 'rotateDialog', 'scaleDialog', 'reflectDialog', 'shearDialog', 'transformEach', '-',
         'reflectH', 'reflectV', '-',
-        'corners', '-',
+        'corners', { label: '반복', items: C.REPEAT_ITEMS.concat(['-', 'repeatOptions', 'repeatExpand', 'repeatRelease']) }, '-',
         'bringToFront', 'bringForward', 'sendBackward', 'sendToBack', '-',
         'group', 'ungroup', '-', 'lock', 'unlockAll', 'hide', 'showAll', '-',
         'clipMake', 'clipRelease', '-', 'opacityMaskMake', 'opacityMaskRelease', 'opacityMaskInvert', '-',

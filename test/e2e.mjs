@@ -3152,6 +3152,143 @@ await check('자동 저장 · 복구 — 새로 고쳐도 작업이 살아남는
   return `2개 오브젝트 · 색상 유지 · "작업중 [복구됨]" · 기록 정리`;
 });
 
+/* ---------------- 반복 (방사형 · 격자 · 미러) ---------------- */
+await check('반복 — 사본을 만들지 않고 규칙만 얹는다 (세 종류)', async () => {
+  const r = await ev(() => {
+    const L = AI.app.doc.layers[AI.app.doc.activeLayer];
+    L.children.length = 0;
+    const it = AI.model.newStar(0, 0, 30, 13, 5);
+    it.fill = AI.color.solid('#2d8ceb');
+    it.m = AI.mat.translate(200, 120);
+    L.children.push(it);
+    AI.sel.set(AI.app, [it]);
+    const out = { objects: {}, box: {} };
+    ['radial', 'grid', 'mirror'].forEach(k => {
+      it.repeat = AI.repeat.defaults(k);
+      out[k] = AI.repeat.matrices(it).length;
+      const b = AI.render.worldBounds(AI.app.doc, it, true);
+      out.box[k] = [Math.round(AI.rect.w(b)), Math.round(AI.rect.h(b))];
+      out.objects[k] = L.children.length;      /* 오브젝트는 늘 하나여야 한다 */
+    });
+    /* 반경을 바꾸면 곧바로 따라온다 (라이브) */
+    it.repeat = AI.repeat.defaults('radial');
+    const before = AI.rect.w(AI.render.worldBounds(AI.app.doc, it, true));
+    it.repeat.radius = 240;
+    const after = AI.rect.w(AI.render.worldBounds(AI.app.doc, it, true));
+    out.live = [Math.round(before), Math.round(after)];
+    return out;
+  });
+  if (r.radial !== 8 || r.grid !== 9 || r.mirror !== 2) {
+    throw new Error(`개수 방사형 ${r.radial} · 격자 ${r.grid} · 미러 ${r.mirror}`);
+  }
+  for (const k of ['radial', 'grid', 'mirror']) {
+    if (r.objects[k] !== 1) throw new Error(`${k}: 오브젝트가 ${r.objects[k]}개 (사본을 만들면 안 된다)`);
+  }
+  /* 선택 상자는 반복 전체를 감싸야 한다 (별 하나는 60pt 남짓) */
+  if (r.box.radial[0] < 200) throw new Error('방사형 바운딩=' + r.box.radial);
+  if (r.box.grid[0] < 150) throw new Error('격자 바운딩=' + r.box.grid);
+  if (!(r.live[1] > r.live[0] + 100)) throw new Error(`반경을 바꿔도 안 따라옴 ${r.live}`);
+  return `방사형 8 · 격자 9 · 미러 2 · 오브젝트는 계속 1개 · 반경 ${r.live[0]}→${r.live[1]}`;
+});
+
+await check('반복 — 어느 벌을 눌러도 원본이 잡히고, SVG · PDF 에도 다 담긴다', async () => {
+  await ev(() => {
+    const it = AI.app.doc.layers[AI.app.doc.activeLayer].children[0];
+    it.repeat = AI.repeat.defaults('radial');
+    AI.viewT.fitAll(AI.app);
+    AI.sel.clear(AI.app);
+    AI.app.invalidate();
+  });
+  await refreshBox();
+  await page.waitForTimeout(150);
+  const inst = await ev(() => {
+    const it = AI.app.doc.layers[AI.app.doc.activeLayer].children[0];
+    const ms = AI.repeat.matrices(it);
+    const wm = AI.mat.mul(AI.viewT.matrix(AI.app), AI.mat.mul(ms[3], it.m));
+    return AI.mat.apply(wm, 30, 30);
+  });
+  await page.keyboard.press('KeyV');
+  await page.mouse.click(box.x + inst.x, box.y + inst.y);
+  await page.waitForTimeout(150);
+  const picked = await ev(() => AI.app.sel.length);
+  if (picked !== 1) throw new Error('네 번째 벌을 눌렀는데 선택=' + picked);
+
+  const out = await ev(() => {
+    const svg = AI.io.toSVG(AI.app);
+    return {
+      groups: (svg.match(/<g transform/g) || []).length,
+      paths: (svg.match(/<path/g) || []).length,
+      pdf: AI.pdf.toBytes(AI.pdf.toPDF(AI.app, {})).length
+    };
+  });
+  /* 항등 행렬 한 벌은 transform 없이 나가므로 7개 */
+  if (out.groups !== 7) throw new Error('SVG 반복 그룹=' + out.groups);
+  if (out.paths < 8) throw new Error('SVG 패스=' + out.paths);
+  if (out.pdf < 800) throw new Error('PDF 가 너무 작다=' + out.pdf);
+  return `클릭 → 원본 선택 · SVG 8벌 · PDF ${out.pdf}B`;
+});
+
+await check('반복 — 확장하면 진짜 오브젝트가 되고, 해제하면 하나로 돌아온다', async () => {
+  const ex = await ev(() => {
+    const it = AI.app.doc.layers[AI.app.doc.activeLayer].children[0];
+    it.repeat = AI.repeat.defaults('grid');
+    AI.sel.set(AI.app, [it]);
+    AI.commands.run('repeatExpand');
+    const L = AI.app.doc.layers[AI.app.doc.activeLayer];
+    const g = L.children[0];
+    return { top: L.children.length, type: g.type, kids: g.children.length,
+      stillRepeat: g.children.some(c => AI.repeat.has(c)) };
+  });
+  if (ex.top !== 1 || ex.type !== 'group') throw new Error('확장 결과=' + JSON.stringify(ex));
+  if (ex.kids !== 9) throw new Error('확장된 사본=' + ex.kids);
+  if (ex.stillRepeat) throw new Error('확장했는데 반복이 남아 있다');
+
+  const rel = await ev(() => {
+    const L = AI.app.doc.layers[AI.app.doc.activeLayer];
+    L.children.length = 0;
+    const it = AI.model.newRect(0, 0, 40, 40, 0);
+    L.children.push(it);
+    AI.sel.set(AI.app, [it]);
+    illy.repeat({ kind: 'radial', count: 12, radius: 90 });
+    const n = AI.repeat.matrices(it).length;
+    AI.commands.run('repeatRelease');
+    return { n: n, after: AI.repeat.has(it), objects: L.children.length };
+  });
+  if (rel.n !== 12) throw new Error('API 로 건 개수=' + rel.n);
+  if (rel.after) throw new Error('해제가 안 됨');
+  if (rel.objects !== 1) throw new Error('해제 뒤 오브젝트=' + rel.objects);
+  await ev(() => { AI.app.doc.layers.forEach(l => { l.children.length = 0; }); AI.sel.clear(AI.app); AI.app.invalidate(); });
+  await refreshBox();
+  return `격자 확장 → 그룹 9개 · API 방사형 12 · 해제로 원상복귀`;
+});
+
+await check('정렬 — 키 오브젝트 기준일 때만 굵게 표시한다', async () => {
+  const r = await ev(() => {
+    const L = AI.app.doc.layers[AI.app.doc.activeLayer];
+    L.children.length = 0;
+    const a = AI.model.newRect(0, 0, 60, 40, 0);
+    const b2 = AI.model.newRect(120, 60, 60, 40, 0);
+    L.children.push(a, b2);
+    AI.sel.set(AI.app, [a, b2]);
+    AI.app.keyObject = b2;
+    AI.viewT.fitArtboard(AI.app);
+    /* 키 오브젝트 기준으로 왼쪽 정렬하면 b2 는 그대로, a 가 옮겨 온다 */
+    AI.app.alignTo = 'key';
+    AI.app.history.begin('정렬', AI.app.doc);
+    AI.edit.align(AI.app, 'left', 'key');
+    AI.app.history.commit();
+    const ba = AI.render.worldBounds(AI.app.doc, a, true);
+    const bb = AI.render.worldBounds(AI.app.doc, b2, true);
+    return { ax: Math.round(ba.x), bx: Math.round(bb.x), drawKey: typeof AI.render.drawKeyObject };
+  });
+  if (r.drawKey !== 'function') throw new Error('키 오브젝트 표시가 없다');
+  if (r.ax !== r.bx) throw new Error(`키 오브젝트 기준 정렬 실패 a=${r.ax} b=${r.bx}`);
+  if (r.bx !== 120) throw new Error('키 오브젝트가 움직였다=' + r.bx);
+  await ev(() => { AI.app.alignTo = 'selection'; AI.app.doc.layers.forEach(l => { l.children.length = 0; }); AI.sel.clear(AI.app); AI.app.invalidate(); });
+  await refreshBox();
+  return `키(x=${r.bx}) 고정 · 나머지가 맞춰 옴`;
+});
+
 /* ---------------- 자주 쓰는 도구의 보조키 (일러스트레이터 규칙) ---------------- */
 const toolReset = () => ev(() => {
   AI.app.doc.layers.forEach(l => { l.children.length = 0; });
@@ -3538,14 +3675,15 @@ await check('그레이디언트 — 정지점 Alt+드래그 복제 · 끌어내 
   await refreshBox();
   await page.keyboard.press('KeyG');
   await page.waitForTimeout(120);
-  /* 막대 위에서 t 위치의 화면 좌표 */
+  /* 정지점의 화면 좌표 — 일러스트레이터처럼 막대 아래에 매달려 그려진다 */
   const atStop = i => page.evaluate(k => {
     const it = AI.app.sel[0], b2 = AI.render.localBounds(it);
     const wm = AI.mat.mul(AI.viewT.matrix(AI.app), AI.model.worldMatrix(AI.app.doc, it));
     const cy = (b2.y + b2.y2) / 2;
     const s0 = AI.mat.apply(wm, b2.x, cy), s1 = AI.mat.apply(wm, b2.x2, cy);
     const t = it.fill.stops[k].t;
-    return { x: s0.x + (s1.x - s0.x) * t, y: s0.y };
+    const dx = s1.x - s0.x, dy = s1.y - s0.y, L = Math.hypot(dx, dy) || 1;
+    return { x: s0.x + dx * t - dy / L * 8, y: s0.y + dy * t + dx / L * 8 };
   }, i);
   const stops = () => ev(() => AI.app.sel[0].fill.stops.length);
 

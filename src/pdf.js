@@ -100,6 +100,17 @@
     if (!it.visible) return;
     var a = alpha * (it.opacity == null ? 1 : it.opacity);
     if (a <= 0.003) return;
+
+    /* 반복 — 규칙이 준 행렬마다 원본을 한 벌씩 */
+    if (AI.repeat && AI.repeat.has(it) && !AI.repeat.isOne(it)) {
+      var rms = AI.repeat.matrices(it);
+      if (rms) {
+        var one = AI.repeat.one(it);
+        for (var ri = 0; ri < rms.length; ri++) drawItem(w, doc, one, M.mul(m, rms[ri]), alpha);
+        return;
+      }
+    }
+
     var wm = M.mul(m, it.m);
 
     if (it.type === 'symbol') {
