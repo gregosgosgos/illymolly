@@ -562,3 +562,13 @@ select.dlg-input{text-align:left;min-width:110px;cursor:pointer}
 .keys .conflict kbd{opacity:.45;text-decoration:line-through}
 .keys .why{color:var(--txt-dim)}
 .keys .alt kbd{border-color:var(--accent);color:#cfe4ff;opacity:1;text-decoration:none}
+
+/* ---- 파일을 끌어다 놓는 중 ---- */
+#canvas-wrap.drop-target::after{
+  content:"놓으면 여기에 배치됩니다";
+  position:absolute;inset:6px;z-index:40;pointer-events:none;
+  display:flex;align-items:center;justify-content:center;
+  border:2px dashed var(--accent);border-radius:6px;
+  background:rgba(45,140,235,.10);color:#cfe4ff;font-size:13px;font-weight:600;
+  text-shadow:0 1px 3px rgba(0,0,0,.6)
+}

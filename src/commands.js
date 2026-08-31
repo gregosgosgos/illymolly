@@ -87,44 +87,61 @@
     label2: function (a) { var l = a.history.redoLabel(); return l ? '다시 실행 ' + l : '다시 실행'; },
     enabled: function (a) { return a.history.canRedo(); }
   });
-  def('cut', '오려두기', 'Ctrl+X', hist('오려두기', function (a) {
-    if (!a.sel.length) return false;
-    C.clipboard = a.sel.map(function (it) { return U.deepCopy(it); });
-    E.remove(a);
-  }), { enabled: hasSel });
-  def('copy', '복사', 'Ctrl+C', function (a) {
-    if (!a.sel.length) return;
+  /* 앱 안 클립보드 — 시스템 클립보드를 못 쓸 때의 바탕이자 되돌아갈 자리 */
+  C.copyToBuffer = function (a) {
     C.clipboard = a.sel.map(function (it) {
       var c = U.deepCopy(it);
       c.m = M.mul(Model.worldMatrix(a.doc, it), M.ident());
       return c;
     });
-    U.toast(a.sel.length + '개 복사됨');
+    return C.clipboard.length;
+  };
+  def('cut', '오려두기', 'Ctrl+X', hist('오려두기', function (a) {
+    if (!a.sel.length) return false;
+    C.copyToBuffer(a);
+    AI.clipboard.writeAsync(a);
+    E.remove(a);
+  }), { enabled: hasSel });
+  def('copy', '복사', 'Ctrl+C', function (a) {
+    if (!a.sel.length) return;
+    var n = C.copyToBuffer(a);
+    AI.clipboard.writeAsync(a);
+    U.toast(n + '개 복사됨');
   }, { enabled: hasSel });
-  function doPaste(a, mode) {
+
+  /* 앱 안 클립보드로 붙이기 — 시스템 클립보드에 쓸 만한 게 없을 때 */
+  C.pasteInternal = function (a, mode) {
     if (!C.clipboard || !C.clipboard.length) { U.toast('붙여넣을 항목이 없습니다'); return false; }
     var layer = Model.activeLayer(a.doc);
+    if (!layer || layer.locked) { U.toast('레이어가 잠겨 있습니다'); return false; }
     var items = C.clipboard.map(function (it) { return E.cloneItem(it); });
     var r = R.empty();
     items.forEach(function (it) {
-      var b = Rn.xformBounds(Rn.localBounds(it), it.m);
-      r = R.union(r, b);
+      r = R.union(r, Rn.xformBounds(Rn.localBounds(it), it.m));
     });
     var dx = 0, dy = 0;
-    if (mode === 'center') {
+    if (mode === 'center' || !mode) {
       var c = AI.viewT.toDoc(a, a.canvas.clientWidth / 2, a.canvas.clientHeight / 2);
       dx = c.x - R.cx(r); dy = c.y - R.cy(r);
     }
-    items.forEach(function (it) { it.m = M.mul(M.translate(dx, dy), it.m); });
-    if (mode === 'front') layer.children = layer.children.concat(items);
-    else if (mode === 'back') layer.children = items.concat(layer.children);
+    if (dx || dy) items.forEach(function (it) { it.m = M.mul(M.translate(dx, dy), it.m); });
+    a.history.begin(LABEL[mode] || '붙이기', a.doc);
+    if (mode === 'back') layer.children = items.concat(layer.children);
     else layer.children = layer.children.concat(items);
     AI.sel.set(a, items);
-  }
-  def('paste', '붙이기', 'Ctrl+V', hist('붙이기', function (a) { return doPaste(a, 'center'); }));
-  def('pasteFront', '앞에 붙이기', 'Ctrl+F', hist('앞에 붙이기', function (a) { return doPaste(a, 'front'); }));
-  def('pasteBack', '뒤에 붙이기', 'Ctrl+B', hist('뒤에 붙이기', function (a) { return doPaste(a, 'back'); }));
-  def('pasteInPlace', '제자리에 붙이기', 'Ctrl+Shift+V', hist('제자리에 붙이기', function (a) { return doPaste(a, 'place'); }));
+    a.history.commit();
+    a.invalidate();
+    AI.ui.syncAll(a);
+    return true;
+  };
+  var LABEL = { center: '붙이기', place: '제자리에 붙이기', front: '앞에 붙이기', back: '뒤에 붙이기', drop: '붙이기' };
+
+  /* 메뉴에서 부를 때는 clipboardData 가 없으므로 비동기 Clipboard API 로 읽는다.
+     Ctrl+V 는 keymap 이 브라우저에 넘겨 paste 이벤트로 들어온다 (clipboard.js). */
+  def('paste', '붙이기', 'Ctrl+V', function (a) { AI.clipboard.pasteAsync(a, 'center'); });
+  def('pasteFront', '앞에 붙이기', 'Ctrl+F', function (a) { AI.clipboard.pasteAsync(a, 'front'); });
+  def('pasteBack', '뒤에 붙이기', 'Ctrl+B', function (a) { AI.clipboard.pasteAsync(a, 'back'); });
+  def('pasteInPlace', '제자리에 붙이기', 'Ctrl+Shift+V', function (a) { AI.clipboard.pasteAsync(a, 'place'); });
   def('clear', '지우기', 'Delete', hist('삭제', function (a) {
     if (a.selPts.length && T.current(a) && T.current(a).direct) { E.deleteAnchors(a); return; }
     if (!a.sel.length) return false;

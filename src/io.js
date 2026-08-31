@@ -551,13 +551,15 @@
   };
 
   /* ---------------- SVG 가져오기 (기본 도형/패스) ---------------- */
-  IO.importSVG = function (app, text, name) {
+  /* SVG 문자열 -> 레이어 목록. 문서로 열 때도, 붙여넣을 때도 이 하나를 쓴다. */
+  IO.parseSVG = function (text) {
     var dom = new DOMParser().parseFromString(text, 'image/svg+xml');
     var svg = dom.documentElement;
-    if (!svg || svg.nodeName.toLowerCase() !== 'svg') { U.toast('SVG 파싱 실패'); return; }
-    var doc = Model.newDoc(parseFloat(svg.getAttribute('width')) || 800, parseFloat(svg.getAttribute('height')) || 600);
-    doc.name = name.replace(/\.svg$/i, '');
-    var layer = doc.layers[0];
+    if (!svg || svg.nodeName.toLowerCase() !== 'svg') return null;
+    if (svg.getElementsByTagName('parsererror').length) return null;
+    var vb = (svg.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(parseFloat);
+    var width = parseFloat(svg.getAttribute('width')) || (vb.length === 4 ? vb[2] : 0) || 800;
+    var height = parseFloat(svg.getAttribute('height')) || (vb.length === 4 ? vb[3] : 0) || 600;
 
     function parseTransform(str) {
       var m = M.ident();
@@ -637,16 +639,36 @@
     var asLayers = tops.length > 0 && tops.every(function (c) {
       return c.nodeName.toLowerCase() === 'g' && c.getAttribute('id') && !c.getAttribute('transform');
     });
+    var layers;
     if (asLayers) {
-      doc.layers = tops.map(function (g, i) {
+      layers = tops.map(function (g, i) {
         var ly = Model.newLayer(g.getAttribute('id') || ('레이어 ' + (i + 1)));
         walk(g, ly.children);
         return ly;
       });
-      doc.activeLayer = doc.layers.length - 1;
     } else {
-      walk(svg, layer.children);
+      layers = [Model.newLayer()];
+      walk(svg, layers[0].children);
     }
+    return { width: width, height: height, layers: layers };
+  };
+
+  /* 붙여넣기 · 드롭용 — 레이어 구분 없이 항목만 뽑아 온다 */
+  IO.svgToItems = function (text) {
+    var p = IO.parseSVG(text);
+    if (!p) return null;
+    var out = [];
+    p.layers.forEach(function (ly) { out.push.apply(out, ly.children); });
+    return out.length ? out : null;
+  };
+
+  IO.importSVG = function (app, text, name) {
+    var p = IO.parseSVG(text);
+    if (!p) { U.toast('SVG 파싱 실패'); return; }
+    var doc = Model.newDoc(p.width, p.height);
+    doc.name = String(name || '무제').replace(/\.svg$/i, '');
+    doc.layers = p.layers;
+    doc.activeLayer = doc.layers.length - 1;
     AI.docs.add(app, doc, { label: 'SVG 가져오기' });
     U.toast('SVG 가져오기 완료');
   };

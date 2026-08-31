@@ -3113,6 +3113,205 @@ await check('자동 저장 · 복구 — 새로 고쳐도 작업이 살아남는
   return `2개 오브젝트 · 색상 유지 · "작업중 [복구됨]" · 기록 정리`;
 });
 
+/* ---------------- 시스템 클립보드 · 드래그 앤 드롭 ---------------- */
+/* 1×1 을 넘는 작은 PNG — 실제 이미지 디코딩을 거치게 한다 */
+const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAFklEQVR42mP8z8BQz0AEYBxVSF+FAP5FDvcfRYWgAAAAAElFTkSuQmCC';
+
+/* 브라우저가 주는 것과 같은 모양의 paste 이벤트를 만들어 쏜다 */
+async function firePaste(types) {
+  await page.evaluate(async t => {
+    const dt = new DataTransfer();
+    for (const [ty, val] of Object.entries(t)) {
+      if (ty === '__file') {
+        const bin = Uint8Array.from(atob(val.b64), c => c.charCodeAt(0));
+        dt.items.add(new File([bin], val.name, { type: val.type }));
+      } else dt.setData(ty, val);
+    }
+    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    await new Promise(r => setTimeout(r, 400));
+  }, types);
+}
+
+await check('Ctrl+V 를 브라우저에 넘긴다 (넘기지 않으면 paste 이벤트가 안 온다)', async () => {
+  const r = await page.evaluate(() => {
+    function press(code, mods) {
+      const e = new KeyboardEvent('keydown', Object.assign({ code: code, key: code.slice(-1).toLowerCase(), bubbles: true, cancelable: true }, mods));
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    }
+    return {
+      v: press('KeyV', { ctrlKey: true }),
+      c: press('KeyC', { ctrlKey: true }),
+      x: press('KeyX', { ctrlKey: true }),
+      shiftV: press('KeyV', { ctrlKey: true, shiftKey: true }),
+      g: press('KeyG', { ctrlKey: true }),
+      mode: AI.clipboard.pendingMode
+    };
+  });
+  if (r.v || r.c || r.x || r.shiftV) throw new Error('클립보드 키를 아직 막고 있다=' + JSON.stringify(r));
+  if (!r.g) throw new Error('일반 명령(Ctrl+G)은 계속 막아야 한다');
+  if (r.mode !== 'place') throw new Error('Ctrl+Shift+V 의 붙이는 자리=' + r.mode);
+  return 'Ctrl+C·X·V·Shift+V 넘김 · Ctrl+G 는 차단 · 제자리 모드 전달';
+});
+
+await check('이미지 붙여넣기 — 다른 프로그램에서 복사한 그림', async () => {
+  await ev(() => AI.sel.clear(AI.app));
+  await firePaste({ __file: { b64: PNG_B64, name: '붙임.png', type: 'image/png' } });
+  const r = await ev(() => {
+    const it = AI.app.sel[0];
+    if (!it) return null;
+    const bb = AI.render.localBounds(it);
+    return { type: it.type, w: Math.round(AI.rect.w(bb)), h: Math.round(AI.rect.h(bb)),
+      png: /^data:image\/png/.test(it.src || ''), name: it.name };
+  });
+  if (!r || r.type !== 'image') throw new Error('결과=' + JSON.stringify(r));
+  if (!r.png) throw new Error('데이터 URL 이 아님');
+  if (r.w !== 4 || r.h !== 4) throw new Error(`크기=${r.w}×${r.h} (원본 그대로여야 한다)`);
+  return `image ${r.w}×${r.h} "${r.name}"`;
+});
+
+await check('SVG 붙여넣기 — 그림이 아니라 편집되는 벡터로', async () => {
+  await firePaste({ 'text/plain': '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">' +
+    '<rect x="10" y="10" width="50" height="30" fill="#00ff00"/><circle cx="70" cy="70" r="20" fill="#0000ff"/></svg>' });
+  const r = await ev(() => AI.app.sel.map(it => it.type + ':' + it.fill.color));
+  if (r.length !== 2 || r[0] !== 'path:#00ff00' || r[1] !== 'path:#0000ff') throw new Error(JSON.stringify(r));
+  /* 피그마 등은 text/html 안에 SVG 를 넣어 준다 */
+  await firePaste({ 'text/html': '<meta charset=utf8><svg xmlns="http://www.w3.org/2000/svg" width="40" height="40">' +
+    '<rect width="40" height="40" fill="#ff00ff"/></svg>', 'text/plain': '' });
+  const h = await ev(() => AI.app.sel.map(it => it.type + ':' + it.fill.color));
+  if (h[0] !== 'path:#ff00ff') throw new Error('text/html 안의 SVG=' + JSON.stringify(h));
+  return `${r.join(' · ')} · text/html 안의 <svg> 도 ${h[0]}`;
+});
+
+await check('글자를 붙이면 문자 오브젝트가 된다', async () => {
+  await firePaste({ 'text/plain': '붙여넣은 글자\n두 번째 줄' });
+  const r = await ev(() => { const it = AI.app.sel[0]; return it && { type: it.type, s: it.text && it.text.content }; });
+  if (!r || r.type !== 'text') throw new Error(JSON.stringify(r));
+  if (r.s.indexOf('두 번째 줄') < 0) throw new Error('내용=' + r.s);
+  return `"${r.s.replace('\n', '⏎')}"`;
+});
+
+await check('복사는 우리 형식과 SVG 를 함께 쓴다 (앱끼리는 온전히, 밖으로는 SVG)', async () => {
+  const r = await page.evaluate(async () => {
+    illy.addStar({ cx: 300, cy: 200, points: 5, radius: 60, innerRadius: 26, fill: '#f2c744' });
+    const L = AI.app.doc.layers[AI.app.doc.activeLayer].children;
+    AI.sel.set(AI.app, [L[L.length - 1]]);
+    const dt = new DataTransfer();
+    document.body.dispatchEvent(new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true }));
+    await new Promise(r => setTimeout(r, 100));
+    return { plain: dt.getData('text/plain'), svg: dt.getData('image/svg+xml'),
+      buf: (AI.commands.clipboard || []).length };
+  });
+  if (r.plain.indexOf('illymolly-clip') < 0) throw new Error('text/plain=' + r.plain.slice(0, 60));
+  if (r.svg.indexOf('<svg') < 0) throw new Error('SVG 가 없음');
+  if (r.svg.indexOf('#f2c744') < 0) throw new Error('SVG 에 색이 안 담김');
+  if (r.buf !== 1) throw new Error('앱 안 클립보드=' + r.buf);
+  return `illymolly-clip ${r.plain.length}B + SVG ${r.svg.length}B + 앱 안 버퍼`;
+});
+
+await check('우리 형식을 붙이면 라이브 셰이프까지 되살아난다', async () => {
+  const payload = await ev(() => {
+    const it = AI.app.sel[0];
+    return AI.clipboard.serialize(AI.app, [it]);
+  });
+  await ev(() => AI.sel.clear(AI.app));
+  await firePaste({ 'text/plain': payload });
+  const r = await ev(() => {
+    const it = AI.app.sel[0];
+    return it && { type: it.type, fill: it.fill.color, shape: it.shape && it.shape.kind, pts: it.subs[0].pts.length };
+  });
+  if (!r || r.fill !== '#f2c744') throw new Error(JSON.stringify(r));
+  if (r.shape !== 'star') throw new Error('라이브 셰이프를 잃음=' + JSON.stringify(r));
+  return `${r.type} ${r.fill} · ${r.shape} · 앵커 ${r.pts}`;
+});
+
+await check('붙이는 자리 — Ctrl+V 는 화면 가운데, Ctrl+Shift+V 는 제자리', async () => {
+  const payload = await ev(() => {
+    illy.addRect({ x: 20, y: 20, width: 40, height: 40, fill: '#888888' });
+    const L = AI.app.doc.layers[AI.app.doc.activeLayer].children;
+    return AI.clipboard.serialize(AI.app, [L[L.length - 1]]);
+  });
+  await ev(() => { AI.clipboard.pendingMode = 'center'; });
+  await firePaste({ 'text/plain': payload });
+  const mid = await ev(() => {
+    const it = AI.app.sel[0];
+    const bb = AI.render.xformBounds(AI.render.localBounds(it), it.m);
+    const c = AI.viewT.toDoc(AI.app, AI.app.canvas.clientWidth / 2, AI.app.canvas.clientHeight / 2);
+    return [Math.round(AI.rect.cx(bb) - c.x), Math.round(AI.rect.cy(bb) - c.y)];
+  });
+  if (Math.abs(mid[0]) > 1 || Math.abs(mid[1]) > 1) throw new Error('가운데에서 ' + mid + ' 벗어남');
+  await ev(() => { AI.clipboard.pendingMode = 'place'; });
+  await firePaste({ 'text/plain': payload });
+  const inPlace = await ev(() => {
+    const it = AI.app.sel[0];
+    const bb = AI.render.xformBounds(AI.render.localBounds(it), it.m);
+    return [Math.round(bb.x), Math.round(bb.y)];
+  });
+  if (inPlace[0] !== 20 || inPlace[1] !== 20) throw new Error('제자리 붙이기=' + inPlace);
+  return `가운데 오차 ${mid} · 제자리 ${inPlace}`;
+});
+
+await check('드래그 앤 드롭 — 놓은 자리에 배치되고 안내가 뜬다', async () => {
+  const r = await page.evaluate(async b64 => {
+    const wrap = document.getElementById('canvas-wrap');
+    const dt = new DataTransfer();
+    const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    dt.items.add(new File([bin], 'drop.png', { type: 'image/png' }));
+    const rc = AI.app.canvas.getBoundingClientRect();
+    const cx = rc.left + 200, cy = rc.top + 150;
+    const mk = ty => new DragEvent(ty, { dataTransfer: dt, bubbles: true, cancelable: true, clientX: cx, clientY: cy });
+    wrap.dispatchEvent(mk('dragenter'));
+    const marked = wrap.classList.contains('drop-target');
+    wrap.dispatchEvent(mk('drop'));
+    await new Promise(r => setTimeout(r, 500));
+    const want = AI.viewT.toDoc(AI.app, 200, 150);
+    const it = AI.app.sel[0];
+    const bb = AI.render.xformBounds(AI.render.localBounds(it), it.m);
+    return { marked, cleared: !wrap.classList.contains('drop-target'), type: it.type,
+      dx: Math.round(AI.rect.cx(bb) - want.x), dy: Math.round(AI.rect.cy(bb) - want.y) };
+  }, PNG_B64);
+  if (!r.marked) throw new Error('끌어오는 동안 안내가 안 뜸');
+  if (!r.cleared) throw new Error('놓은 뒤에도 안내가 남음');
+  if (r.type !== 'image') throw new Error('type=' + r.type);
+  if (Math.abs(r.dx) > 1 || Math.abs(r.dy) > 1) throw new Error(`놓은 자리에서 ${r.dx},${r.dy} 벗어남`);
+  return `안내 표시 · 이미지 · 놓은 자리 오차 ${r.dx},${r.dy}`;
+});
+
+await check('입력란에 붙일 때는 가로채지 않는다', async () => {
+  const r = await page.evaluate(async () => {
+    const inp = document.getElementById('ctl-opacity');
+    inp.focus();
+    const dt = new DataTransfer();
+    dt.setData('text/plain', '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>');
+    const before = AI.app.doc.layers.reduce((n, l) => n + l.children.length, 0);
+    const e = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
+    inp.dispatchEvent(e);
+    await new Promise(r => setTimeout(r, 300));
+    inp.blur();
+    return { prevented: e.defaultPrevented,
+      added: AI.app.doc.layers.reduce((n, l) => n + l.children.length, 0) - before };
+  });
+  if (r.prevented) throw new Error('입력란의 붙여넣기를 가로챘다');
+  if (r.added) throw new Error('입력란에 붙였는데 오브젝트가 생김=' + r.added);
+  return '브라우저 몫으로 넘김';
+});
+
+await check('붙인 것은 실행 취소 한 번에 사라진다', async () => {
+  const before = await count();
+  await firePaste({ 'text/plain': '<svg xmlns="http://www.w3.org/2000/svg" width="50" height="50">' +
+    '<rect width="50" height="50" fill="#010203"/></svg>' });
+  const mid = await count();
+  const label = await ev(() => AI.app.history.undoLabel());
+  await ev(() => { const s = AI.app.history.undo(AI.app.doc); if (s) AI.app.setDoc(s); AI.app.invalidate(); });
+  const after = await count();
+  if (mid !== before + 1) throw new Error(`붙인 뒤 ${before}→${mid}`);
+  if (after !== before) throw new Error(`취소 뒤 ${after} (${before} 이어야 함)`);
+  if (label !== 'SVG 붙이기') throw new Error('취소 이름=' + label);
+  await ev(() => { AI.app.doc.layers.forEach(l => { l.children.length = 0; }); AI.sel.clear(AI.app); AI.app.invalidate(); });
+  await refreshBox();
+  return `${before}→${mid}→${after} · "${label}"`;
+});
+
 /* ---------------- 브라우저 단축키 충돌 ---------------- */
 await check('충돌 목록 — 브라우저가 가져가는 키를 알고 있다', async () => {
   const r = await ev(() => {

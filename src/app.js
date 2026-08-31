@@ -475,6 +475,7 @@
     AI.ui.init(app);
     AI.keymap.install(app);
     AI.pwa.init(app);           /* 앱 설치 · 오프라인 */
+    AI.clipboard.install(app);  /* 시스템 클립보드 · 드래그 앤 드롭 */
     bindCanvas();
     bindRulers();
     bindRulerCorner();

@@ -71,6 +71,16 @@
     'Ctrl+Tab': 'Ctrl+Alt+ArrowRight', 'Ctrl+Shift+Tab': 'Ctrl+Alt+ArrowLeft'
   };
 
+  /* ---------------- 브라우저에 넘기는 키 ----------------
+     클립보드는 브라우저가 내주는 copy · cut · paste 이벤트에서만 시스템
+     클립보드에 닿을 수 있다. 여기서 preventDefault 를 해 버리면 그 이벤트가
+     아예 오지 않아 다른 프로그램의 이미지를 붙여넣을 수 없다. 그래서 이
+     키들은 막지 않고 넘기고, 실제 처리는 clipboard.js 가 맡는다. */
+  K.NATIVE_CLIPBOARD = {
+    'Ctrl+C': 'center', 'Ctrl+X': 'center',
+    'Ctrl+V': 'center', 'Ctrl+Shift+V': 'place'
+  };
+
   /* 이 단축키를 지금 이 환경에서 실제로 쓸 수 있는가 */
   K.isReserved = function (sig) {
     if (K.locked) return false;               /* 키보드 잠금 중이면 전부 들어온다 */
@@ -217,6 +227,12 @@
         app.invalidate();
         ev.preventDefault();
         return;
+      }
+
+      /* --- 클립보드는 브라우저에 넘긴다 (paste 이벤트로 다시 들어온다) --- */
+      if (K.NATIVE_CLIPBOARD[s]) {
+        AI.clipboard.pendingMode = K.NATIVE_CLIPBOARD[s];
+        return;                                  /* preventDefault 하지 않는다 */
       }
 
       /* --- 명령 --- */

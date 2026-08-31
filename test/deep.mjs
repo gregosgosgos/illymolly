@@ -383,8 +383,11 @@ const out = await page.evaluate(() => {
     g.m = M.translate(120, 90);
     L.children.push(g);
     AI.sel.set(app, [g]);
-    AI.commands.run('copy');
-    AI.commands.run('pasteInPlace');
+    /* 메뉴의 [붙이기] 는 시스템 클립보드를 읽느라 비동기다(clipboard.js).
+       여기서는 자리·id 규칙만 보므로 앱 안 클립보드 경로를 직접 부른다.
+       실제 붙여넣기 흐름은 e2e 스위트가 진짜 이벤트로 확인한다. */
+    AI.commands.copyToBuffer(app);
+    AI.commands.pasteInternal(app, 'place');
     const b1 = Rn.worldBounds(app.doc, L.children[0], true);
     const b2 = Rn.worldBounds(app.doc, L.children[1], true);
     ok('제자리 붙여넣기 위치 동일', near(b1.x, b2.x, .01) && near(b1.y, b2.y, .01), `${b1.x},${b2.x}`);
