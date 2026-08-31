@@ -657,7 +657,7 @@ await check('변형 패널 기준점 (오른쪽 아래 고정 크기 조절)', a
   return `오른쪽 아래 고정 · bounds ${b} · X필드=${xy}`;
 });
 
-await check('라이브 모퉁이 위젯 드래그', async () => {
+await check('라이브 모퉁이 위젯은 직접 선택 도구의 것 (선택 도구에는 안 나온다)', async () => {
   const geo = await ev(() => {
     const app = AI.app;
     app.setDoc(AI.model.newDoc(600, 600));
@@ -665,16 +665,22 @@ await check('라이브 모퉁이 위젯 드래그', async () => {
     const r = AI.model.newRect(100, 100, 300, 200, 0);
     app.doc.layers[0].children.push(r);
     AI.sel.set(app, [r]);
+    /* 선택 도구에서는 바운딩 박스만 — 일러스트레이터와 같다 */
     AI.tools.setTool(app, 'select', true);
     app.invalidate();
+    const withV = AI.render.cornerWidgets(app);
+    AI.tools.setTool(app, 'directselect', true);
+    AI.sel.set(app, [r]);
+    app.invalidate();
     const cw = AI.render.cornerWidgets(app);
-    return cw ? { x: cw.pts[0].x, y: cw.pts[0].y } : null;
+    return { withV: !!withV, p: cw ? { x: cw.pts[0].x, y: cw.pts[0].y } : null };
   });
-  if (!geo) throw new Error('모퉁이 위젯이 없음');
-  await drag({ x: box.x + geo.x, y: box.y + geo.y }, { x: box.x + geo.x + 40, y: box.y + geo.y + 40 });
+  if (geo.withV) throw new Error('선택 도구에 모퉁이 위젯이 나온다');
+  if (!geo.p) throw new Error('직접 선택 도구에 모퉁이 위젯이 없다');
+  await drag({ x: box.x + geo.p.x, y: box.y + geo.p.y }, { x: box.x + geo.p.x + 40, y: box.y + geo.p.y + 40 });
   const r = await ev(() => AI.app.sel[0].shape.r);
   if (!(r > 30)) throw new Error('반경=' + r);
-  return '반경 0 → ' + Math.round(r);
+  return 'V 없음 · A 로 반경 0 → ' + Math.round(r);
 });
 
 await check('Ctrl+Space 임시 확대 도구', async () => {
@@ -3151,6 +3157,12 @@ await check('직접 선택 도구에서 모퉁이 위젯을 끌면 둥글어진�
   await ev(() => { AI.app.doc.layers.forEach(l => { l.children.length = 0; }); AI.sel.clear(AI.app); AI.app.invalidate(); });
   await page.keyboard.press('KeyM');
   await drag(at(0.25, 0.25), at(0.62, 0.62));
+  /* 선택 도구로 골라 두어도 위젯은 안 나온다 */
+  await page.keyboard.press('KeyV');
+  await page.mouse.click((at(0.25, 0.25).x + at(0.62, 0.62).x) / 2, (at(0.25, 0.25).y + at(0.62, 0.62).y) / 2);
+  await page.waitForTimeout(120);
+  if (await ev(() => !!AI.render.cornerWidgets(AI.app))) throw new Error('선택 도구에 위젯이 나온다');
+
   await page.keyboard.press('KeyA');                       /* 직접 선택 도구 */
   await page.mouse.click((at(0.25, 0.25).x + at(0.62, 0.62).x) / 2, (at(0.25, 0.25).y + at(0.62, 0.62).y) / 2);
   await page.waitForTimeout(150);
@@ -3294,17 +3306,19 @@ await check('위젯을 두 번 누르면 모퉁이 대화상자 · 값이 섞여
   return `"${title}" · 열어도 취소해도 그대로`;
 });
 
-await check('선택 도구에서는 네 모퉁이가 함께 · 패널과 API 도 맞춰 준다', async () => {
-  /* 앵커를 골라 둔 채 선택 도구로 바꿔도 네 모퉁이가 함께 움직여야 한다
-     (모퉁이를 나눠 다루는 것은 직접 선택 도구만의 몫이다) */
+await check('선택 도구로 바꾸면 위젯이 사라지고, 메뉴·API 는 네 모퉁이를 함께 다룬다', async () => {
   await page.keyboard.press('KeyV');
   await page.waitForTimeout(120);
   const n = await ev(() => {
     const w = AI.render.cornerWidgets(AI.app);
-    return { pts: w ? w.pts.length : 0, selPts: AI.app.selPts.length, sel: AI.app.sel.length };
+    return { pts: w ? w.pts.length : 0, selPts: AI.app.selPts.length, sel: AI.app.sel.length,
+      targets: AI.edit.cornerTargets(AI.app, AI.app.sel[0]).length };
   });
   if (n.sel !== 1) throw new Error('선택이 풀림=' + JSON.stringify(n));
-  if (n.pts !== 4) throw new Error('선택 도구 위젯=' + JSON.stringify(n));
+  if (n.pts !== 0) throw new Error('선택 도구에 위젯이 남아 있다=' + JSON.stringify(n));
+  /* 앵커를 골라 둔 채 선택 도구로 와도 메뉴·API 는 네 모퉁이 모두가 대상이다 */
+  if (n.targets !== 4) throw new Error('선택 도구의 대상=' + n.targets);
+  if (!n.selPts) throw new Error('앵커를 골라 둔 상태에서 확인해야 의미가 있다');
   /* 값이 섞인 상태에서 반경 하나를 주면 네 모퉁이가 같아져야 한다 */
   const r = await ev(() => {
     const it = AI.app.sel[0];
@@ -3318,10 +3332,9 @@ await check('선택 도구에서는 네 모퉁이가 함께 · 패널과 API 도
   if (r.mixed.join(',') !== '30,0,10,0') throw new Error('corners=' + r.mixed);
   if (r.kinds.some(k => k !== 'chamfer')) throw new Error('cornerType=' + r.kinds);
   if (r.pts !== 6) throw new Error('앵커=' + r.pts + ' (모퉁이 2개만 깎였으므로 6개)');
-  if (!n.selPts) throw new Error('앵커를 골라 둔 상태에서 확인해야 의미가 있다');
   await ev(() => { AI.app.doc.layers.forEach(l => { l.children.length = 0; }); AI.sel.clear(AI.app); AI.app.invalidate(); });
   await refreshBox();
-  return `위젯 4개 · radius 통일 · corners [30,0,10,0] · 모따기 · 앵커 6`;
+  return `V 에서 위젯 0 · 대상 4 · radius 통일 · corners [30,0,10,0] · 모따기 · 앵커 6`;
 });
 
 /* ---------------- 시스템 클립보드 · 드래그 앤 드롭 ---------------- */

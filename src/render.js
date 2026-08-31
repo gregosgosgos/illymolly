@@ -1382,6 +1382,9 @@
 
   /* 라이브 사각형의 모퉁이 반경 위젯 (Illustrator CC 의 코너 위젯) */
   Rn.cornerWidgets = function (app) {
+    /* 일러스트레이터의 라이브 코너는 직접 선택 도구(A) 의 것이다.
+       선택 도구(V) 로 고르면 바운딩 박스만 나오고 모퉁이 위젯은 나오지 않는다. */
+    if (app.tool !== 'directselect') return null;
     if (app.sel.length !== 1) return null;
     var it = app.sel[0];
     if (it.type !== 'path' || !it.shape || it.shape.kind !== 'rect') return null;

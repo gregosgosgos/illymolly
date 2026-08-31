@@ -16,13 +16,8 @@
 
   function commonDown(app, e, groupMode) {
     app.smart = [];
-    /* 0) 라이브 모퉁이 위젯 — Alt+클릭은 모퉁이 종류를 돌린다 */
-    var cwHit = H.cornerWidgetAt(app, e.x, e.y);
-    if (cwHit) {
-      st = T.cornerDown(app, e, cwHit);
-      return;
-    }
-    /* 0-b) 라이브 셰이프 위젯 — 원형 파이 각도 · 다각형 변 수 */
+    /* 0) 라이브 셰이프 위젯 — 원형 파이 각도 · 다각형 변 수
+       (모퉁이 위젯은 직접 선택 도구의 몫이다 — directselect.js) */
     var lwHit = H.liveWidgetAt(app, e.x, e.y);
     if (lwHit) {
       var sh0 = lwHit.item.shape;
@@ -126,7 +121,6 @@
       AI.ui && AI.ui.syncSelection && AI.ui.syncSelection(app);
       return;
     }
-    if (st.kind === 'corner') { T.cornerDrag(app, st, e); return; }
     if (st.kind === 'live') { doLiveWidget(app, e); return; }
     if (st.kind === 'scale') { doScale(app, e); return; }
     if (st.kind === 'rotate') { doRotate(app, e); return; }
@@ -259,7 +253,7 @@
         return;
       }
     }
-    if (H.cornerWidgetAt(app, e.x, e.y) || H.liveWidgetAt(app, e.x, e.y)) { C.set(app, 'pointer'); return; }
+    if (H.liveWidgetAt(app, e.x, e.y)) { C.set(app, 'pointer'); return; }
     var hit = H.itemAt(app, e.x, e.y, false);
     if (app.prefs.smart) {
       if (app.hoverItem !== hit) { app.hoverItem = hit; app.invalidate(); }
@@ -274,9 +268,6 @@
     onMove: function (app, e) { commonMove(app, e); },
     onUp: function (app, e) { commonUp(app, e); },
     onDblClick: function (app, e) {
-      /* 모퉁이 위젯 위에서면 모퉁이 대화상자 (격리 모드로 들어가지 않는다) */
-      var cwd = H.cornerWidgetAt(app, e.x, e.y);
-      if (cwd) { AI.dialogs.corners(app, cwd.item, [0, 1, 2, 3]); return; }
       var deep = H.itemAt(app, e.x, e.y, true);
       if (!deep) { AI.commands.run('exitIsolation'); return; }
       if (deep.type === 'text') { AI.tools.setTool(app, 'type', true); AI.tools.get('type').editItem(app, deep); return; }
@@ -293,7 +284,7 @@
       }
     },
     drawUI: function (ctx, app) {
-      if (app.hudText && st && (st.kind === 'corner' || st.kind === 'live')) {
+      if (app.hudText && st && st.kind === 'live') {
         ctx.save();
         ctx.font = '11px sans-serif';
         var w = ctx.measureText(app.hudText).width + 10;
