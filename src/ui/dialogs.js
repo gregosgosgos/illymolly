@@ -374,17 +374,25 @@
     var clash = rows.filter(function (r) { return r.reserved; });
 
     function kbd(k) { return '<kbd>' + U.esc(K.pretty(k)) + '</kbd>'; }
-    var body = '<table class="keys"><thead><tr>' +
-      '<th>명령</th><th>단축키</th><th>비고</th></tr></thead><tbody>' +
-      rows.map(function (r) {
-        if (!r.reserved) {
-          return '<tr><td>' + U.esc(r.label) + '</td><td>' + kbd(r.key) + '</td><td></td></tr>';
-        }
-        return '<tr class="conflict"><td>' + U.esc(r.label) + '</td>' +
-          '<td>' + kbd(r.key) + (r.alternate ? ' <span class="alt">' + kbd(r.alternate) + '</span>' : '') + '</td>' +
-          '<td class="why">브라우저가 "' + U.esc(r.reserved) + '" 로 가져감' +
-          (r.alternate ? ' — 파란 키로 쓰세요' : '') + '</td></tr>';
-      }).join('') + '</tbody></table>';
+    function row(r) {
+      if (!r.reserved) {
+        return '<tr><td>' + U.esc(r.label) + '</td><td>' + kbd(r.key) + '</td><td></td></tr>';
+      }
+      return '<tr class="conflict"><td>' + U.esc(r.label) + '</td>' +
+        '<td>' + kbd(r.key) + (r.alternate ? ' <span class="alt">' + kbd(r.alternate) + '</span>' : '') + '</td>' +
+        '<td class="why">브라우저가 "' + U.esc(r.reserved) + '" 로 가져감' +
+        (r.alternate ? ' — 파란 키를 쓰세요' : '') + '</td></tr>';
+    }
+    function table(cap, list) {
+      if (!list.length) return '';
+      return '<table class="keys"><caption>' + U.esc(cap) + '</caption><thead><tr>' +
+        '<th>명령</th><th>단축키</th><th>비고</th></tr></thead><tbody>' +
+        list.map(row).join('') + '</tbody></table>';
+    }
+    /* 물어본 것부터 보여 준다 — 충돌하는 것을 위로 올린다 */
+    var body = table('브라우저와 겹치는 단축키 (' + clash.length + ')', clash) +
+      table('그 밖의 단축키 (' + (rows.length - clash.length) + ')',
+        rows.filter(function (r) { return !r.reserved; }));
 
     var head = K.locked
       ? '키보드 잠금이 켜져 있어 모든 단축키가 앱으로 들어옵니다.'

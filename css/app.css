@@ -548,11 +548,17 @@ select.dlg-input{text-align:left;min-width:110px;cursor:pointer}
   color:var(--txt-dim);background:var(--bg3);padding:5px 8px;border-bottom:1px solid var(--line2)
 }
 .keys td{padding:4px 8px;border-bottom:1px solid var(--bg3);vertical-align:top}
+.keys td:nth-child(2){white-space:nowrap;width:1%}
 .keys tr:hover td{background:var(--bg3)}
+.keys caption{
+  caption-side:top;text-align:left;padding:9px 8px 4px;
+  font-weight:600;color:var(--txt);font-size:11px
+}
+.keys + .keys{margin-top:2px}
 .keys kbd{
   display:inline-block;padding:1px 5px;border:1px solid var(--line2);border-bottom-width:2px;
   border-radius:3px;background:var(--bg4);font:inherit;font-size:10px;white-space:nowrap
 }
 .keys .conflict kbd{opacity:.45;text-decoration:line-through}
 .keys .why{color:var(--txt-dim)}
-.keys .alt kbd{border-color:var(--accent);color:#cfe4ff}
+.keys .alt kbd{border-color:var(--accent);color:#cfe4ff;opacity:1;text-decoration:none}

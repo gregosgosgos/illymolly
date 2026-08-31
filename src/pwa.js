@@ -79,6 +79,8 @@
     if (!('serviceWorker' in navigator)) return;
     /* file:// 로 연 경우엔 등록이 실패한다 — 조용히 넘긴다 */
     if (location.protocol === 'file:') return;
+    /* 매니페스트가 없는 배포(단일 파일 번들 등)에는 sw.js 도 없다 */
+    if (!document.querySelector('link[rel="manifest"]')) return;
     navigator.serviceWorker.register('sw.js').then(function () {
       P.ready = true;
     }).catch(function () { });
