@@ -1,9 +1,3 @@
-# =============================================================================
-# GitHub Pages 배포
-# -----------------------------------------------------------------------------
-# 빌드 단계가 없는 정적 사이트라 저장소를 그대로 올린다.
-# configure-pages 의 enablement 가 Pages 가 꺼져 있으면 켜 준다.
-# =============================================================================
 name: Deploy to GitHub Pages
 
 on:
@@ -16,7 +10,6 @@ permissions:
   pages: write
   id-token: write
 
-# 배포는 한 번에 하나만. 진행 중인 것은 끝내고 최신 것으로 간다.
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -24,24 +17,23 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Pages 설정 (꺼져 있으면 켠다)
-        uses: actions/configure-pages@v5
-        with:
-          enablement: true
+      # Pages 를 쓸 수 있는 저장소인지 먼저 확인한다 (요금제 · 공개 여부에 걸린다)
+      - name: Pages 사용 가능 여부
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "--- 현재 Pages 상태 ---"
+          gh api "repos/${{ github.repository }}/pages" && echo "이미 켜져 있음" || echo "(아직 꺼져 있음)"
+          echo "--- 켜기 시도 ---"
+          gh api -X POST "repos/${{ github.repository }}/pages" \
+            -f "build_type=workflow" 2>&1 | tee /tmp/enable.txt || true
+          cat /tmp/enable.txt
 
-      # 테스트·개발용 파일은 사이트에 필요 없다
-      - name: 배포할 것만 남기기
-        run: rm -rf test node_modules .github
-
+      - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .
-
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - uses: actions/deploy-pages@v4
