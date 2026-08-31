@@ -230,7 +230,7 @@ body.mobile.lefty #m-zoom{ right:auto; left:8px; }
 body.tablet #panels{ display:none !important; }
 body.tablet #controlbar{ overflow-x:auto; }
 body.tablet .tool{ width:34px; height:34px; }
-body.tablet #toolbar{ width:44px; }
+body.tablet #toolbar{ width:40px; }
 
 /* 터치 기기 전반: 데스크톱 레이아웃이어도 컨트롤을 키운다 */
 body.touch .tool{ width:36px; height:36px; }

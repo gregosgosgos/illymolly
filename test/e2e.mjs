@@ -1451,6 +1451,7 @@ await check('폭 도구 — 획 두께가 지점마다 달라진다', async () =
     AI.sel.set(app, [l]);
     AI.tools.setTool(app, 'width', true);
   });
+  await refreshBox();   /* 캔버스 좌표를 직접 쓰므로 지금 위치로 다시 잰다 */
   await drag({ x: box.x + 200, y: box.y + 200 }, { x: box.x + 200, y: box.y + 230 });
   await page.waitForTimeout(80);
   const r = await ev(() => {

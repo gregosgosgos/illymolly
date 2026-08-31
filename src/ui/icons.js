@@ -228,8 +228,8 @@
   };
 
   /* 붙은 세그먼트 컨트롤 (일러스트레이터의 옵션 그룹) */
-  UI.seg = function (items, dataKey) {
-    return '<div class="seg">' + items.map(function (it) {
+  UI.seg = function (items, dataKey, cls) {
+    return '<div class="seg' + (cls ? ' ' + cls : '') + '">' + items.map(function (it) {
       return '<button class="seg-b" ' + dataKey + '="' + U.esc(it.value) + '" title="' + U.esc(it.title) + '">' +
         (it.icon ? UI.icon(it.icon) : U.esc(it.label || '')) + '</button>';
     }).join('') + '</div>';

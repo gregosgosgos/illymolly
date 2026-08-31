@@ -218,21 +218,21 @@
     var p = document.getElementById('p-properties');
     p.innerHTML =
       '<div class="row"><span id="pr-info" class="pr-info"></span></div>' +
-      '<div class="row"><label style="min-width:34px">불투명</label>' +
+      '<div class="row"><label class="lbl">불투명</label>' +
       '<input class="fld" id="pr-op" value="100"><span class="unit">%</span></div>' +
-      '<div class="row"><label style="min-width:34px">혼합</label><select class="fld" id="pr-blend">' +
+      '<div class="row"><label class="lbl">혼합</label><select class="fld" id="pr-blend">' +
       ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity']
         .map(function (b) { return '<option value="' + b + '">' + b + '</option>'; }).join('') +
       '</select></div>' +
       '<div class="sec">정돈</div>' +
-      '<div class="grid4">' +
+      '<div class="bar">' +
       UI.btn({ icon: 'toFront', title: '맨 앞으로', cmd: 'bringToFront' }) +
       UI.btn({ icon: 'forward', title: '앞으로', cmd: 'bringForward' }) +
       UI.btn({ icon: 'backward', title: '뒤로', cmd: 'sendBackward' }) +
       UI.btn({ icon: 'toBack', title: '맨 뒤로', cmd: 'sendToBack' }) +
       '</div>' +
       '<div class="sec">그룹 · 잠금</div>' +
-      '<div class="grid4">' +
+      '<div class="bar">' +
       UI.btn({ label: '그룹', cmd: 'group' }) +
       UI.btn({ label: '풀기', title: '그룹 풀기', cmd: 'ungroup' }) +
       UI.btn({ icon: 'lock', title: '잠금', cmd: 'lock' }) +
@@ -321,9 +321,9 @@
       '<label>R</label><input class="fld" id="cl-r">' +
       '<label>G</label><input class="fld" id="cl-g">' +
       '<label>B</label><input class="fld" id="cl-b"></div>' +
-      '<div class="row"><label style="min-width:30px">알파</label>' +
+      '<div class="row"><label class="lbl">알파</label>' +
       '<input class="fld" id="cl-a" value="100"><span class="unit">%</span></div>' +
-      '<div class="hint">클릭한 견본은 현재 초점(칠 · 획)에 적용됩니다. X = 초점 전환, Shift+X = 교체</div>';
+      '<div class="hint">X 초점 전환 · Shift+X 칠↔획 교체 · / 없음</div>';
 
     U.on(U.q('#cl-fill', p), 'click', function () { app.fillFocus = true; UI.syncStyle(app); UI.openColorPicker(app, this); });
     U.on(U.q('#cl-stroke', p), 'click', function () { app.fillFocus = false; UI.syncStyle(app); UI.openColorPicker(app, this); });
@@ -425,12 +425,12 @@
       '<button class="mini-btn" id="ty-italic" title="기울임" style="font-style:italic;font-family:serif">I</button>' +
       '</div>' +
       '<div class="grid2">' +
-      '<div class="row"><label style="min-width:26px" title="글꼴 크기">크기</label><input class="fld" id="ty-size" value="24"></div>' +
-      '<div class="row"><label style="min-width:26px" title="행간(배수)">행간</label><input class="fld" id="ty-leading" value="1.2"></div>' +
-      '<div class="row"><label style="min-width:26px" title="자간(px)">자간</label><input class="fld" id="ty-tracking" value="0"></div>' +
+      '<div class="row"><label class="lbl" title="글꼴 크기">크기</label><input class="fld" id="ty-size" value="24"></div>' +
+      '<div class="row"><label class="lbl" title="행간(배수)">행간</label><input class="fld" id="ty-leading" value="1.2"></div>' +
+      '<div class="row"><label class="lbl" title="자간(px)">자간</label><input class="fld" id="ty-tracking" value="0"></div>' +
       '</div>' +
       '<div class="row" style="margin-top:var(--gap)">' +
-      '<label style="min-width:26px">정렬</label>' +
+      '<label class="lbl">정렬</label>' +
       UI.seg([
         { value: 'left', icon: 'textLeft', title: '왼쪽 정렬' },
         { value: 'center', icon: 'textCenter', title: '가운데 정렬' },
@@ -683,19 +683,19 @@
     p.innerHTML =
       '<div class="row">' +
       '<select class="fld" id="gr-type" style="flex:1"><option value="linear">선형</option><option value="radial">방사형</option><option value="freeform">자유형</option></select>' +
-      '<label title="각도">∠</label><input class="fld" id="gr-angle" style="width:48px" value="0">' +
+      '<label title="각도">∠</label><input class="fld" id="gr-angle" style="flex:0 0 48px" value="0">' +
       '<button class="mini-btn" id="gr-rev" title="정지점 반전">' + UI.icon('reverse', 13) + '</button>' +
       '</div>' +
       '<div class="gradbar" id="gr-bar"><div class="gradfill" id="gr-fill"></div><div class="stops" id="gr-stops"></div></div>' +
       '<div class="row" style="margin-top:8px">' +
       '<button class="swatch-btn" id="gr-color" title="선택한 정지점 색상"><i></i></button>' +
-      '<label>위치</label><input class="fld" id="gr-pos" style="width:52px" value="0"><span class="unit">%</span>' +
-      '<label>불투명</label><input class="fld" id="gr-alpha" style="width:46px" value="100">' +
+      '<label>위치</label><input class="fld" id="gr-pos" style="flex:0 0 52px" value="0"><span class="unit">%</span>' +
+      '<label>불투명</label><input class="fld" id="gr-alpha" style="flex:0 0 46px" value="100">' +
       '<button class="mini-btn danger" id="gr-del" title="정지점 삭제">' + UI.icon('trash', 13) + '</button>' +
       '</div>' +
       '<div class="row" id="gr-spread-row" style="margin-top:var(--gap-s);display:none">' +
       '<label>모드</label><select class="fld" id="gr-mode" style="width:74px"><option value="points">점</option><option value="lines">선</option></select>' +
-      '<label>번짐</label><input class="fld" id="gr-spread" style="width:52px" value="50"><span class="unit">%</span>' +
+      '<label>번짐</label><input class="fld" id="gr-spread" style="flex:0 0 52px" value="50"><span class="unit">%</span>' +
       '</div>' +
       '<div class="hint">막대를 클릭하면 정지점 추가, 드래그하면 이동합니다. G 도구로 캔버스에서 방향을 그릴 수 있습니다.<br>자유형은 도형 위의 색 점을 끌어 옮기고, 빈 곳을 두 번 누르면 점이 늘어납니다.</div>';
 
@@ -941,31 +941,31 @@
   function buildStroke() {
     var p = document.getElementById('p-stroke');
     p.innerHTML =
-      '<div class="row"><label style="min-width:34px">두께</label>' +
+      '<div class="row"><label class="lbl">두께</label>' +
       '<input class="fld" id="sk-w" value="1"><span class="unit">pt</span></div>' +
 
-      '<div class="row"><label style="min-width:34px">단면</label>' +
+      '<div class="row"><label class="lbl">단면</label>' +
       UI.seg([
         { value: 'butt', icon: 'capButt', title: '끝 단면 (butt)' },
         { value: 'round', icon: 'capRound', title: '둥근 단면 (round)' },
         { value: 'square', icon: 'capSquare', title: '돌출 단면 (square)' }
-      ], 'data-cap') + '</div>' +
+      ], 'data-cap', 'tight') + '</div>' +
 
-      '<div class="row"><label style="min-width:34px">모퉁이</label>' +
+      '<div class="row"><label class="lbl">모퉁이</label>' +
       UI.seg([
         { value: 'miter', icon: 'joinMiter', title: '마이터 결합' },
         { value: 'round', icon: 'joinRound', title: '둥근 결합' },
         { value: 'bevel', icon: 'joinBevel', title: '베벨 결합' }
-      ], 'data-join') + '</div>' +
+      ], 'data-join', 'tight') + '</div>' +
 
-      '<div class="row"><label style="min-width:34px">정렬</label>' +
+      '<div class="row"><label class="lbl">정렬</label>' +
       UI.seg([
         { value: 'center', icon: 'strokeCenter', title: '획을 가운데 정렬' },
         { value: 'inside', icon: 'strokeInside', title: '획을 안쪽 정렬 (닫힌 패스)' },
         { value: 'outside', icon: 'strokeOutside', title: '획을 바깥쪽 정렬 (닫힌 패스)' }
-      ], 'data-salign') + '</div>' +
+      ], 'data-salign', 'tight') + '</div>' +
 
-      '<div class="row"><label style="min-width:34px">점선</label>' +
+      '<div class="row"><label class="lbl">점선</label>' +
       '<input class="fld" id="sk-dash" placeholder="예: 4 2"></div>' +
 
       '<div class="sec">화살표</div>' +
@@ -973,7 +973,7 @@
       '<select class="fld" id="sk-a1" title="시작 화살표">' + ARROW_OPTS + '</select>' +
       UI.btn({ icon: 'swapArrows', title: '시작 · 끝 화살표 뒤바꾸기', data: { swap: '1' } }) +
       '<select class="fld" id="sk-a2" title="끝 화살표">' + ARROW_OPTS + '</select></div>' +
-      '<div class="row"><label style="min-width:34px">비율</label>' +
+      '<div class="row"><label class="lbl">비율</label>' +
       '<input class="fld" id="sk-ascale" value="100"><span class="unit">%</span></div>' +
 
       '<div class="sec">폭 프로파일</div>' +
@@ -985,8 +985,7 @@
       '<option value="wave">물결</option>' +
       '</select></div>' +
 
-      '<div class="hint">점선은 공백으로 구분해 입력합니다 (비우면 실선).<br>' +
-      '안쪽 · 바깥쪽 정렬과 화살표는 각각 닫힌 · 열린 패스에만 적용됩니다.</div>';
+      '<div class="hint">점선은 공백으로 구분 (비우면 실선)</div>';
 
     num(U.q('#sk-w', p), function () { return 1; }, function (v) {
       app.strokeWidth = v;
@@ -1082,7 +1081,7 @@
     var p = document.getElementById('p-align');
     p.innerHTML =
       '<div class="sec">오브젝트 정렬</div>' +
-      '<div class="grid6">' +
+      '<div class="bar">' +
       ALIGN_BTNS.map(function (o) {
         return UI.btn({ icon: o[2], title: o[1], cmd: o[0] });
       }).join('') + '</div>' +
@@ -1093,7 +1092,7 @@
       UI.btn({ icon: 'distV', label: '세로', title: '세로 균등 배분', cmd: 'distV' }) +
       '</div>' +
 
-      '<div class="row" style="margin-top:8px"><label style="min-width:34px">기준</label>' +
+      '<div class="row" style="margin-top:8px"><label class="lbl">기준</label>' +
       '<select class="fld" id="al-to">' +
       '<option value="selection">선택 영역</option>' +
       '<option value="artboard">대지</option>' +
