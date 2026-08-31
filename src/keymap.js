@@ -191,8 +191,16 @@
 
       /* --- Space = 임시 손 도구, Ctrl+Space = 임시 확대 도구 (Illustrator) --- */
       var ctrlDown = U.isMac ? ev.metaKey : ev.ctrlKey;
+      /* 끌고 있는 중이면 Space 를 손 도구로 쓰지 않는다 — 도구가 쓸 차례다.
+         (펜은 아직 놓지 않은 앵커를 Space 로 옮긴다) */
+      if (base === 'Space' && app.dragging) {
+        app.spaceHeld = true;
+        ev.preventDefault();
+        return;
+      }
       if (base === 'Space' && !app.spacePan) {
         ev.preventDefault();
+        app.spaceHeld = true;
         app.spacePan = true;
         app.spacePrevTool = app.tool;
         T.setTool(app, ctrlDown ? 'zoom' : 'hand', true);
@@ -265,6 +273,7 @@
         T.setTool(app, 'hand', true);
         return;
       }
+      if (bk === 'Space') app.spaceHeld = false;
       if (bk === 'Space' && app.spacePan) {
         app.spacePan = false;
         var prev = app.spacePrevTool || 'select';

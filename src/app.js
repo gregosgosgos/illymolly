@@ -94,7 +94,7 @@
     if (isDown) startPt = { x: x, y: y };
     return {
       x: x, y: y, sx: startPt.x, sy: startPt.y,
-      shift: !!mods.shiftKey, alt: !!mods.altKey,
+      shift: !!mods.shiftKey, alt: !!mods.altKey, space: !!app.spaceHeld,
       ctrl: U.isMac ? !!mods.metaKey : !!mods.ctrlKey,
       meta: !!mods.metaKey, button: mods.button || 0,
       down: down, orig: mods
@@ -127,12 +127,14 @@
     var g = guideAt(e);
     if (g) {
       down = true;
+      app.dragging = true;
       e.down = true;
       guideDrag = g;
       app.history.begin('안내선 이동', app.doc);
       return;
     }
     down = true;
+    app.dragging = true;
     e.down = true;
     var t = T.current(app);
     if (t && t.onDown) t.onDown(app, e);
@@ -164,6 +166,7 @@
   function toolUp(e) {
     if (!down) return;
     down = false;
+    app.dragging = false;
     e.down = false;
     if (guideDrag) {
       /* 캔버스 밖으로 끌어내면 삭제 — 눈금자에서 만들 때와 같은 규칙 */
@@ -198,6 +201,7 @@
   app.cancelDrag = function (restore) {
     if (!down) return;
     down = false;
+    app.dragging = false;
     if (guideDrag) { app.history.abort(); guideDrag = null; app.invalidate(); return; }
     var t = T.current(app);
     if (t && t.onUp) t.onUp(app, mk(0, 0, {}, false));

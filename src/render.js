@@ -1167,7 +1167,9 @@
 
     /* 선택된 오브젝트 패스 하이라이트 */
     var vm = AI.viewT.matrix(app);
-    var directMode = tool && tool.direct;
+    /* 앵커·방향선을 보여 줄 때인가. 직접 선택 계열은 물론이고, 펜으로 그리는
+       중에도 일러스트레이터는 앵커를 보여 주고 바운딩 박스는 감춘다. */
+    var directMode = !!(tool && (tool.direct || (tool.id === 'pen' && AI.tools.penActive && AI.tools.penActive())));
 
     if (!app.hideEdges && app.hoverItem && app.sel.indexOf(app.hoverItem) < 0) {
       var hm = M.mul(vm, Model.worldMatrix(app.doc, app.hoverItem));

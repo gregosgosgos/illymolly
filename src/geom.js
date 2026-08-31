@@ -276,11 +276,113 @@
     return np;
   };
 
-  /* 앵커 삭제 (부드럽게 이어붙이지 않고 단순 제거) */
-  G.removeAnchor = function (sub, idx) {
+  /* ---------------- 앵커 삭제 ----------------
+     그냥 빼 버리면 모양이 무너진다. 일러스트레이터는 지운 자리 양옆을 다시
+     맞춰 원래 곡선에 최대한 가깝게 만든다. 여기서도 같은 일을 한다.
+
+     양옆 앵커의 접선 방향은 그대로 두고 (그래야 그 너머 곡선이 흔들리지
+     않는다) 방향선 길이 두 개만 최소제곱으로 푼다. 원래 두 구간을 촘촘히
+     찍어 목표점으로 삼는다. */
+  G.removeAnchor = function (sub, idx, keepShape) {
+    var n = sub.pts.length;
+    if (keepShape === false || n < 3) {
+      sub.pts.splice(idx, 1);
+      if (sub.pts.length < 2) sub.closed = false;
+      return;
+    }
+    var hasPrev = idx > 0 || sub.closed;
+    var hasNext = idx < n - 1 || sub.closed;
+    if (!hasPrev || !hasNext) {            /* 열린 패스의 끝점은 그냥 뗀다 */
+      sub.pts.splice(idx, 1);
+      if (sub.pts.length < 2) sub.closed = false;
+      return;
+    }
+    var pi = (idx - 1 + n) % n, ni = (idx + 1) % n;
+    var a = sub.pts[pi], mid = sub.pts[idx], b = sub.pts[ni];
+
+    /* 지우기 전 두 구간을 촘촘히 찍는다 */
+    var pts = sampleTwo(a, mid, b, 24);
     sub.pts.splice(idx, 1);
-    if (sub.pts.length < 2) sub.closed = false;
+    if (sub.pts.length < 2) { sub.closed = false; return; }
+
+    /* 양옆 모두 직선이었다면 직선으로 남긴다 */
+    var wasLine = G.isLine(a, mid) && G.isLine(mid, b);
+    if (wasLine) { delete a.ox; delete a.oy; delete b.ix; delete b.iy; return; }
+
+    var fit = fitCubic(pts, a, b);
+    if (!fit) { delete a.ox; delete a.oy; delete b.ix; delete b.iy; return; }
+    a.ox = fit.c1.x; a.oy = fit.c1.y;
+    b.ix = fit.c2.x; b.iy = fit.c2.y;
   };
+
+  function sampleTwo(a, mid, b, per) {
+    var out = [], k;
+    var s1 = [a, G.c1(a), G.c2(mid), mid], s2 = [mid, G.c1(mid), G.c2(b), b];
+    for (k = 0; k <= per; k++) out.push(G.cubic(s1[0], s1[1], s1[2], s1[3], k / per));
+    for (k = 1; k <= per; k++) out.push(G.cubic(s2[0], s2[1], s2[2], s2[3], k / per));
+    return out;
+  }
+
+  /* 끝점 두 개와 접선 방향은 고정하고, 방향선 길이만 최소제곱으로 (Schneider) */
+  function fitCubic(pts, a, b) {
+    var t0 = dirOut(a, pts), t1 = dirIn(b, pts);
+    if (!t0 || !t1) return null;
+    var u = chordParams(pts);
+    var p0 = { x: pts[0].x, y: pts[0].y }, p3 = { x: pts[pts.length - 1].x, y: pts[pts.length - 1].y };
+    var c00 = 0, c01 = 0, c11 = 0, x0 = 0, x1 = 0;
+    for (var i = 0; i < pts.length; i++) {
+      var t = u[i], mt = 1 - t;
+      var b0 = mt * mt * mt, b1 = 3 * mt * mt * t, b2 = 3 * mt * t * t, b3 = t * t * t;
+      var a1x = t0.x * b1, a1y = t0.y * b1;
+      var a2x = t1.x * b2, a2y = t1.y * b2;
+      c00 += a1x * a1x + a1y * a1y;
+      c01 += a1x * a2x + a1y * a2y;
+      c11 += a2x * a2x + a2y * a2y;
+      var tx = pts[i].x - (p0.x * (b0 + b1) + p3.x * (b2 + b3));
+      var ty = pts[i].y - (p0.y * (b0 + b1) + p3.y * (b2 + b3));
+      x0 += a1x * tx + a1y * ty;
+      x1 += a2x * tx + a2y * ty;
+    }
+    var det = c00 * c11 - c01 * c01;
+    var alpha0, alpha1;
+    if (Math.abs(det) < 1e-9) {
+      /* 풀리지 않으면 코드 길이의 1/3 — 원 근사에서 흔히 쓰는 값 */
+      var d = U.dist(p0.x, p0.y, p3.x, p3.y) / 3;
+      alpha0 = alpha1 = d;
+    } else {
+      alpha0 = (x0 * c11 - x1 * c01) / det;
+      alpha1 = (c00 * x1 - c01 * x0) / det;
+    }
+    var lim = U.dist(p0.x, p0.y, p3.x, p3.y) * 3;
+    alpha0 = U.clamp(alpha0, 0, lim);
+    alpha1 = U.clamp(alpha1, 0, lim);
+    return {
+      c1: { x: p0.x + t0.x * alpha0, y: p0.y + t0.y * alpha0 },
+      c2: { x: p3.x + t1.x * alpha1, y: p3.y + t1.y * alpha1 }
+    };
+  }
+  function dirOut(a, pts) {
+    var vx = (a.ox != null ? a.ox : pts[1].x) - a.x;
+    var vy = (a.oy != null ? a.oy : pts[1].y) - a.y;
+    var l = Math.hypot(vx, vy);
+    return l < 1e-9 ? null : { x: vx / l, y: vy / l };
+  }
+  function dirIn(b, pts) {
+    var vx = (b.ix != null ? b.ix : pts[pts.length - 2].x) - b.x;
+    var vy = (b.iy != null ? b.iy : pts[pts.length - 2].y) - b.y;
+    var l = Math.hypot(vx, vy);
+    return l < 1e-9 ? null : { x: vx / l, y: vy / l };
+  }
+  function chordParams(pts) {
+    var u = [0], total = 0, i;
+    for (i = 1; i < pts.length; i++) {
+      total += U.dist(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y);
+      u.push(total);
+    }
+    if (total < 1e-9) return pts.map(function (_, k) { return k / (pts.length - 1); });
+    for (i = 0; i < u.length; i++) u[i] /= total;
+    return u;
+  }
 
   /* 핸들 대칭 여부 판정 */
   G.isSmooth = function (p) {

@@ -174,6 +174,10 @@
   };
 
   /* 선택된 앵커 삭제 */
+  /* Delete 키로 앵커 지우기 — 일러스트레이터는 앵커와 함께 거기 붙은 두 구간도
+     지운다. 그래서 닫힌 패스는 열리고, 열린 패스는 둘로 갈라진다.
+     (모양을 지키며 앵커만 빼려면 [고정점 삭제 도구] 를 쓴다 — 그쪽은
+     G.removeAnchor 로 양옆을 다시 맞춘다.) */
   E.deleteAnchors = function (app) {
     var byItem = {};
     app.selPts.forEach(function (s) { (byItem[s.it.id] || (byItem[s.it.id] = { it: s.it, list: [] })).list.push(s); });
@@ -182,16 +186,48 @@
       Model.expandShape(it);
       var grouped = {};
       o.list.forEach(function (s) { (grouped[s.si] || (grouped[s.si] = [])).push(s.pi); });
-      Object.keys(grouped).forEach(function (si) {
-        var idxs = grouped[si].sort(function (a, b) { return b - a; });
-        idxs.forEach(function (pi) { it.subs[si].pts.splice(pi, 1); });
+      var out = [];
+      it.subs.forEach(function (sub, si) {
+        var del = grouped[si];
+        if (!del || !del.length) { out.push(sub); return; }
+        out.push.apply(out, cutOutAnchors(sub, del));
       });
-      it.subs = it.subs.filter(function (s) { return s.pts.length > 1; });
+      it.subs = out.filter(function (s) { return s.pts.length > 1; });
       if (!it.subs.length) { var loc = Model.locate(app.doc, it); if (loc) loc.list.splice(loc.index, 1); }
     });
     app.selPts = [];
     app.sel = app.sel.filter(function (it) { return !!Model.locate(app.doc, it); });
   };
+
+  /* 지울 앵커를 뺀 나머지를 "이어진 덩어리" 로 쪼갠다 */
+  function cutOutAnchors(sub, del) {
+    var n = sub.pts.length;
+    var kill = {};
+    del.forEach(function (i) { kill[i] = 1; });
+    var order = [];
+    if (sub.closed) {
+      /* 닫힌 패스는 지운 앵커 바로 다음부터 한 바퀴 — 거기서 열린다 */
+      var start = 0;
+      for (var s0 = 0; s0 < n; s0++) if (kill[s0]) { start = (s0 + 1) % n; break; }
+      for (var q = 0; q < n; q++) order.push((start + q) % n);
+    } else {
+      for (var q2 = 0; q2 < n; q2++) order.push(q2);
+    }
+    var runs = [], cur = null;
+    order.forEach(function (i) {
+      if (kill[i]) { cur = null; return; }
+      if (!cur) { cur = []; runs.push(cur); }
+      cur.push(sub.pts[i]);
+    });
+    return runs.map(function (pts) {
+      /* 끊긴 자리의 방향선은 갈 곳이 없다 — 지운다 */
+      var copy = pts.map(function (p) { return p; });
+      var first = copy[0], last = copy[copy.length - 1];
+      if (first) { delete first.ix; delete first.iy; }
+      if (last) { delete last.ox; delete last.oy; }
+      return { closed: false, pts: copy };
+    });
+  }
 
   /* ---------------- 잠금 / 숨기기 ---------------- */
   E.lock = function (app) { app.sel.forEach(function (it) { it.locked = true; }); AI.sel.clear(app); };

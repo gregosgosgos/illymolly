@@ -3152,6 +3152,355 @@ await check('자동 저장 · 복구 — 새로 고쳐도 작업이 살아남는
   return `2개 오브젝트 · 색상 유지 · "작업중 [복구됨]" · 기록 정리`;
 });
 
+/* ---------------- 펜 도구 · 앵커(노드) ---------------- */
+/* 펜은 커서 위치에 따라 같은 클릭이 다른 일을 한다 — 자리마다 확인한다 */
+const penReset = () => ev(() => {
+  AI.tools.endPen(AI.app);
+  AI.app.doc.layers.forEach(l => { l.children.length = 0; });
+  AI.sel.clear(AI.app);
+  AI.app.invalidate();
+});
+/* 캔버스 좌표로 누르고 끈다 (page.mouse 는 뷰포트 기준) */
+const pclick = async (x, y, mods = []) => {
+  for (const m of mods) await page.keyboard.down(m);
+  await page.mouse.click(box.x + x, box.y + y);
+  for (const m of mods) await page.keyboard.up(m);
+  await page.waitForTimeout(60);
+};
+const pdrag = async (x, y, dx, dy, mods = []) => {
+  for (const m of mods) await page.keyboard.down(m);
+  await page.mouse.move(box.x + x, box.y + y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + x + dx, box.y + y + dy, { steps: 6 });
+  await page.mouse.up();
+  for (const m of mods) await page.keyboard.up(m);
+  await page.waitForTimeout(60);
+};
+/* 앵커를 "좌표 + 어느 방향선이 있나" 로 요약한다 */
+const penPts = () => ev(() => {
+  const it = AI.app.sel[0];
+  if (!it || !it.subs) return null;
+  const s = it.subs[0];
+  return {
+    closed: !!s.closed, n: s.pts.length,
+    kind: s.pts.map(p => (p.ix != null ? 'i' : '') + (p.ox != null ? 'o' : '') || '·'),
+    smooth: s.pts.map(p => AI.geom.isSmooth(p))
+  };
+});
+
+await check('펜 — 클릭은 각진 점, 끌면 부드러운 점, Alt+끌기는 꺾인 점', async () => {
+  await penReset();
+  await page.keyboard.press('KeyP');
+  await pclick(200, 200);
+  await pclick(300, 200);
+  const corners = await penPts();
+  if (corners.n !== 2 || corners.kind.join(',') !== '·,·') throw new Error('클릭=' + JSON.stringify(corners));
+
+  await pdrag(400, 200, 40, -40);                 /* 대칭 방향선 */
+  const smooth = await penPts();
+  if (smooth.kind[2] !== 'io') throw new Error('끌기=' + JSON.stringify(smooth.kind));
+  if (!smooth.smooth[2]) throw new Error('대칭이 아니다');
+
+  await pdrag(500, 200, 40, 40, ['Alt']);         /* 꺾인 점 — 나가는 쪽만 */
+  const cusp = await penPts();
+  if (cusp.kind[3] !== 'o') throw new Error('Alt+끌기=' + JSON.stringify(cusp.kind));
+  await page.keyboard.press('Escape');
+  return `각진 2 · 부드러운 1(대칭) · 꺾인 1`;
+});
+
+await check('펜 — 방금 찍은 점을 다시 누르면 각진 점이 된다', async () => {
+  await penReset();
+  await page.keyboard.press('KeyP');
+  await pclick(200, 300);
+  await pdrag(320, 300, 50, -50);
+  const before = (await penPts()).kind[1];
+  if (before !== 'io') throw new Error('준비=' + before);
+  await pclick(320, 300);                          /* 같은 자리를 한 번 더 */
+  const after = await penPts();
+  if (after.n !== 2) throw new Error('점이 늘었다=' + after.n);
+  if (after.kind[1] !== 'i') throw new Error('나가는 방향선이 안 지워짐=' + after.kind[1]);
+  /* 이어서 끌면 나가는 쪽만 새로 잡힌다 (짝을 다시 만들지 않는다) */
+  await pdrag(320, 300, -40, 50, ['Alt']);
+  const redo = await penPts();
+  if (redo.kind[1] !== 'io') throw new Error('다시 끌기=' + redo.kind[1]);
+  if (redo.smooth[1]) throw new Error('꺾인 점이어야 하는데 대칭이 됐다');
+  await page.keyboard.press('Escape');
+  return `io → i → 꺾인 io`;
+});
+
+await check('펜 — Backspace 로 방금 찍은 점을 물린다', async () => {
+  await penReset();
+  await page.keyboard.press('KeyP');
+  await pclick(200, 400); await pclick(300, 400); await pclick(400, 400);
+  if ((await penPts()).n !== 3) throw new Error('준비 실패');
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(100);
+  const back = await penPts();
+  if (back.n !== 2) throw new Error('물린 뒤=' + back.n);
+  /* 계속 그릴 수 있어야 한다 */
+  await pclick(300, 460);
+  if ((await penPts()).n !== 3) throw new Error('물린 뒤 이어 그리기 실패');
+  await page.keyboard.press('Escape');
+  return '3 → 2 → 다시 3';
+});
+
+await check('펜 — 첫 점을 눌러 닫고, 끌면 닫히는 쪽 방향선만 다듬는다', async () => {
+  await penReset();
+  await page.keyboard.press('KeyP');
+  await pdrag(200, 500, 0, -40);                   /* 첫 점을 부드럽게 */
+  const firstOut = await ev(() => {
+    const p = AI.app.sel[0].subs[0].pts[0];
+    return { ox: Math.round(p.ox), oy: Math.round(p.oy) };
+  });
+  await pclick(320, 500);
+  await pclick(320, 600);
+  await pdrag(200, 500, -30, 20);                  /* 첫 점 위에서 끌어 닫기 */
+  const r = await penPts();
+  if (!r.closed) throw new Error('안 닫힘');
+  if (r.n !== 3) throw new Error('앵커=' + r.n);
+  const after = await ev(() => {
+    const p = AI.app.sel[0].subs[0].pts[0];
+    return { ox: Math.round(p.ox), oy: Math.round(p.oy), hasIn: p.ix != null };
+  });
+  if (!after.hasIn) throw new Error('닫는 쪽 방향선이 안 생김');
+  if (after.ox !== firstOut.ox || after.oy !== firstOut.oy) {
+    throw new Error(`나가는 방향선을 건드렸다 ${JSON.stringify(firstOut)} → ${JSON.stringify(after)}`);
+  }
+  return '닫힘 · 들어오는 방향선만 새로';
+});
+
+await check('펜 — 열린 패스 두 개를 이어 하나로', async () => {
+  await penReset();
+  await page.keyboard.press('KeyP');
+  await pclick(200, 650); await pclick(280, 650);
+  await page.keyboard.press('Escape');
+  await pclick(420, 650); await pclick(500, 650);
+  await page.keyboard.press('Escape');
+  const two = await ev(() => AI.app.doc.layers[AI.app.doc.activeLayer].children.length);
+  if (two !== 2) throw new Error('패스 2개가 아님=' + two);
+
+  await pclick(280, 650);          /* 첫 패스 끝점에서 이어 그리기 */
+  await pclick(420, 650);          /* 둘째 패스 끝점에 잇기 */
+  await page.waitForTimeout(120);
+  const one = await ev(() => AI.app.doc.layers[AI.app.doc.activeLayer].children.length);
+  const r = await penPts();
+  if (one !== 1) throw new Error('오브젝트=' + one);
+  if (r.n !== 4) throw new Error('앵커=' + r.n + ' (2+2)');
+  if (r.closed) throw new Error('닫히면 안 된다');
+  await page.keyboard.press('Escape');
+  return `패스 2 → 1 · 앵커 4`;
+});
+
+await check('펜 — 커서가 자리마다 달라진다 (닫기 · 각진 점 · 잇기 · 추가 · 삭제)', async () => {
+  await penReset();
+  await page.keyboard.press('KeyP');
+  await pclick(200, 200); await pclick(320, 200); await pclick(320, 300);
+  const hover = async (x, y) => {
+    await page.mouse.move(box.x + x, box.y + y);
+    await page.waitForTimeout(60);
+    return ev(() => AI.app.__cursor || '');
+  };
+  const seen = {
+    close: await hover(200, 200),        /* 첫 점 */
+    corner: await hover(320, 300),       /* 방금 찍은 점 */
+    open: await hover(600, 600)          /* 빈 곳 */
+  };
+  await page.keyboard.press('Escape');
+  const after = {
+    del: await hover(320, 200),          /* 가운데 앵커 */
+    add: await hover(260, 200),          /* 구간 위 */
+    join: await hover(200, 200)          /* 열린 끝점 */
+  };
+  const all = Object.assign({}, seen, after);
+  for (const k of Object.keys(all)) if (!all[k]) throw new Error(k + ' 커서가 비었다');
+  if (all.close === all.corner) throw new Error('닫기와 각진 점이 같은 커서다');
+  if (all.del === all.add) throw new Error('삭제와 추가가 같은 커서다');
+  if (all.join === all.del) throw new Error('잇기와 삭제가 같은 커서다');
+  return '다섯 자리가 모두 다른 커서';
+});
+
+await check('펜 — Shift 는 45° 로 묶는다', async () => {
+  await penReset();
+  await page.keyboard.press('KeyP');
+  await pclick(200, 200);
+  await pclick(320, 214, ['Shift']);              /* 살짝 기울여도 수평으로 */
+  const r = await ev(() => {
+    const p = AI.app.sel[0].subs[0].pts;
+    return { dy: Math.abs(p[1].y - p[0].y), dx: Math.abs(p[1].x - p[0].x) };
+  });
+  await page.keyboard.press('Escape');
+  if (r.dy > 0.5) throw new Error(`수평이 아님 dx=${U0(r.dx)} dy=${U0(r.dy)}`);
+  return `dx ${U0(r.dx)} · dy ${U0(r.dy)}`;
+});
+
+await check('고정점 도구 — 누르면 각지게, 끌면 부드럽게, 방향선을 끌면 짝이 끊긴다', async () => {
+  await ev(() => {
+    AI.app.doc.layers.forEach(l => { l.children.length = 0; });
+    const it = AI.model.newPath([{ closed: false, pts: [
+      { x: 0, y: 100, ox: 40, oy: 100 },
+      { x: 150, y: 0, ix: 100, iy: 0, ox: 200, oy: 0 },
+      { x: 300, y: 100, ix: 260, iy: 100 } ] }]);
+    it.stroke = Object.assign(AI.model.defaultStroke(), { type: 'solid', color: '#000000', width: 2 });
+    it.fill = AI.color.none();
+    AI.app.doc.layers[AI.app.doc.activeLayer].children.push(it);
+    AI.sel.set(AI.app, [it]);
+    AI.viewT.fitAll(AI.app);
+    AI.app.invalidate();
+  });
+  await page.keyboard.press('Shift+KeyC');
+  if (await ev(() => AI.app.tool) !== 'convert') throw new Error('도구 전환 실패');
+  const scr = (lx, ly) => page.evaluate(([x, y]) => {
+    const it = AI.app.sel[0];
+    const wm = AI.mat.mul(AI.viewT.matrix(AI.app), AI.model.worldMatrix(AI.app.doc, it));
+    return AI.mat.apply(wm, x, y);
+  }, [lx, ly]);
+  const mid = () => ev(() => {
+    const p = AI.app.sel[0].subs[0].pts[1];
+    return { ix: p.ix == null ? null : Math.round(p.ix), iy: p.iy == null ? null : Math.round(p.iy),
+      ox: p.ox == null ? null : Math.round(p.ox), oy: p.oy == null ? null : Math.round(p.oy),
+      smooth: AI.geom.isSmooth(p) };
+  });
+  const a = await scr(150, 0);
+  await page.mouse.click(box.x + a.x, box.y + a.y);
+  await page.waitForTimeout(120);
+  const corner = await mid();
+  if (corner.ix !== null || corner.ox !== null) throw new Error('각지게 안 됨=' + JSON.stringify(corner));
+
+  await page.mouse.move(box.x + a.x, box.y + a.y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + a.x + 60, box.y + a.y + 10, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(120);
+  const sm = await mid();
+  if (!sm.smooth) throw new Error('부드럽게 안 됨=' + JSON.stringify(sm));
+
+  const h = await scr(sm.ox, sm.oy);
+  await page.mouse.move(box.x + h.x, box.y + h.y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + h.x + 10, box.y + h.y + 70, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(120);
+  const broke = await mid();
+  if (broke.smooth) throw new Error('짝이 안 끊김');
+  if (broke.ix !== sm.ix || broke.iy !== sm.iy) {
+    throw new Error(`반대쪽을 건드렸다 ${sm.ix},${sm.iy} → ${broke.ix},${broke.iy}`);
+  }
+  return '각지게 → 부드럽게 → 나가는 쪽만 (반대쪽 그대로)';
+});
+
+await check('앵커를 지워도 곡선 모양이 남는다', async () => {
+  const r = await ev(() => {
+    const G = AI.geom, Mo = AI.model;
+    const dev = (A, B) => {
+      const a = G.flattenSub(A, 0.05), b = G.flattenSub(B, 0.05);
+      let worst = 0;
+      for (const p of a) {
+        let best = Infinity;
+        for (const q of b) best = Math.min(best, Math.hypot(p.x - q.x, p.y - q.y));
+        worst = Math.max(worst, best);
+      }
+      return Math.round(worst * 100) / 100;
+    };
+    const ref = Mo.newEllipse(0, 0, 200, 200).subs[0];
+    const keep = Mo.newEllipse(0, 0, 200, 200).subs[0];
+    const dumb = Mo.newEllipse(0, 0, 200, 200).subs[0];
+    G.removeAnchor(keep, 1);            /* 모양을 지키며 */
+    G.removeAnchor(dumb, 1, false);     /* 그냥 빼기 */
+    /* 직선 두 개는 직선으로 남아야 한다 */
+    const line = { closed: false, pts: [{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 100, y: 0 }] };
+    G.removeAnchor(line, 1);
+    return {
+      keep: dev(ref, keep), dumb: dev(ref, dumb), n: keep.pts.length,
+      lineFlat: line.pts.every(p => p.ox == null && p.ix == null), lineN: line.pts.length
+    };
+  });
+  if (r.n !== 3) throw new Error('앵커=' + r.n);
+  if (r.keep > 6) throw new Error('모양이 많이 무너짐=' + r.keep);
+  if (r.dumb < r.keep * 4) throw new Error(`그냥 빼기와 차이가 없다 (지킴 ${r.keep} / 그냥 ${r.dumb})`);
+  if (!r.lineFlat || r.lineN !== 2) throw new Error('직선이 곡선이 됐다');
+  return `원 오차 ${r.dumb} → ${r.keep} · 직선은 직선으로`;
+});
+
+await check('앵커 삭제 도구가 실제로 모양을 지킨다 (마우스)', async () => {
+  await ev(() => {
+    AI.app.doc.layers.forEach(l => { l.children.length = 0; });
+    const it = AI.model.newEllipse(0, 0, 240, 240);
+    it.stroke = Object.assign(AI.model.defaultStroke(), { type: 'solid', color: '#000000', width: 2 });
+    it.fill = AI.color.none();
+    AI.app.doc.layers[AI.app.doc.activeLayer].children.push(it);
+    AI.model.expandShape(it);
+    AI.sel.set(AI.app, [it]);
+    AI.viewT.fitAll(AI.app);
+    AI.app.invalidate();
+  });
+  const before = await ev(() => {
+    const it = AI.app.sel[0];
+    const b = AI.render.localBounds(it);
+    return { n: it.subs[0].pts.length, w: Math.round(AI.rect.w(b)), h: Math.round(AI.rect.h(b)) };
+  });
+  const at0 = await page.evaluate(() => {
+    const it = AI.app.sel[0], p = it.subs[0].pts[1];
+    const wm = AI.mat.mul(AI.viewT.matrix(AI.app), AI.model.worldMatrix(AI.app.doc, it));
+    return AI.mat.apply(wm, p.x, p.y);
+  });
+  await page.keyboard.press('Minus');                /* 고정점 삭제 도구 */
+  if (await ev(() => AI.app.tool) !== 'delanchor') throw new Error('도구 전환 실패');
+  await page.mouse.click(box.x + at0.x, box.y + at0.y);
+  await page.waitForTimeout(150);
+  const after = await ev(() => {
+    const it = AI.app.doc.layers[AI.app.doc.activeLayer].children[0];
+    const b = AI.render.localBounds(it);
+    return { n: it.subs[0].pts.length, w: Math.round(AI.rect.w(b)), h: Math.round(AI.rect.h(b)) };
+  });
+  if (after.n !== before.n - 1) throw new Error(`앵커 ${before.n} → ${after.n}`);
+  /* 원의 4분의 1이 통째로 잘려 나가면 안 된다 */
+  if (Math.abs(after.w - before.w) > 12 || Math.abs(after.h - before.h) > 12) {
+    throw new Error(`모양이 무너짐 ${before.w}×${before.h} → ${after.w}×${after.h}`);
+  }
+  await ev(() => { AI.app.doc.layers.forEach(l => { l.children.length = 0; }); AI.sel.clear(AI.app); AI.app.invalidate(); });
+  await page.keyboard.press('KeyV');
+  await refreshBox();
+  return `앵커 ${before.n}→${after.n} · 크기 ${before.w}×${before.h} → ${after.w}×${after.h}`;
+});
+
+await check('Delete 는 앵커와 붙은 구간까지 지운다 (삭제 도구와 다르다)', async () => {
+  const r = await ev(() => {
+    const Mo = AI.model, E = AI.edit, app = AI.app;
+    const L = app.doc.layers[app.doc.activeLayer];
+    L.children.length = 0;
+
+    /* 닫힌 사각형에서 앵커 하나 -> 열린 패스 하나 */
+    const box1 = Mo.newRect(0, 0, 100, 100, 0);
+    Mo.expandShape(box1);
+    L.children.push(box1);
+    AI.sel.set(app, [box1]);
+    AI.sel.setPts(app, [{ it: box1, si: 0, pi: 1 }]);
+    E.deleteAnchors(app);
+    const opened = { subs: box1.subs.length, closed: box1.subs[0].closed, n: box1.subs[0].pts.length };
+
+    /* 열린 패스의 가운데 앵커 -> 둘로 갈라진다 */
+    L.children.length = 0;
+    const line = Mo.newPath([{ closed: false, pts: [
+      { x: 0, y: 0 }, { x: 50, y: 0 }, { x: 100, y: 0 }, { x: 150, y: 0 }, { x: 200, y: 0 }] }]);
+    L.children.push(line);
+    AI.sel.set(app, [line]);
+    AI.sel.setPts(app, [{ it: line, si: 0, pi: 2 }]);
+    E.deleteAnchors(app);
+    const split = { subs: line.subs.length, sizes: line.subs.map(s => s.pts.length) };
+
+    L.children.length = 0;
+    AI.sel.clear(app);
+    app.invalidate();
+    return { opened, split };
+  });
+  if (r.opened.subs !== 1 || r.opened.closed) throw new Error('닫힌 패스가 안 열림=' + JSON.stringify(r.opened));
+  if (r.opened.n !== 3) throw new Error('남은 앵커=' + r.opened.n);
+  if (r.split.subs !== 2 || r.split.sizes.join(',') !== '2,2') {
+    throw new Error('갈라지지 않음=' + JSON.stringify(r.split));
+  }
+  return `닫힘 → 열림(앵커 3) · 5점 선 → 2조각(2,2)`;
+});
+
 /* ---------------- 라이브 모퉁이 (직접 선택 도구) ---------------- */
 await check('직접 선택 도구에서 모퉁이 위젯을 끌면 둥글어진다', async () => {
   await ev(() => { AI.app.doc.layers.forEach(l => { l.children.length = 0; }); AI.sel.clear(AI.app); AI.app.invalidate(); });

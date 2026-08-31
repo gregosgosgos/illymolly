@@ -64,6 +64,8 @@
     else if (state === 'del') b = badge(bStroke('M0.5 4.5h8'));
     else if (state === 'close') b = badge('<circle cx="4.5" cy="4.5" r="3.4" fill="none" stroke="#fff" stroke-width="3"/><circle cx="4.5" cy="4.5" r="3.4" fill="none" stroke="#000" stroke-width="1.3"/>');
     else if (state === 'join') b = badge(bStroke('M7.5 0.8L1.5 8.2'));
+    /* 방금 찍은 점 위 — 누르면 각진 점이 된다 (일러스트레이터의 ^ 배지) */
+    else if (state === 'corner') b = badge(bStroke('M0.8 6.5 L4.5 2 L8.2 6.5'));
     return mk(ol(NIB) + '<path d="M2.2 21.8 L4 19" stroke="#fff" stroke-width="1"/>' + b, 2, 22);
   };
 
