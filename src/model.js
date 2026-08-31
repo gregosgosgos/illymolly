@@ -106,45 +106,89 @@
   /* --- 라이브 셰이프: 로컬 좌표 (0,0)-(w,h) 기준으로 pts 재생성 --- */
   var K = 0.5522847498307936;
 
+  /* ---------------- 사각형의 모퉁이 ----------------
+     일러스트레이터처럼 모퉁이마다 반경과 종류를 따로 가질 수 있다.
+
+       s.r   모든 모퉁이가 같을 때의 반경 (예전 문서와 그대로 호환된다)
+       s.rs  모퉁이마다 다를 때만 둔다 — [좌상, 우상, 우하, 좌하]
+             이때 s.r 은 가장 큰 값을 담아 둔다 (s.r 만 보는 코드가 있어서다)
+       s.c / s.cs  모퉁이 종류 — 'round' 둥글게 · 'inv' 둥글게(내부) · 'chamfer' 모따기
+
+     모퉁이 차례는 위젯 · 앵커와 같다: 0 좌상 · 1 우상 · 2 우하 · 3 좌하 */
+  Model.CORNER_KINDS = ['round', 'inv', 'chamfer'];
+  Model.CORNER_LABEL = { round: '둥글게', inv: '둥글게(내부)', chamfer: '모따기' };
+
+  Model.rectRadii = function (s) {
+    if (s.rs && s.rs.length === 4) return s.rs.map(function (v) { return Math.max(0, +v || 0); });
+    var r = Math.max(0, s.r || 0);
+    return [r, r, r, r];
+  };
+  Model.rectCornerKinds = function (s) {
+    if (s.cs && s.cs.length === 4) return s.cs.slice();
+    var c = s.c || 'round';
+    return [c, c, c, c];
+  };
+
+  /* 실제로 그릴 수 있는 반경 — 이웃한 모퉁이끼리 변 길이를 나눠 갖는다 */
+  Model.rectEffRadii = function (s) {
+    var rs = Model.rectRadii(s);
+    var W = Math.abs(s.w), H = Math.abs(s.h);
+    var len = [W, H, W, H];            /* 0→1 위, 1→2 오른쪽, 2→3 아래, 3→0 왼쪽 */
+    /* 이웃끼리 변을 넘어서면 전체를 같은 비율로 줄인다 (CSS border-radius 와 같은 방식).
+       변마다 따로 줄이면 같은 값을 넣어도 모퉁이가 제각각이 된다. */
+    var f = 1;
+    for (var i = 0; i < 4; i++) {
+      var sum = rs[i] + rs[(i + 1) % 4];
+      if (sum > 0) f = Math.min(f, len[i] / sum);
+    }
+    if (f < 1) rs = rs.map(function (v) { return v * f; });
+    return rs.map(function (v) { return v < 0.001 ? 0 : v; });
+  };
+
+  /* 앵커 번호 -> 모퉁이 번호. 모퉁이 하나가 앵커 1개(각짐) 또는 2개(깎임)를 만든다. */
+  Model.rectCornerMap = function (s) {
+    var rs = Model.rectEffRadii(s), map = [];
+    for (var i = 0; i < 4; i++) { map.push(i); if (rs[i] > 0) map.push(i); }
+    return map;
+  };
+
+  Model.rectPts = function (s) {
+    var w = s.w, h = s.h;
+    var C = [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }];
+    var rs = Model.rectEffRadii(s), kinds = Model.rectCornerKinds(s);
+    var pts = [];
+    for (var i = 0; i < 4; i++) {
+      var c = C[i], prev = C[(i + 3) % 4], next = C[(i + 1) % 4], r = rs[i];
+      if (!r) { pts.push(Model.pt(c.x, c.y)); continue; }
+      var u = unit(prev.x - c.x, prev.y - c.y);      /* 들어오는 변 쪽 */
+      var v = unit(next.x - c.x, next.y - c.y);      /* 나가는 변 쪽 */
+      var a = { x: c.x + u.x * r, y: c.y + u.y * r };  /* 모퉁이가 시작되는 점 */
+      var b = { x: c.x + v.x * r, y: c.y + v.y * r };  /* 끝나는 점 */
+      var kind = kinds[i], k2 = r * K;
+      if (kind === 'chamfer') {
+        pts.push(Model.pt(a.x, a.y), Model.pt(b.x, b.y));       /* 곧은 빗변 */
+      } else if (kind === 'inv') {
+        /* 안쪽으로 파이는 호 — 원의 중심이 모퉁이 점 자체다 */
+        pts.push({ x: a.x, y: a.y, ox: a.x + v.x * k2, oy: a.y + v.y * k2 },
+                 { x: b.x, y: b.y, ix: b.x + u.x * k2, iy: b.y + u.y * k2 });
+      } else {
+        /* 보통의 둥근 모퉁이 — 두 변에 접하는 호 */
+        pts.push({ x: a.x, y: a.y, ox: a.x - u.x * k2, oy: a.y - u.y * k2 },
+                 { x: b.x, y: b.y, ix: b.x - v.x * k2, iy: b.y - v.y * k2 });
+      }
+    }
+    return pts;
+  };
+  function unit(x, y) {
+    var d = Math.hypot(x, y) || 1;
+    return { x: x / d, y: y / d };
+  }
+
   Model.buildShape = function (it) {
     var s = it.shape; if (!s) return;
     var w, h, pts;
     if (s.kind === 'rect') {
-      w = s.w; h = s.h;
-      var r = Math.min(s.r || 0, Math.abs(w) / 2, Math.abs(h) / 2);
-      if (r <= 0.001) {
-        pts = [Model.pt(0, 0), Model.pt(w, 0), Model.pt(w, h), Model.pt(0, h)];
-      } else {
-        var k = r * K;
-        pts = [
-          { x: r, y: 0, ox: r - k, oy: 0 },
-          { x: w - r, y: 0, ix: w - r + k, iy: 0 },
-          { x: w, y: r, ix: w, iy: r - k, ox: w, oy: h - r + k },
-          { x: w - r, y: h, ix: w - r + k, iy: h, ox: w - r + k, oy: h },
-          { x: r, y: h, ix: r - k, iy: h, ox: r - k, oy: h },
-          { x: 0, y: h - r, ix: 0, iy: h - r + k, ox: 0, oy: r - k }
-        ];
-        /* 정확한 라운드 사각형 (8 앵커) */
-        pts = [
-          { x: r, y: 0, ox: r - k, oy: 0 },
-          { x: w - r, y: 0 },
-          { x: w, y: r, ix: w, iy: r - k },
-          { x: w, y: h - r },
-          { x: w - r, y: h, ix: w - r + k, iy: h },
-          { x: r, y: h },
-          { x: 0, y: h - r, ix: 0, iy: h - r + k },
-          { x: 0, y: r }
-        ];
-        pts[1].ox = w - r + k; pts[1].oy = 0;
-        pts[3].ox = w; pts[3].oy = h - r + k;
-        pts[5].ox = r - k; pts[5].oy = h;
-        pts[7].ox = 0; pts[7].oy = r - k;
-        pts[0].ix = r - k; pts[0].iy = 0;
-        pts[2].ix = w; pts[2].iy = r - k;
-        pts[4].ix = w - r + k; pts[4].iy = h;
-        pts[6].ix = 0; pts[6].iy = h - r + k;
-      }
-      it.subs = [{ closed: true, pts: pts }];
+      it.subs = [{ closed: true, pts: Model.rectPts(s) }];
     } else if (s.kind === 'ellipse') {
       w = s.w; h = s.h;
       var rx = w / 2, ry = h / 2, cx = rx, cy = ry, kx = rx * K, ky = ry * K;

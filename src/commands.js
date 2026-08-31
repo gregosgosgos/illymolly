@@ -189,6 +189,11 @@
   });
 
   /* ================= 오브젝트 ================= */
+  def('corners', '모퉁이...', null, function (a) { AI.dialogs.corners(a); }, {
+    enabled: function (a) {
+      return a.sel.some(function (it) { return it.type === 'path' && it.shape && it.shape.kind === 'rect'; });
+    }
+  });
   def('transformAgain', '변형 반복', 'Ctrl+D', hist('변형 반복', function (a) {
     if (!a.lastTransform || !a.sel.length) return false;
     E.transformSelection(a, a.lastTransform);
@@ -873,6 +878,7 @@
       title: '오브젝트', items: [
         'transformAgain', 'moveDialog', 'rotateDialog', 'scaleDialog', 'reflectDialog', 'shearDialog', 'transformEach', '-',
         'reflectH', 'reflectV', '-',
+        'corners', '-',
         'bringToFront', 'bringForward', 'sendBackward', 'sendToBack', '-',
         'group', 'ungroup', '-', 'lock', 'unlockAll', 'hide', 'showAll', '-',
         'clipMake', 'clipRelease', '-', 'opacityMaskMake', 'opacityMaskRelease', 'opacityMaskInvert', '-',

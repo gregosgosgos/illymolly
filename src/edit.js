@@ -352,7 +352,10 @@
         if (o.type !== 'path' || !o.shape) return;
         if (kinds.indexOf(o.shape.kind) < 0) return;
         if (key === 'ratio') o.shape.r2 = o.shape.r * value;
-        else o.shape[key] = value;
+        else if (key === 'r' && o.shape.kind === 'rect') {
+          /* 사각형의 반경은 모퉁이마다 따로 있을 수 있다 — 네 개를 한꺼번에 맞춘다 */
+          E.storeCornerRadii(o.shape, [value, value, value, value]);
+        } else o.shape[key] = value;
         Model.buildShape(o);
         any = true;
       })(it);
@@ -377,6 +380,89 @@
       })(it);
     });
     return any;
+  };
+
+  /* ---------------- 사각형 모퉁이 (라이브 코너) ----------------
+     일러스트레이터와 같다. 선택 도구로는 네 모퉁이가 함께 움직이고,
+     직접 선택 도구로 앵커 일부만 고르면 그 모퉁이만 바뀐다. */
+
+  /* 지금 손댈 모퉁이 번호들 — 앵커를 일부만 골랐으면 그 모퉁이만 */
+  E.cornerTargets = function (app, it) {
+    if (!it || !it.shape || it.shape.kind !== 'rect') return [];
+    var all = [0, 1, 2, 3];
+    var tool = AI.tools.current(app);
+    if (!tool || !tool.direct || !app.selPts.length) return all;
+    var map = Model.rectCornerMap(it.shape), picked = {};
+    app.selPts.forEach(function (sp) {
+      if (sp.it !== it || sp.si !== 0) return;
+      var c = map[sp.pi];
+      if (c != null) picked[c] = 1;
+    });
+    var list = Object.keys(picked).map(Number);
+    return list.length && list.length < 4 ? list.sort() : all;
+  };
+
+  /* 반경 바꾸기 — targets 에 든 모퉁이만 */
+  E.setCornerRadius = function (it, targets, r) {
+    var sh = it.shape;
+    var rs = Model.rectRadii(sh);
+    var lim = Math.min(Math.abs(sh.w), Math.abs(sh.h)) / 2;
+    r = U.clamp(r, 0, lim);
+    targets.forEach(function (i) { rs[i] = r; });
+    E.storeCornerRadii(sh, rs);
+    Model.buildShape(it);
+    return r;
+  };
+
+  /* 모두 같으면 s.r 하나로, 다르면 s.rs 로 담는다 (예전 문서와 호환) */
+  E.storeCornerRadii = function (sh, rs) {
+    var same = rs.every(function (v) { return Math.abs(v - rs[0]) < 1e-6; });
+    if (same) { sh.r = rs[0]; delete sh.rs; }
+    else { sh.rs = rs.slice(); sh.r = Math.max.apply(Math, rs); }
+  };
+  E.storeCornerKinds = function (sh, cs) {
+    var same = cs.every(function (v) { return v === cs[0]; });
+    if (same) { sh.c = cs[0]; delete sh.cs; }
+    else { sh.cs = cs.slice(); sh.c = cs[0]; }
+    if (sh.c === 'round') delete sh.c;
+  };
+
+  /* 종류 바꾸기 — 값을 주면 그 값으로, 안 주면 다음 종류로 돌린다 (Alt+클릭) */
+  E.setCornerKind = function (it, targets, kind) {
+    var sh = it.shape;
+    var cs = Model.rectCornerKinds(sh);
+    var next = kind;
+    if (!next) {
+      var cur = cs[targets[0]] || 'round';
+      var K2 = Model.CORNER_KINDS;
+      next = K2[(K2.indexOf(cur) + 1) % K2.length];
+    }
+    targets.forEach(function (i) { cs[i] = next; });
+    E.storeCornerKinds(sh, cs);
+    /* 종류만 바꿨는데 반경이 0 이면 눈에 보이지 않는다 — 기본 반경을 준다 */
+    var rs = Model.rectRadii(sh);
+    var lim = Math.min(Math.abs(sh.w), Math.abs(sh.h)) / 2;
+    var touched = false;
+    targets.forEach(function (i) { if (!rs[i]) { rs[i] = Math.min(12, lim); touched = true; } });
+    if (touched) E.storeCornerRadii(sh, rs);
+    Model.buildShape(it);
+    return next;
+  };
+
+  /* 선택한 라이브 사각형들에 한꺼번에 (대화상자 · 자동화용) */
+  E.applyCorners = function (app, o) {
+    var n = 0;
+    app.sel.forEach(function (it) {
+      (function rec(x) {
+        if (x.type === 'group') { x.children.forEach(rec); return; }
+        if (x.type !== 'path' || !x.shape || x.shape.kind !== 'rect') return;
+        var targets = o.all === false ? E.cornerTargets(app, x) : [0, 1, 2, 3];
+        if (o.kind) E.setCornerKind(x, targets, o.kind);
+        if (o.radius != null) E.setCornerRadius(x, targets, o.radius);
+        n++;
+      })(it);
+    });
+    return n;
   };
 
   /* ---------------- 개별 변형 (Transform Each) ---------------- */

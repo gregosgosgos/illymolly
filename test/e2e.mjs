@@ -42,6 +42,7 @@ const ev = f => page.evaluate(f);
 const count = () => ev(() => AI.app.doc.layers.reduce((n, l) => n + l.children.length, 0));
 /* 패널은 탭으로 묶여 있으므로 만지기 전에 앞으로 꺼낸다 (사용자가 탭을 누르는 것과 같다) */
 const showPanel = name => page.evaluate(n => AI.ui.showPanel(n), name);
+const U0 = v => Math.round(v * 10) / 10;
 
 async function drag(a, b, mods = []) {
   for (const m of mods) await page.keyboard.down(m);
@@ -54,9 +55,24 @@ async function drag(a, b, mods = []) {
 }
 
 const results = [];
+/* 검사 하나가 대화상자를 열어 둔 채 끝나면 뒤따르는 검사가 줄줄이 무너진다.
+   (모달이 떠 있는 동안에는 단축키도 클릭도 앱에 닿지 않는다) 매번 정리한다. */
+async function closeStrayDialog() {
+  if (!(await page.evaluate(() => AI.dialog.isOpen()))) return false;
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(120);
+  if (await page.evaluate(() => AI.dialog.isOpen())) {
+    await page.evaluate(() => AI.dialog.close && AI.dialog.close());
+  }
+  return true;
+}
 const check = async (name, fn) => {
   try { results.push([name, 'OK', (await fn()) ?? '']); }
   catch (e) { results.push([name, 'FAIL', e.message]); }
+  if (await closeStrayDialog()) {
+    const last = results[results.length - 1];
+    last[2] = (last[2] ? last[2] + ' · ' : '') + '(대화상자를 열어 둔 채 끝나 정리함)';
+  }
 };
 
 /* ---------------- 도구 & 그리기 ---------------- */
@@ -3128,6 +3144,184 @@ await check('자동 저장 · 복구 — 새로 고쳐도 작업이 살아남는
   if (again) throw new Error('복구할 게 없는데 다시 물어봄');
   await refreshBox();
   return `2개 오브젝트 · 색상 유지 · "작업중 [복구됨]" · 기록 정리`;
+});
+
+/* ---------------- 라이브 모퉁이 (직접 선택 도구) ---------------- */
+await check('직접 선택 도구에서 모퉁이 위젯을 끌면 둥글어진다', async () => {
+  await ev(() => { AI.app.doc.layers.forEach(l => { l.children.length = 0; }); AI.sel.clear(AI.app); AI.app.invalidate(); });
+  await page.keyboard.press('KeyM');
+  await drag(at(0.25, 0.25), at(0.62, 0.62));
+  await page.keyboard.press('KeyA');                       /* 직접 선택 도구 */
+  await page.mouse.click((at(0.25, 0.25).x + at(0.62, 0.62).x) / 2, (at(0.25, 0.25).y + at(0.62, 0.62).y) / 2);
+  await page.waitForTimeout(150);
+
+  const cw = await ev(() => {
+    const w = AI.render.cornerWidgets(AI.app);
+    return w && { n: w.pts.length, targets: w.targets, p0: { x: w.pts[0].x, y: w.pts[0].y } };
+  });
+  if (!cw) throw new Error('위젯이 안 나온다');
+  if (cw.n !== 4) throw new Error('위젯 개수=' + cw.n);
+
+  /* 위젯 좌표는 캔버스 기준이므로 뷰포트로 옮긴다 */
+  const q = { x: box.x + cw.p0.x, y: box.y + cw.p0.y };
+  await page.mouse.move(q.x, q.y);
+  await page.mouse.down();
+  await page.mouse.move(q.x + 40, q.y + 40, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+
+  const r = await ev(() => {
+    const sh = AI.app.sel[0].shape;
+    return { r: sh.r, rs: sh.rs, pts: AI.app.sel[0].subs[0].pts.length, label: AI.app.history.undoLabel() };
+  });
+  if (!(r.r > 5)) throw new Error('반경=' + r.r);
+  if (r.rs) throw new Error('네 모퉁이가 같아야 한다=' + JSON.stringify(r.rs));
+  if (r.pts !== 8) throw new Error('앵커=' + r.pts + ' (둥근 사각형은 8개)');
+  if (r.label !== '모퉁이 반경') throw new Error('실행 취소 이름=' + r.label);
+  return `반경 ${U0(r.r)} · 앵커 8 · 네 모퉁이 함께`;
+});
+
+await check('앵커를 하나만 고르면 그 모퉁이만 둥글어진다', async () => {
+  await ev(() => {
+    const it = AI.app.doc.layers[AI.app.doc.activeLayer].children[0];
+    AI.sel.clear(AI.app);
+    AI.sel.addPt(AI.app, it, 0, 0);        /* 좌상 모퉁이의 첫 앵커 */
+    AI.sel.add(AI.app, it);
+    AI.app.invalidate();
+  });
+  await page.waitForTimeout(120);
+  const cw = await ev(() => {
+    const w = AI.render.cornerWidgets(AI.app);
+    return w && { n: w.pts.length, targets: w.targets, partial: w.partial, p: { x: w.pts[0].x, y: w.pts[0].y } };
+  });
+  if (!cw) throw new Error('위젯이 안 나온다');
+  if (cw.n !== 1 || !cw.partial) throw new Error('고른 모퉁이만 보여야 한다=' + JSON.stringify(cw));
+
+  const before = await ev(() => AI.model.rectRadii(AI.app.sel[0].shape));
+  const q = { x: box.x + cw.p.x, y: box.y + cw.p.y };
+  await page.mouse.move(q.x, q.y);
+  await page.mouse.down();
+  await page.mouse.move(q.x + 35, q.y + 35, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+  const after = await ev(() => AI.model.rectRadii(AI.app.sel[0].shape));
+  if (!(after[0] > before[0] + 5)) throw new Error(`좌상이 안 커짐 ${before[0]}→${after[0]}`);
+  for (let i = 1; i < 4; i++) {
+    if (Math.abs(after[i] - before[i]) > 0.01) throw new Error(`모퉁이 ${i} 가 같이 바뀜 ${before[i]}→${after[i]}`);
+  }
+  return `좌상만 ${U0(before[0])}→${U0(after[0])} · 나머지 ${U0(after[1])} 그대로`;
+});
+
+await check('Alt+클릭으로 모퉁이 종류가 돌아간다 (둥글게 → 내부 → 모따기)', async () => {
+  const seen = [];
+  for (let i = 0; i < 3; i++) {
+    const cw = await ev(() => {
+      const w = AI.render.cornerWidgets(AI.app);
+      return w && { x: w.pts[0].x, y: w.pts[0].y };
+    });
+    await page.keyboard.down('Alt');
+    await page.mouse.click(box.x + cw.x, box.y + cw.y);
+    await page.keyboard.up('Alt');
+    await page.waitForTimeout(150);
+    seen.push(await ev(() => AI.model.rectCornerKinds(AI.app.sel[0].shape)[0]));
+  }
+  if (seen.join(',') !== 'inv,chamfer,round') throw new Error('순서=' + seen.join(','));
+  /* 고르지 않은 모퉁이는 그대로여야 한다 */
+  const others = await ev(() => AI.model.rectCornerKinds(AI.app.sel[0].shape).slice(1));
+  if (others.some(k => k !== 'round')) throw new Error('다른 모퉁이도 바뀜=' + others);
+  return seen.join(' → ');
+});
+
+await check('모퉁이 종류마다 실제 기하가 달라진다 (넓이로 확인)', async () => {
+  const r = await ev(() => {
+    const Mo = AI.model, PF = AI.pathfinder;
+    const area = it => AI.edit.itemRings(AI.app, it).reduce((s, g) => s + Math.abs(PF.area(g)), 0);
+    const L = AI.app.doc.layers[AI.app.doc.activeLayer];
+    const keep = L.children.length;          /* 원래 있던 것은 건드리지 않는다 */
+    const mk = opt => {
+      const it = Mo.newRect(0, 0, 200, 120, 0);
+      Object.assign(it.shape, opt);
+      Mo.buildShape(it);
+      L.children.push(it);
+      return Math.round(area(it));
+    };
+    const out = {
+      sharp: mk({ r: 0 }),
+      round: mk({ r: 30 }),
+      inv: mk({ r: 30, c: 'inv' }),
+      cham: mk({ r: 30, c: 'chamfer' }),
+      /* 변보다 큰 값을 넣어도 네 모퉁이가 고르게 줄어야 한다 */
+      clamped: Mo.rectEffRadii({ w: 200, h: 120, rs: [200, 200, 200, 200] })
+    };
+    L.children.length = keep;                /* 재려고 만든 것만 치운다 */
+    return out;
+  });
+  const want = {
+    sharp: 200 * 120,
+    round: Math.round(200 * 120 - (4 - Math.PI) * 900),
+    inv: Math.round(200 * 120 - Math.PI * 900),
+    cham: 200 * 120 - 2 * 900
+  };
+  for (const k of Object.keys(want)) {
+    if (Math.abs(r[k] - want[k]) > 2) throw new Error(`${k}=${r[k]} (기대 ${want[k]})`);
+  }
+  if (r.clamped.some(v => Math.abs(v - 60) > 0.01)) throw new Error('큰 값 보정=' + r.clamped);
+  return `각짐 ${r.sharp} · 둥글게 ${r.round} · 내부 ${r.inv} · 모따기 ${r.cham} · 보정 60`;
+});
+
+await check('위젯을 두 번 누르면 모퉁이 대화상자 · 값이 섞여도 덮어쓰지 않는다', async () => {
+  const cw = await ev(() => {
+    const w = AI.render.cornerWidgets(AI.app);
+    return w && { x: w.pts[0].x, y: w.pts[0].y };
+  });
+  const before = await ev(() => AI.model.rectRadii(AI.app.sel[0].shape));
+  await page.mouse.dblclick(box.x + cw.x, box.y + cw.y);
+  await page.waitForSelector('.dlg-title', { timeout: 2000 });
+  const title = await page.textContent('.dlg-title');
+  const body = await page.textContent('.dlg-body');
+  /* 열기만 해서는 도형이 바뀌면 안 된다 */
+  const during = await ev(() => AI.model.rectRadii(AI.app.sel[0].shape));
+  if (during.some((v, i) => Math.abs(v - before[i]) > 0.01)) {
+    throw new Error(`대화상자를 열자마자 바뀜 ${before} → ${during}`);
+  }
+  if (title !== '모퉁이') throw new Error('제목=' + title);
+  if (body.indexOf('모따기') < 0) throw new Error('종류가 없음');
+  if (body.indexOf('모퉁이마다 다릅니다') < 0) throw new Error('섞였다는 안내가 없음');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(150);
+  const after = await ev(() => AI.model.rectRadii(AI.app.sel[0].shape));
+  if (after.some((v, i) => Math.abs(v - before[i]) > 0.01)) throw new Error('취소했는데 바뀜=' + after);
+  return `"${title}" · 열어도 취소해도 그대로`;
+});
+
+await check('선택 도구에서는 네 모퉁이가 함께 · 패널과 API 도 맞춰 준다', async () => {
+  /* 앵커를 골라 둔 채 선택 도구로 바꿔도 네 모퉁이가 함께 움직여야 한다
+     (모퉁이를 나눠 다루는 것은 직접 선택 도구만의 몫이다) */
+  await page.keyboard.press('KeyV');
+  await page.waitForTimeout(120);
+  const n = await ev(() => {
+    const w = AI.render.cornerWidgets(AI.app);
+    return { pts: w ? w.pts.length : 0, selPts: AI.app.selPts.length, sel: AI.app.sel.length };
+  });
+  if (n.sel !== 1) throw new Error('선택이 풀림=' + JSON.stringify(n));
+  if (n.pts !== 4) throw new Error('선택 도구 위젯=' + JSON.stringify(n));
+  /* 값이 섞인 상태에서 반경 하나를 주면 네 모퉁이가 같아져야 한다 */
+  const r = await ev(() => {
+    const it = AI.app.sel[0];
+    illy.set({ radius: 18 });                      /* 대상을 안 주면 현재 선택 */
+    const a = AI.model.rectRadii(it.shape);
+    illy.set({ corners: [30, 0, 10, 0], cornerType: 'chamfer' });
+    return { uniform: a, mixed: AI.model.rectRadii(it.shape), kinds: AI.model.rectCornerKinds(it.shape),
+      pts: it.subs[0].pts.length };
+  });
+  if (r.uniform.some(v => Math.abs(v - 18) > 0.01)) throw new Error('radius 로 통일 안 됨=' + r.uniform);
+  if (r.mixed.join(',') !== '30,0,10,0') throw new Error('corners=' + r.mixed);
+  if (r.kinds.some(k => k !== 'chamfer')) throw new Error('cornerType=' + r.kinds);
+  if (r.pts !== 6) throw new Error('앵커=' + r.pts + ' (모퉁이 2개만 깎였으므로 6개)');
+  if (!n.selPts) throw new Error('앵커를 골라 둔 상태에서 확인해야 의미가 있다');
+  await ev(() => { AI.app.doc.layers.forEach(l => { l.children.length = 0; }); AI.sel.clear(AI.app); AI.app.invalidate(); });
+  await refreshBox();
+  return `위젯 4개 · radius 통일 · corners [30,0,10,0] · 모따기 · 앵커 6`;
 });
 
 /* ---------------- 시스템 클립보드 · 드래그 앤 드롭 ---------------- */

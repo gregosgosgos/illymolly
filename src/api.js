@@ -959,7 +959,10 @@
       o.size = p('number', '글꼴 크기');
       o.font = p('string', '글꼴');
       o.align = p('string', '문단 정렬', { enum: ['left', 'center', 'right'] });
-      o.radius = p('number', '모퉁이 반경 (라이브 사각형)');
+      o.radius = p('number', '모퉁이 반경 (라이브 사각형) — 네 모퉁이 모두');
+      o.corners = p('number[]', '모퉁이마다 다른 반경 [좌상, 우상, 우하, 좌하] (라이브 사각형)');
+      o.cornerType = p('string', '모퉁이 종류 (라이브 사각형)',
+        { enum: ['round', 'inv', 'chamfer'] });
       o.sides = p('number', '변/점 개수 (다각형·별)');
       o.pieStart = p('number', '파이 시작 각도 ° (라이브 원형)');
       o.pieEnd = p('number', '파이 끝 각도 ° (라이브 원형)');
@@ -988,7 +991,22 @@
         }
         if (it.shape) {
           var changed = false;
-          if (a.radius != null && it.shape.kind === 'rect') { it.shape.r = Math.max(0, a.radius); changed = true; }
+          if (a.radius != null && it.shape.kind === 'rect') {
+            E.storeCornerRadii(it.shape, [0, 1, 2, 3].map(function () { return Math.max(0, a.radius); }));
+            changed = true;
+          }
+          if (a.corners != null && it.shape.kind === 'rect') {
+            /* [좌상, 우상, 우하, 좌하] — 모퉁이마다 다른 반경 */
+            if (a.corners.length !== 4) {
+              throw err('BAD_ARG', 'set.corners: [좌상, 우상, 우하, 좌하] 네 개가 필요합니다 (받은 개수: ' + a.corners.length + ')');
+            }
+            E.storeCornerRadii(it.shape, a.corners.map(function (v) { return Math.max(0, v || 0); }));
+            changed = true;
+          }
+          if (a.cornerType != null && it.shape.kind === 'rect') {
+            E.storeCornerKinds(it.shape, [a.cornerType, a.cornerType, a.cornerType, a.cornerType]);
+            changed = true;
+          }
           if (a.sides != null && (it.shape.kind === 'polygon' || it.shape.kind === 'star')) {
             it.shape.n = Math.max(3, Math.round(a.sides)); changed = true;
           }

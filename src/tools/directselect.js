@@ -19,6 +19,10 @@
 
     onDown: function (app, e) {
       app.smart = [];
+      /* 0) 라이브 모퉁이 위젯 — 일러스트레이터처럼 직접 선택 도구에서도 잡힌다.
+         앵커를 일부만 골라 두었으면 그 모퉁이만 바뀐다. Alt+클릭은 종류를 돌린다. */
+      var cw = H.cornerWidgetAt(app, e.x, e.y);
+      if (cw) { st = T.cornerDown(app, e, cw); return; }
       /* 1) 방향선(핸들) */
       var hh = H.handleAt(app, e.x, e.y);
       if (hh) {
@@ -90,10 +94,12 @@
 
     onMove: function (app, e) {
       if (!st) {
+        if (H.cornerWidgetAt(app, e.x, e.y)) { AI.cursors.set(app, 'pointer'); return; }
         var over = H.anchorAt(app, e.x, e.y) || H.handleAt(app, e.x, e.y);
         AI.cursors.set(app, over ? AI.cursors.arrowPlus() : AI.cursors.arrowWhite());
         return;
       }
+      if (st.kind === 'corner') { T.cornerDrag(app, st, e); return; }
       var dpt = AI.viewT.toDoc(app, e.x, e.y), spt = AI.viewT.toDoc(app, e.sx, e.sy);
       var dx = dpt.x - spt.x, dy = dpt.y - spt.y;
       if (e.shift && st.kind !== 'handle') { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
@@ -183,8 +189,29 @@
       if (st.kind === 'marquee') { app.marquee = null; app.history.abort(); }
       else if (st.moved) app.history.commit();
       else app.history.abort();
+      var wasCorner = st.kind === 'corner';
       st = null;
       app.invalidate();
+      if (wasCorner) AI.ui && AI.ui.syncAll && AI.ui.syncAll(app);
+    },
+
+    /* 위젯을 두 번 누르면 모퉁이 대화상자 (일러스트레이터와 같다) */
+    onDblClick: function (app, e) {
+      var cw = H.cornerWidgetAt(app, e.x, e.y);
+      if (cw) AI.dialogs.corners(app, cw.item, AI.edit.cornerTargets(app, cw.item));
+    },
+
+    /* 끄는 동안 반경을 숫자로 보여 준다 */
+    drawUI: function (ctx, app) {
+      if (!app.hudText || !st || st.kind !== 'corner') return;
+      ctx.save();
+      ctx.font = '11px sans-serif';
+      var w = ctx.measureText(app.hudText).width + 10;
+      ctx.fillStyle = 'rgba(0,0,0,.78)';
+      ctx.fillRect(st.pt.x + 10, st.pt.y - 22, w, 16);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(app.hudText, st.pt.x + 15, st.pt.y - 10);
+      ctx.restore();
     }
   });
 })(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

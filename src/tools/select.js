@@ -16,11 +16,10 @@
 
   function commonDown(app, e, groupMode) {
     app.smart = [];
-    /* 0) 라이브 모퉁이 위젯 */
+    /* 0) 라이브 모퉁이 위젯 — Alt+클릭은 모퉁이 종류를 돌린다 */
     var cwHit = H.cornerWidgetAt(app, e.x, e.y);
     if (cwHit) {
-      app.history.begin('모퉁이 반경', app.doc);
-      st = { kind: 'corner', it: cwHit.item, pt: cwHit.pt, moved: false, r0: cwHit.item.shape.r || 0 };
+      st = T.cornerDown(app, e, cwHit);
       return;
     }
     /* 0-b) 라이브 셰이프 위젯 — 원형 파이 각도 · 다각형 변 수 */
@@ -127,21 +126,7 @@
       AI.ui && AI.ui.syncSelection && AI.ui.syncSelection(app);
       return;
     }
-    if (st.kind === 'corner') {
-      st.moved = true;
-      var it = st.it, sh = it.shape;
-      var inv = M.invert(Model.worldMatrix(app.doc, it));
-      var d0 = AI.viewT.toDoc(app, e.x, e.y);
-      var lp = M.apply(inv, d0.x, d0.y);
-      var lim = Math.min(Math.abs(sh.w), Math.abs(sh.h)) / 2;
-      var r = Math.min(Math.abs(lp.x - st.pt.cx), Math.abs(lp.y - st.pt.cy));
-      sh.r = U.clamp(r, 0, lim);
-      Model.buildShape(it);
-      app.hudText = '반경 ' + U.fmt(sh.r);
-      app.invalidate();
-      AI.ui && AI.ui.buildToolOptions && AI.ui.buildToolOptions(app);
-      return;
-    }
+    if (st.kind === 'corner') { T.cornerDrag(app, st, e); return; }
     if (st.kind === 'live') { doLiveWidget(app, e); return; }
     if (st.kind === 'scale') { doScale(app, e); return; }
     if (st.kind === 'rotate') { doRotate(app, e); return; }
@@ -289,6 +274,9 @@
     onMove: function (app, e) { commonMove(app, e); },
     onUp: function (app, e) { commonUp(app, e); },
     onDblClick: function (app, e) {
+      /* 모퉁이 위젯 위에서면 모퉁이 대화상자 (격리 모드로 들어가지 않는다) */
+      var cwd = H.cornerWidgetAt(app, e.x, e.y);
+      if (cwd) { AI.dialogs.corners(app, cwd.item, [0, 1, 2, 3]); return; }
       var deep = H.itemAt(app, e.x, e.y, true);
       if (!deep) { AI.commands.run('exitIsolation'); return; }
       if (deep.type === 'text') { AI.tools.setTool(app, 'type', true); AI.tools.get('type').editItem(app, deep); return; }

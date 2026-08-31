@@ -1391,16 +1391,21 @@
     var wm = M.mul(AI.viewT.matrix(app), Model.worldMatrix(app.doc, it));
     var sc = Math.hypot(wm[0], wm[1]) || 1;
     var lim = Math.min(Math.abs(w), Math.abs(h)) / 2;
-    var d = U.clamp(sh.r || 0, 12 / sc, lim);
     if (lim * sc < 22) return null;               /* 너무 작으면 표시하지 않음 */
+
+    /* 직접 선택 도구로 앵커를 일부만 골랐으면 그 모퉁이만 보여 준다 (일러스트레이터와 같다) */
+    var only = AI.edit.cornerTargets(app, it);
+    var rs = Model.rectRadii(sh), kinds = Model.rectCornerKinds(sh);
     var corners = [[0, 0, 1, 1], [w, 0, -1, 1], [w, h, -1, -1], [0, h, 1, -1]];
-    return {
-      item: it,
-      pts: corners.map(function (c, i) {
-        var p = M.apply(wm, c[0] + c[2] * d, c[1] + c[3] * d);
-        return { x: p.x, y: p.y, i: i, cx: c[0], cy: c[1], sx: c[2], sy: c[3] };
-      })
-    };
+    var pts = [];
+    corners.forEach(function (c, i) {
+      if (only.indexOf(i) < 0) return;
+      var d = U.clamp(rs[i], 12 / sc, lim);
+      var p = M.apply(wm, c[0] + c[2] * d, c[1] + c[3] * d);
+      pts.push({ x: p.x, y: p.y, i: i, cx: c[0], cy: c[1], sx: c[2], sy: c[3], kind: kinds[i], r: rs[i] });
+    });
+    if (!pts.length) return null;
+    return { item: it, pts: pts, targets: only, partial: only.length < 4 };
   };
 
   /* ---------------- 라이브 셰이프 위젯 ----------------
@@ -1478,16 +1483,24 @@
     ctx.save();
     cw.pts.forEach(function (p) {
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 5, 0, 6.2832);
+      ctx.arc(p.x, p.y, 5.5, 0, 6.2832);
       ctx.fillStyle = '#ffffff';
       ctx.strokeStyle = color;
       ctx.lineWidth = 1.2;
       ctx.fill(); ctx.stroke();
-      /* 안쪽 원호 표식 */
+      /* 안쪽 표식이 모퉁이 종류를 알려 준다 — 둥글게 · 둥글게(내부) · 모따기 */
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 2.2, 0, 6.2832);
       ctx.strokeStyle = color;
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 1.2;
+      var a = 2.6;
+      if (p.kind === 'chamfer') {
+        ctx.moveTo(p.x - a, p.y + a); ctx.lineTo(p.x + a, p.y - a);
+      } else if (p.kind === 'inv') {
+        /* 안으로 파인 호 */
+        ctx.arc(p.x + a, p.y + a, a * 2, Math.PI, Math.PI * 1.5);
+      } else {
+        ctx.arc(p.x - a, p.y - a, a * 2, 0, Math.PI / 2);
+      }
       ctx.stroke();
     });
     ctx.restore();

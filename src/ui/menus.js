@@ -116,6 +116,9 @@
         'bringToFront', 'sendToBack', '-', 'group', 'ungroup', '-',
         'clipMake', 'compoundMake', '-'];
       /* 일러스트레이터처럼 선택 내용에 맞는 항목을 끼워 넣는다 */
+      if (app.sel.some(function (it) { return it.type === 'path' && it.shape && it.shape.kind === 'rect'; })) {
+        items = items.concat(['corners', '-']);
+      }
       if (app.sel.some(function (it) { return it.type === 'image'; })) {
         items = items.concat(['imageTrace', 'cropImage', '-']);
       }

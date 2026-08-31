@@ -40,6 +40,47 @@
     onDblClick: function () { }, drawUI: null
   };
 
+  /* ---------------- 라이브 모퉁이 위젯 ----------------
+     선택 도구와 직접 선택 도구가 똑같이 쓰므로 여기에 둔다.
+     직접 선택 도구에서 앵커를 일부만 골랐다면 그 모퉁이만 바뀐다. */
+  T.cornerDown = function (app, e, hit) {
+    var U2 = AI.util, E = AI.edit;
+    var it = hit.item;
+    var targets = E.cornerTargets(app, it);
+    /* Alt+클릭 — 둥글게 → 둥글게(내부) → 모따기 순으로 돌린다 (일러스트레이터와 같다) */
+    if (e.alt) {
+      app.history.begin('모퉁이 종류', app.doc);
+      var kind = E.setCornerKind(it, targets, null);
+      app.history.commit();
+      app.invalidate();
+      AI.ui && AI.ui.syncAll && AI.ui.syncAll(app);
+      U2.toast('모퉁이: ' + AI.model.CORNER_LABEL[kind] +
+        (targets.length < 4 ? ' (' + targets.length + '개)' : ''));
+      return null;
+    }
+    app.history.begin('모퉁이 반경', app.doc);
+    return {
+      kind: 'corner', it: it, pt: hit.pt, targets: targets, moved: false,
+      r0: AI.model.rectRadii(it.shape)[hit.pt.i] || 0
+    };
+  };
+
+  T.cornerDrag = function (app, st, e) {
+    var U2 = AI.util, M2 = AI.mat, E = AI.edit;
+    st.moved = true;
+    var it = st.it;
+    var inv = M2.invert(AI.model.worldMatrix(app.doc, it));
+    var d0 = AI.viewT.toDoc(app, e.x, e.y);
+    var lp = M2.apply(inv, d0.x, d0.y);
+    /* 모퉁이 점에서 얼마나 안쪽으로 끌었는가 — 두 축 중 작은 쪽이 반경이다 */
+    var r = Math.min(Math.abs(lp.x - st.pt.cx), Math.abs(lp.y - st.pt.cy));
+    if (e.shift) r = Math.round(r);
+    var applied = E.setCornerRadius(it, st.targets, r);
+    app.hudText = '반경 ' + U2.fmt(applied) + (st.targets.length < 4 ? ' · 모퉁이 ' + st.targets.length + '개' : '');
+    app.invalidate();
+    AI.ui && AI.ui.buildToolOptions && AI.ui.buildToolOptions(app);
+  };
+
   T.mk = function (def) {
     var o = Object.create(T.base);
     for (var k in def) if (Object.prototype.hasOwnProperty.call(def, k)) o[k] = def[k];

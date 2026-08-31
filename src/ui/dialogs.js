@@ -422,6 +422,83 @@
     });
   };
 
+  /* ---------- 모퉁이 (라이브 코너) ---------- */
+  Dlg.corners = function (app, it, targets) {
+    var Model = AI.model, E = AI.edit;
+    it = it || (app.sel.length === 1 ? app.sel[0] : null);
+    if (!it || it.type !== 'path' || !it.shape || it.shape.kind !== 'rect') {
+      U.toast('라이브 사각형을 선택하세요');
+      return;
+    }
+    var sh = it.shape;
+    targets = (targets && targets.length) ? targets : [0, 1, 2, 3];
+    var rs = Model.rectRadii(sh), kinds = Model.rectCornerKinds(sh);
+    var lim = Math.min(Math.abs(sh.w), Math.abs(sh.h)) / 2;
+
+    /* 고른 모퉁이들의 지금 값 — 서로 다르면 첫 값을 보여 준다 */
+    var r0 = rs[targets[0]], k0 = kinds[targets[0]];
+    /* 고른 모퉁이끼리 다른가 — 값 칸에 무엇을 보일지 정한다 */
+    var mixedR = targets.some(function (i) { return Math.abs(rs[i] - r0) > 1e-6; });
+    var mixedK = targets.some(function (i) { return kinds[i] !== k0; });
+    /* 도형 전체가 고른가 — 고르지 않으면 지금 상태를 적어 준다 */
+    var uneven = rs.some(function (v) { return Math.abs(v - rs[0]) > 1e-6; }) ||
+      kinds.some(function (k) { return k !== kinds[0]; });
+    var NAMES = ['좌상', '우상', '우하', '좌하'];
+
+    var before = { r: sh.r, rs: sh.rs && sh.rs.slice(), c: sh.c, cs: sh.cs && sh.cs.slice() };
+    function restore() {
+      sh.r = before.r;
+      if (before.rs) sh.rs = before.rs.slice(); else delete sh.rs;
+      if (before.c) sh.c = before.c; else delete sh.c;
+      if (before.cs) sh.cs = before.cs.slice(); else delete sh.cs;
+      Model.buildShape(it);
+      app.invalidate();
+    }
+    function preview(v) {
+      restore();
+      var t = v.all ? [0, 1, 2, 3] : targets;
+      E.setCornerKind(it, t, v.kind);
+      E.setCornerRadius(it, t, Math.max(0, +v.radius || 0));
+      app.invalidate();
+    }
+
+    D.open({
+      title: '모퉁이',
+      fields: [
+        { id: 'kind', label: '종류', type: 'radio', value: mixedK ? 'round' : k0,
+          options: Model.CORNER_KINDS.map(function (k) { return [k, Model.CORNER_LABEL[k]]; }) },
+        { id: 'radius', label: '반경', type: 'num', unit: 'pt', min: 0, max: Math.round(lim * 100) / 100,
+          value: U.round(r0, 2) },
+        { type: 'sep' },
+        { id: 'all', label: '네 모퉁이 모두', type: 'check', value: targets.length === 4 },
+        { id: 'info', type: 'info',
+          label: (targets.length === 4 ? '' :
+            '고른 모퉁이: ' + targets.map(function (i) { return NAMES[i]; }).join(' · ') +
+            ' — 끄면 이 모퉁이만 바뀝니다. ') +
+            (uneven ? '지금은 모퉁이마다 다릅니다 (' +
+              rs.map(function (v, i) {
+                return NAMES[i] + ' ' + U.fmt(v) +
+                  (kinds[i] === 'round' ? '' : ' ' + Model.CORNER_LABEL[kinds[i]]);
+              }).join(' · ') + '). ' : '') +
+            '최대 반경 ' + U.fmt(lim) + 'pt' }
+      ],
+      /* 열자마자 오는 첫 호출(id 없음)에는 손대지 않는다 — 값이 섞여 있으면
+         보이는 값 하나로 네 모퉁이를 덮어써 버린다 */
+      onChange: function (v, id) { if (id != null) preview(v); },
+      onDone: function (v) {
+        restore();
+        app.history.begin('모퉁이', app.doc);
+        var t = v.all ? [0, 1, 2, 3] : targets;
+        E.setCornerKind(it, t, v.kind);
+        E.setCornerRadius(it, t, Math.max(0, +v.radius || 0));
+        app.history.commit();
+        app.invalidate();
+        AI.ui.syncAll(app);
+      },
+      onCancel: restore
+    });
+  };
+
   /* ---------- 문자 · 단락 스타일 옵션 ---------- */
   Dlg.styleOptions = function (app, kind, st) {
     var ST = AI.styles;
