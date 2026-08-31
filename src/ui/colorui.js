@@ -133,7 +133,8 @@
     var rgb = Col.hexToRgb(hex), hsb = Col.rgbToHsb(rgb.r, rgb.g, rgb.b);
     state = { h: hsb.h, s: hsb.s, v: hsb.b, began: false };
     pop.hidden = false;
-    var r = anchor.getBoundingClientRect();
+    /* 패널 버튼 대신 캔버스의 한 지점을 기준으로 열 수도 있다 ({left, bottom}) */
+    var r = anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : anchor;
     pop.style.left = Math.min(r.left, innerWidth - 240) + 'px';
     pop.style.top = Math.min(r.bottom + 4, innerHeight - 280) + 'px';
     apply();

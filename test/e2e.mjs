@@ -3374,6 +3374,217 @@ await check('변형 도구에서 Enter 는 대화상자를 연다', async () => 
   return `"${title}"`;
 });
 
+await check('문자 도구 — 클릭은 점 문자, 드래그는 영역 문자 상자', async () => {
+  await toolReset();
+  await page.keyboard.press('KeyT');
+  await page.mouse.click(box.x + 300, box.y + 250);
+  await page.waitForTimeout(200);
+  await page.keyboard.type('점문자');
+  await page.waitForTimeout(120);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(180);
+  const pointText = await ev(() => {
+    const it = AI.app.doc.layers[AI.app.doc.activeLayer].children[0];
+    return it && { type: it.type, area: !!(it.text && it.text.area), content: it.text.content };
+  });
+  if (!pointText || pointText.type !== 'text') throw new Error('점 문자=' + JSON.stringify(pointText));
+  if (pointText.area) throw new Error('클릭인데 영역 문자가 됐다');
+  if (pointText.content !== '점문자') throw new Error('내용=' + pointText.content);
+
+  await toolReset();
+  await page.keyboard.press('KeyT');
+  await page.mouse.move(box.x + 300, box.y + 300);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 520, box.y + 420, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(220);
+  await page.keyboard.type('영역 문자 상자에 긴 글을 넣으면 자동으로 줄이 바뀝니다');
+  await page.waitForTimeout(180);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(180);
+  const areaText = await ev(() => {
+    const it = AI.app.doc.layers[AI.app.doc.activeLayer].children[0];
+    return it && { area: !!(it.text && it.text.area), lines: AI.render.textLines(it).length };
+  });
+  if (!areaText || !areaText.area) throw new Error('드래그인데 영역 문자가 아니다');
+  if (areaText.lines < 2) throw new Error('자동 줄바꿈이 안 됨 (' + areaText.lines + '줄)');
+  await toolReset();
+  await page.keyboard.press('KeyV');
+  return `클릭 → 점 문자 · 드래그 → 영역 문자 ${areaText.lines}줄`;
+});
+
+await check('문자 도구 — 닫힌 도형을 누르면 그 안으로 글이 흐른다', async () => {
+  await toolReset();
+  await ev(() => {
+    const it = AI.model.newEllipse(60, 60, 260, 180);
+    it.fill = AI.color.solid('#dddddd');
+    AI.app.doc.layers[AI.app.doc.activeLayer].children.push(it);
+    AI.viewT.fitArtboard(AI.app);
+    AI.app.invalidate();
+  });
+  await refreshBox();
+  const c = await ev(() => AI.viewT.toScreen(AI.app, 190, 150));
+  await page.keyboard.press('KeyT');
+  await page.mouse.click(box.x + c.x, box.y + c.y);
+  await page.waitForTimeout(220);
+  await page.keyboard.type('도형 안으로 글이 흘러 들어갑니다 여러 줄로 나뉘어야 합니다');
+  await page.waitForTimeout(180);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(180);
+  const r = await ev(() => {
+    const L = AI.app.doc.layers[AI.app.doc.activeLayer].children;
+    const it = L[0];
+    return { n: L.length, type: it.type, shape: !!(it.text && it.text.areaShape),
+      lines: it.type === 'text' ? AI.render.textLines(it).length : 0 };
+  });
+  /* 일러스트레이터처럼 원본 도형은 문자 오브젝트가 되면서 사라진다 */
+  if (r.n !== 1) throw new Error('도형이 남아 있다=' + r.n);
+  if (r.type !== 'text' || !r.shape) throw new Error('영역 문자가 아님=' + JSON.stringify(r));
+  if (r.lines < 2) throw new Error('한 줄뿐=' + r.lines);
+  await toolReset();
+  await page.keyboard.press('KeyV');
+  return `도형 → 영역 문자 (${r.lines}줄, 원본 사라짐)`;
+});
+
+await check('문자 도구 — 누른 자리에 커서가 놓인다', async () => {
+  await toolReset();
+  await ev(() => {
+    const it = AI.model.newText(60, 120, 'ABCDEFGHIJ');
+    it.text.size = 48;
+    it.fill = AI.color.solid('#000000');
+    AI.app.doc.layers[AI.app.doc.activeLayer].children.push(it);
+    AI.viewT.fitArtboard(AI.app);
+    AI.app.invalidate();
+  });
+  await refreshBox();
+  const mid = await ev(() => {
+    const it = AI.app.doc.layers[AI.app.doc.activeLayer].children[0];
+    const w = AI.render.measureLine('ABCDE', it.text);
+    const wm = AI.mat.mul(AI.viewT.matrix(AI.app), AI.model.worldMatrix(AI.app.doc, it));
+    return AI.mat.apply(wm, w, -it.text.size * 0.3);
+  });
+  await page.keyboard.press('KeyT');
+  await page.mouse.click(box.x + mid.x, box.y + mid.y);
+  await page.waitForTimeout(280);
+  const caret = await page.evaluate(() => {
+    const el = document.getElementById('text-editor');
+    return { start: el.selectionStart, len: el.value.length };
+  });
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(150);
+  if (caret.len !== 10) throw new Error('편집 중이 아님=' + JSON.stringify(caret));
+  if (Math.abs(caret.start - 5) > 1) throw new Error(`커서가 ${caret.start} (5 근처여야 한다)`);
+  await toolReset();
+  await page.keyboard.press('KeyV');
+  await refreshBox();
+  return `"ABCDE|FGHIJ" — 커서 ${caret.start}`;
+});
+
+await check('연필 — 선택한 패스의 끝에서 시작하면 이어 그린다', async () => {
+  await toolReset();
+  await page.keyboard.press('KeyN');
+  await page.mouse.move(box.x + 200, box.y + 300);
+  await page.mouse.down();
+  for (let i = 1; i <= 8; i++) await page.mouse.move(box.x + 200 + i * 15, box.y + 300 - i * 4);
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+  const first = await ev(() => ({
+    n: AI.app.doc.layers[AI.app.doc.activeLayer].children.length,
+    pts: AI.app.sel[0].subs[0].pts.length
+  }));
+  if (first.n !== 1) throw new Error('첫 획=' + first.n);
+
+  const end = await ev(() => {
+    const it = AI.app.sel[0], sub = it.subs[0], p = sub.pts[sub.pts.length - 1];
+    const wm = AI.mat.mul(AI.viewT.matrix(AI.app), AI.model.worldMatrix(AI.app.doc, it));
+    return AI.mat.apply(wm, p.x, p.y);
+  });
+  await page.mouse.move(box.x + end.x, box.y + end.y);
+  await page.mouse.down();
+  for (let i = 1; i <= 8; i++) await page.mouse.move(box.x + end.x + i * 15, box.y + end.y + i * 5);
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+  const ext = await ev(() => ({
+    n: AI.app.doc.layers[AI.app.doc.activeLayer].children.length,
+    pts: AI.app.sel[0].subs[0].pts.length
+  }));
+  if (ext.n !== 1) throw new Error(`이어 그리지 않고 새로 만들었다 (${ext.n}개)`);
+  if (ext.pts <= first.pts) throw new Error(`앵커가 안 늘었다 ${first.pts} → ${ext.pts}`);
+
+  /* 끝점에서 멀면 새 패스여야 한다 */
+  await page.mouse.move(box.x + 700, box.y + 620);
+  await page.mouse.down();
+  for (let i = 1; i <= 6; i++) await page.mouse.move(box.x + 700 + i * 12, box.y + 620 + i * 6);
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+  const apart = await count();
+  if (apart !== 2) throw new Error('멀리서 시작했는데 이어졌다=' + apart);
+  await toolReset();
+  await page.keyboard.press('KeyV');
+  return `앵커 ${first.pts} → ${ext.pts} (한 패스) · 멀리서는 새 패스`;
+});
+
+await check('그레이디언트 — 정지점 Alt+드래그 복제 · 끌어내 삭제 · 두 번 눌러 색', async () => {
+  await toolReset();
+  await ev(() => {
+    const it = AI.model.newRect(60, 60, 300, 160, 0);
+    it.fill = AI.color.gradient('linear', '#ff0000', '#0000ff');
+    it.fill.stops.splice(1, 0, { t: 0.4, color: '#00ff00', alpha: 1 });
+    AI.app.doc.layers[AI.app.doc.activeLayer].children.push(it);
+    AI.viewT.fitArtboard(AI.app);
+    AI.sel.set(AI.app, [it]);
+    AI.app.invalidate();
+  });
+  await refreshBox();
+  await page.keyboard.press('KeyG');
+  await page.waitForTimeout(120);
+  /* 막대 위에서 t 위치의 화면 좌표 */
+  const atStop = i => page.evaluate(k => {
+    const it = AI.app.sel[0], b2 = AI.render.localBounds(it);
+    const wm = AI.mat.mul(AI.viewT.matrix(AI.app), AI.model.worldMatrix(AI.app.doc, it));
+    const cy = (b2.y + b2.y2) / 2;
+    const s0 = AI.mat.apply(wm, b2.x, cy), s1 = AI.mat.apply(wm, b2.x2, cy);
+    const t = it.fill.stops[k].t;
+    return { x: s0.x + (s1.x - s0.x) * t, y: s0.y };
+  }, i);
+  const stops = () => ev(() => AI.app.sel[0].fill.stops.length);
+
+  const n0 = await stops();
+  let p = await atStop(1);
+  await page.keyboard.down('Alt');
+  await page.mouse.move(box.x + p.x, box.y + p.y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + p.x + 40, box.y + p.y, { steps: 6 });
+  await page.mouse.up();
+  await page.keyboard.up('Alt');
+  await page.waitForTimeout(180);
+  const n1 = await stops();
+  if (n1 !== n0 + 1) throw new Error(`Alt+드래그 복제 ${n0} → ${n1}`);
+
+  p = await atStop(1);
+  await page.mouse.move(box.x + p.x, box.y + p.y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + p.x, box.y + p.y + 70, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(180);
+  const n2 = await stops();
+  if (n2 !== n1 - 1) throw new Error(`끌어내 삭제 ${n1} → ${n2}`);
+
+  p = await atStop(1);
+  await page.mouse.dblclick(box.x + p.x, box.y + p.y);
+  await page.waitForTimeout(250);
+  const popped = await page.evaluate(() => !document.getElementById('colorpop').hidden);
+  const n3 = await stops();
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(120);
+  if (!popped) throw new Error('색 팝오버가 안 열림');
+  if (n3 !== n2) throw new Error(`정지점 위 더블클릭인데 정지점이 늘었다 ${n2} → ${n3}`);
+  await toolReset();
+  await page.keyboard.press('KeyV');
+  await refreshBox();
+  return `${n0} → 복제 ${n1} → 삭제 ${n2} · 더블클릭은 색 고르기`;
+});
+
 /* ---------------- 펜 도구 · 앵커(노드) ---------------- */
 /* 펜은 커서 위치에 따라 같은 클릭이 다른 일을 한다 — 자리마다 확인한다 */
 const penReset = () => ev(() => {

@@ -54,6 +54,25 @@
     return ring;
   }
 
+  /* 선택한 열린 패스의 끝점 중 커서에 가장 가까운 것 */
+  function endpointNear(app, sx, sy) {
+    var best = null, bd = 12;
+    (app.sel || []).forEach(function (it) {
+      if (it.type !== 'path' || !it.subs) return;
+      var wm = M.mul(AI.viewT.matrix(app), Model.worldMatrix(app.doc, it));
+      it.subs.forEach(function (sub, si) {
+        if (sub.closed || sub.pts.length < 2) return;
+        [0, sub.pts.length - 1].forEach(function (pi) {
+          var p = sub.pts[pi];
+          var q = M.apply(wm, p.x, p.y);
+          var d = U.dist(q.x, q.y, sx, sy);
+          if (d < bd) { bd = d; best = { it: it, si: si, pi: pi }; }
+        });
+      });
+    });
+    return best;
+  }
+
   function docPts(app, screenPts) {
     return screenPts.map(function (p) { return AI.viewT.toDoc(app, p.x, p.y); });
   }
@@ -64,7 +83,18 @@
       id: id, name: name, key: key, cursor: 'crosshair',
       onDown: function (app, e) {
         app.history.begin(name, app.doc);
-        st = { pts: [{ x: e.x, y: e.y }], item: null };
+        st = { pts: [{ x: e.x, y: e.y }], item: null, extend: null };
+        /* 선택한 열린 패스의 끝점 가까이에서 시작하면 그 패스를 이어 그린다
+           (일러스트레이터 연필의 [선택한 패스 편집]). 브러시·물방울은 해당 없다. */
+        if (opts.pencil && app.prefs.pencilExtend !== false) {
+          var ex = endpointNear(app, e.x, e.y);
+          if (ex) {
+            Model.expandShape(ex.it);
+            if (ex.pi === 0) ex.it.subs[ex.si].pts.reverse();
+            st.extend = { it: ex.it, si: ex.si, base: ex.it.subs[ex.si].pts.slice() };
+            AI.sel.set(app, [ex.it]);
+          }
+        }
       },
       onMove: function (app, e) {
         if (!st || !e.down) return;
@@ -75,7 +105,11 @@
       },
       onUp: function (app, e) {
         if (!st) return;
-        if (st.pts.length < 2) { if (st.item) { var l = Model.locate(app.doc, st.item); if (l) l.list.splice(l.index, 1); } app.history.abort(); st = null; app.invalidate(); return; }
+        if (st.pts.length < 2) {
+          if (st.extend) st.extend.it.subs[st.extend.si].pts = st.extend.base;
+          else if (st.item) { var l = Model.locate(app.doc, st.item); if (l) l.list.splice(l.index, 1); }
+          app.history.abort(); st = null; app.invalidate(); return;
+        }
         rebuild(app, e, true);
         app.history.commit();
         st = null;
@@ -100,6 +134,29 @@
 
     function rebuild(app, e, final) {
       var dp = docPts(app, st.pts);
+
+      /* 이어 그리는 중이면 새 오브젝트를 만들지 않고 원래 패스에 점을 붙인다 */
+      if (st.extend) {
+        var ext = st.extend;
+        var sub = ext.it.subs[ext.si];
+        var inv = M.invert(Model.worldMatrix(app.doc, ext.it));
+        var add = (final ? G.fitCurve(dp, app.pencilFidelity == null ? 2.5 : app.pencilFidelity)
+          : dp.map(function (p) { return { x: p.x, y: p.y }; }))
+          .map(function (p) {
+            var q = M.apply(inv, p.x, p.y), o = { x: q.x, y: q.y };
+            if (p.ix != null) { var a = M.apply(inv, p.ix, p.iy); o.ix = a.x; o.iy = a.y; }
+            if (p.ox != null) { var b = M.apply(inv, p.ox, p.oy); o.ox = b.x; o.oy = b.y; }
+            return o;
+          });
+        sub.pts = ext.base.concat(add);
+        /* Alt 로 놓으면 닫는다 */
+        if (final && e && e.alt) sub.closed = true;
+        AI.sel.set(app, [ext.it]);
+        st.item = ext.it;
+        app.invalidate();
+        return;
+      }
+
       if (st.item) { var loc = Model.locate(app.doc, st.item); if (loc) loc.list.splice(loc.index, 1); }
       var it;
       if (opts.blob) {

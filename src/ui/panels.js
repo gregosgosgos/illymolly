@@ -806,6 +806,16 @@
   }
 
   /* 색상 피커에서 정지점 색을 바꿀 때 호출 */
+  /* 캔버스의 주석자에서 정지점을 고르면 패널도 같은 정지점을 가리키게 한다 */
+  UI.setGradientStopIndex = function (a, i) {
+    var g = currentGradient(a);
+    if (!g || !g.stops || i == null || i < 0 || i >= g.stops.length) return false;
+    gradStop = i;
+    UI.syncGradient(a);
+    return true;
+  };
+  UI.gradientStopIndex = function () { return gradStop; };
+
   UI.setGradientStopColor = function (a, hex) {
     var g = currentGradient(a);
     if (!g) return false;

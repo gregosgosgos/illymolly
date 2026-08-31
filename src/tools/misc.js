@@ -219,7 +219,19 @@
         }
         var si = stopAt(app, it, g, e.x, e.y);
         if (si >= 0) {
-          app.history.begin('그레이디언트 정지점', app.doc);
+          /* Alt+드래그 = 정지점 복제 (일러스트레이터와 같다) */
+          if (e.alt) {
+            app.history.begin('정지점 복제', app.doc);
+            var src = it.fill.stops[si];
+            var dup = { t: src.t, color: src.color, alpha: src.alpha == null ? 1 : src.alpha };
+            it.fill.stops.push(dup);
+            it.fill.stops.sort(function (a, b) { return a.t - b.t; });
+            si = it.fill.stops.indexOf(dup);
+            AI.appearance.pushDown(it);
+          } else {
+            app.history.begin('그레이디언트 정지점', app.doc);
+          }
+          AI.ui && AI.ui.setGradientStopIndex && AI.ui.setGradientStopIndex(app, si);
           st = { mode: 'stop', it: it, g: g, si: si }; return;
         }
       }
@@ -270,15 +282,26 @@
         AI.appearance.pushDown(st.it);
       } else if (st.mode === 'stop') {
         var t = projectT(st.g, e.x, e.y);
-        st.it.fill.stops[st.si].t = U.clamp(t, 0, 1);
-        st.it.fill.stops.sort(function (a, b) { return a.t - b.t; });
-        AI.appearance.pushDown(st.it);
+        /* 막대에서 멀리 끌어내면 지운다 — 놓기 전까지는 표시만 해 둔다 */
+        st.drop = distToBar(st.g, e.x, e.y) > 34 && st.it.fill.stops.length > 2;
+        app.hudText = st.drop ? '놓으면 정지점 삭제' : null;
+        if (!st.drop) {
+          st.it.fill.stops[st.si].t = U.clamp(t, 0, 1);
+          st.it.fill.stops.sort(function (a, b) { return a.t - b.t; });
+          AI.appearance.pushDown(st.it);
+        }
       }
       app.invalidate();
       AI.ui && AI.ui.syncStyle && AI.ui.syncStyle(app);
     },
     onUp: function (app) {
       if (!st) return;
+      if (st.mode === 'stop' && st.drop) {
+        st.it.fill.stops.splice(st.si, 1);
+        AI.appearance.pushDown(st.it);
+        U.toast('정지점 삭제');
+      }
+      app.hudText = null;
       app.history.commit();
       st = null;
       app.invalidate();
@@ -303,10 +326,21 @@
         AI.ui.syncAll(app);
         return;
       }
-      /* 막대를 더블클릭하면 그 위치에 정지점을 추가한다 */
       var it = gradTarget(app);
       if (!it) return;
       var g = gradEnds(app, it);
+
+      /* 정지점 위를 두 번 누르면 그 정지점의 색을 고른다 (일러스트레이터와 같다) */
+      var onStop = stopAt(app, it, g, e.x, e.y);
+      if (onStop >= 0) {
+        AI.ui && AI.ui.setGradientStopIndex && AI.ui.setGradientStopIndex(app, onStop);
+        app.gradStopEdit = true;
+        var cr = app.canvas.getBoundingClientRect();
+        AI.ui.openColorPicker(app, { left: cr.left + e.x - 110, bottom: cr.top + e.y + 12 });
+        return;
+      }
+
+      /* 막대를 더블클릭하면 그 위치에 정지점을 추가한다 */
       var t = projectT(g, e.x, e.y);
       if (t < -0.02 || t > 1.02) return;
       app.history.begin('정지점 추가', app.doc);
@@ -373,6 +407,12 @@
     var dx = g.s1.x - g.s0.x, dy = g.s1.y - g.s0.y, l2 = dx * dx + dy * dy;
     if (l2 < 1e-9) return 0;
     return ((x - g.s0.x) * dx + (y - g.s0.y) * dy) / l2;
+  }
+  /* 막대(주석자)에서 얼마나 떨어져 있나 — 정지점을 끌어내 지울 때 쓴다 */
+  function distToBar(g, x, y) {
+    var t = U.clamp(projectT(g, x, y), 0, 1);
+    var p = lerpPt(g.s0, g.s1, t);
+    return U.dist(x, y, p.x, p.y);
   }
   function stopAt(app, it, g, x, y) {
     for (var i = 0; i < it.fill.stops.length; i++) {
