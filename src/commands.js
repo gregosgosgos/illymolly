@@ -63,6 +63,7 @@
     enabled: function () { return AI.keymap.canLock(); }
   });
   def('shortcutList', '단축키...', null, function (a) { AI.dialogs.shortcuts(a); });
+  def('commandSearch', '검색...', 'Ctrl+/', function (a) { AI.ui.openSearch(a); });
   def('installApp', '앱으로 설치...', null, function () { AI.pwa.install(); }, {
     label2: function () { return AI.pwa.standalone() ? '앱으로 실행 중' : '앱으로 설치...'; },
     enabled: function () { return AI.pwa.canInstall(); }
@@ -143,10 +144,18 @@
   def('pasteBack', '뒤에 붙이기', 'Ctrl+B', function (a) { AI.clipboard.pasteAsync(a, 'back'); });
   def('pasteInPlace', '제자리에 붙이기', 'Ctrl+Shift+V', function (a) { AI.clipboard.pasteAsync(a, 'place'); });
   def('clear', '지우기', 'Delete', hist('삭제', function (a) {
-    if (a.selPts.length && T.current(a) && T.current(a).direct) { E.deleteAnchors(a); return; }
+    if (a.selPts.length && T.current(a) && T.current(a).direct) {
+      var np = a.selPts.length;
+      E.deleteAnchors(a);
+      U.toast('앵커 ' + np + '개 삭제 — 되돌리려면 ' + AI.keymap.display('Ctrl+Z'));
+      return;
+    }
     if (!a.sel.length) return false;
+    var n = a.sel.length;
     E.remove(a);
-  }));
+    /* 되돌릴 수 있다는 것을 그 자리에서 알려 준다 — 지웠다는 사실보다 중요하다 */
+    U.toast(n + '개 삭제 — 되돌리려면 ' + AI.keymap.display('Ctrl+Z'));
+  }), { enabled: function (a) { return a.sel.length > 0 || a.selPts.length > 0; } });
   def('duplicate', '복제', 'Ctrl+Alt+D', hist('복제', function (a) {
     if (!a.sel.length) return false;
     E.duplicate(a, 10, 10);
@@ -245,17 +254,33 @@
   def('sendToBack', '맨 뒤로 보내기', 'Ctrl+Shift+[', hist('맨 뒤로', function (a) { if (!a.sel.length) return false; E.arrange(a, 'back'); }), { enabled: hasSel });
 
   def('group', '그룹', 'Ctrl+G', hist('그룹', function (a) { if (a.sel.length < 2) return false; E.group(a); }), { enabled: function (a) { return a.sel.length > 1; } });
+  var hasGroupSel = function (a) { return a.sel.some(function (it) { return it.type === 'group'; }); };
   def('ungroup', '그룹 풀기', 'Ctrl+Shift+G', hist('그룹 풀기', function (a) {
-    if (!a.sel.some(function (i) { return i.type === 'group'; })) return false;
+    if (!hasGroupSel(a)) return false;
     E.ungroup(a);
-  }));
+  }), { enabled: hasGroupSel });
   def('lock', '잠금', 'Ctrl+2', hist('잠금', function (a) { if (!a.sel.length) return false; E.lock(a); }), { enabled: hasSel });
-  def('unlockAll', '모두 잠금 해제', 'Ctrl+Alt+2', hist('잠금 해제', function (a) { E.unlockAll(a); }));
+  var anyIs = function (key) {
+    return function (a) {
+      var found = false;
+      Model.walk(a.doc, function (it) { if (it[key]) found = true; });
+      return found;
+    };
+  };
+  def('unlockAll', '모두 잠금 해제', 'Ctrl+Alt+2', hist('잠금 해제', function (a) { E.unlockAll(a); }),
+    { enabled: anyIs('locked') });
   def('hide', '숨기기', 'Ctrl+3', hist('숨기기', function (a) { if (!a.sel.length) return false; E.hide(a); }), { enabled: hasSel });
-  def('showAll', '모두 표시', 'Ctrl+Alt+3', hist('모두 표시', function (a) { E.showAll(a); }));
+  def('showAll', '모두 표시', 'Ctrl+Alt+3', hist('모두 표시', function (a) { E.showAll(a); }),
+    { enabled: function (a) {
+      var hidden = false;
+      Model.walk(a.doc, function (it) { if (it.visible === false) hidden = true; });
+      return hidden;
+    } });
 
-  def('clipMake', '클리핑 마스크 만들기', 'Ctrl+7', hist('클리핑 마스크', function (a) { if (a.sel.length < 2) return false; E.makeClipMask(a); }));
-  def('clipRelease', '클리핑 마스크 해제', 'Ctrl+Alt+7', hist('마스크 해제', function (a) { E.releaseClipMask(a); }));
+  def('clipMake', '클리핑 마스크 만들기', 'Ctrl+7', hist('클리핑 마스크', function (a) { if (a.sel.length < 2) return false; E.makeClipMask(a); }),
+    { enabled: function (a) { return a.sel.length >= 2; } });
+  def('clipRelease', '클리핑 마스크 해제', 'Ctrl+Alt+7', hist('마스크 해제', function (a) { E.releaseClipMask(a); }),
+    { enabled: function (a) { return a.sel.some(function (it) { return it.type === 'group' && it.clip; }); } });
 
   def('compoundMake', '컴파운드 패스 만들기', 'Ctrl+8', hist('컴파운드 패스', function (a) {
     var paths = a.sel.filter(function (i) { return i.type === 'path'; });
@@ -310,9 +335,14 @@
       out = out.concat(made);
     });
     AI.sel.set(a, out);
-  }));
+  }), {
+    enabled: function (a) {
+      return a.sel.some(function (it) { return it.type === 'path' && it.subs && it.subs.length > 1; });
+    }
+  });
 
-  def('joinPath', '연결', 'Ctrl+J', hist('연결', function (a) { return E.joinPath(a); }));
+  def('joinPath', '연결', 'Ctrl+J', hist('연결', function (a) { return E.joinPath(a); }),
+    { enabled: function (a) { return a.sel.length >= 1 && a.sel.some(function (it) { return it.type === 'path'; }); } });
   def('averagePath', '평균점 연결...', 'Ctrl+Alt+J', function (a) {
     if (a.selPts.length < 2) { U.toast('앵커를 2개 이상 선택하세요'); return; }
     AI.dialogs.average(a, function (axis) {
@@ -480,6 +510,10 @@
   def('zoomOut', '축소', 'Ctrl+-', function (a) { AI.viewT.zoomStep(a, -1); });
   def('fitArtboard', '대지에 맞추기', 'Ctrl+0', function (a) { AI.viewT.fitArtboard(a); });
   def('fitAll', '전체 대지 맞추기', 'Ctrl+Alt+0', function (a) { AI.viewT.fitAll(a); });
+  def('fitSelection', '선택 항목에 맞추기', 'Ctrl+Alt+0', function (a) {
+    if (!a.sel.length) { U.toast('오브젝트를 선택하세요'); return; }
+    AI.viewT.fitRect(a, Rn.selectionBounds(a, false), 24);
+  }, { enabled: hasSel });
   def('actualSize', '실제 크기', 'Ctrl+1', function (a) { AI.viewT.setZoom(a, 1); });
   def('rotateViewCW', '화면 시계 방향 회전', null, function (a) { AI.viewT.rotateView(a, Math.PI / 12); });
   def('rotateViewCCW', '화면 반시계 방향 회전', null, function (a) { AI.viewT.rotateView(a, -Math.PI / 12); });
@@ -953,8 +987,8 @@
     },
     {
       title: '보기', items: [
-        'fullKeyboard', 'shortcutList', '-',
-        'outlineMode', '-', 'zoomIn', 'zoomOut', 'fitArtboard', 'fitAll', 'actualSize', '-',
+        'commandSearch', 'fullKeyboard', 'shortcutList', '-',
+        'outlineMode', '-', 'zoomIn', 'zoomOut', 'fitArtboard', 'fitAll', 'fitSelection', 'actualSize', '-',
         'rotateViewCW', 'rotateViewCCW', 'resetRotation', '-',
         'hideEdges', 'showBBox', '-', 'showRulers', 'showGrid', 'snapGrid', 'smartGuides', '-',
         'showGuides', 'lockGuides', 'makeGuides', 'releaseGuides', 'clearGuides'

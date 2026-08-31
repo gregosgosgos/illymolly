@@ -1289,6 +1289,9 @@
 
     if (tool && tool.drawUI) tool.drawUI(ctx, app);
 
+    /* 아무것도 없는 문서 — 무엇부터 하면 되는지 조용히 알려 준다 */
+    drawStartHint(ctx, app);
+
     /* 마퀴 */
     if (app.marquee) {
       var r = app.marquee;
@@ -1306,6 +1309,72 @@
 
     ctx.restore();
   };
+
+  /* ---------------- 시작 안내 ----------------
+     빈 대지 앞에서 무엇을 눌러야 할지 모르는 것이 제일 큰 벽이다. 대지 가운데에
+     연하게 몇 줄만 띄우고, 첫 오브젝트가 생기면 저절로 사라진다. */
+  var START_HINT = [
+    ['M', '사각형'], ['L', '원'], ['P', '펜'], ['T', '문자'], ['N', '연필']
+  ];
+  function docEmpty(doc) {
+    for (var i = 0; i < doc.layers.length; i++) if (doc.layers[i].children.length) return false;
+    return true;
+  }
+  function drawStartHint(ctx, app) {
+    if (app.prefs.startHint === false) return;
+    if (!docEmpty(app.doc) || app.editingText) return;
+    var ab = app.doc.artboards[app.doc.activeArtboard];
+    if (!ab) return;
+    var c = AI.viewT.toScreen(app, ab.x + ab.w / 2, ab.y + ab.h / 2);
+    var sc = app.view.scale;
+    if (ab.w * sc < 260 || ab.h * sc < 150) return;      /* 좁으면 방해만 된다 */
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(120,120,120,.62)';
+    ctx.font = '13px "Adobe Clean","Segoe UI",Roboto,"Noto Sans KR",sans-serif';
+    ctx.fillText('빈 대지입니다 — 도구를 눌러 그리거나, 그림 파일을 끌어다 놓으세요', c.x, c.y - 26);
+
+    /* 도구 키 안내 — 키 상자 + 이름을 한 줄로 */
+    ctx.font = '11px "Adobe Clean","Segoe UI",Roboto,"Noto Sans KR",sans-serif';
+    var gap = 14, pad = 7, kw = 20, parts = [], total = 0;
+    START_HINT.forEach(function (h) {
+      var w = kw + 4 + ctx.measureText(h[1]).width;
+      parts.push({ k: h[0], t: h[1], w: w });
+      total += w + gap;
+    });
+    total -= gap;
+    var x = c.x - total / 2;
+    parts.forEach(function (o) {
+      ctx.fillStyle = 'rgba(120,120,120,.22)';
+      roundRect(ctx, x, c.y - 3, kw, 16, 3);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(150,150,150,.85)';
+      ctx.textAlign = 'center';
+      ctx.fillText(o.k, x + kw / 2, c.y + 5);
+      ctx.fillStyle = 'rgba(120,120,120,.62)';
+      ctx.textAlign = 'left';
+      ctx.fillText(o.t, x + kw + 4, c.y + 5);
+      x += o.w + gap;
+    });
+    void pad;
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(120,120,120,.5)';
+    ctx.fillText('Ctrl+/ 로 모든 명령을 이름으로 찾을 수 있습니다', c.x, c.y + 34);
+    ctx.restore();
+  }
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  Rn.drawStartHint = drawStartHint;
 
   var SG = '#ff2fd0';
   function drawSmartGuides(ctx, app) {

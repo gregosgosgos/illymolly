@@ -581,3 +581,36 @@ select.dlg-input{text-align:left;min-width:110px;cursor:pointer}
   opacity:0;overflow:hidden;z-index:-1;pointer-events:none;
   white-space:pre;outline:none;caret-color:transparent
 }
+
+/* ---- 명령 검색 (ui/search.js) ---- */
+#cmdsearch{position:relative;display:flex;align-items:center;margin-right:10px;min-width:0}
+/* 좁은 화면에서는 접는다 — 메뉴 막대가 밀려 가로 스크롤이 생긴다.
+   (모바일에는 앱바의 명령 시트가 따로 있고, Ctrl+/ 도 그대로 살아 있다) */
+@media (max-width:900px){ #cmdsearch{display:none} }
+#cs-input{
+  width:150px;min-width:0;height:18px;padding:0 7px;
+  background:var(--sunken);border:1px solid var(--line2);border-radius:9px;
+  color:var(--txt);font-size:11px;outline:none;transition:width .12s ease
+}
+#cs-input::placeholder{color:#6d6d6d}
+#cs-input:focus{width:230px;border-color:var(--accent)}
+#cs-list{
+  position:absolute;top:22px;right:0;width:330px;z-index:600;
+  background:var(--bg3);border:1px solid var(--line2);border-radius:4px;
+  box-shadow:0 8px 22px rgba(0,0,0,.5);padding:3px;max-height:340px;overflow:auto
+}
+.cs-row{
+  display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:3px;
+  cursor:pointer;white-space:nowrap
+}
+.cs-row.on{background:var(--accent2);color:#fff}
+.cs-row.off{opacity:.45}
+.cs-label{flex:1;overflow:hidden;text-overflow:ellipsis}
+.cs-where{color:var(--txt-dim);font-size:10px}
+.cs-row.on .cs-where{color:#cfe4ff}
+.cs-key{
+  color:var(--txt-dim);font-size:10px;border:1px solid var(--line2);
+  border-radius:3px;padding:0 4px;background:var(--bg4)
+}
+.cs-row.on .cs-key{color:#fff;border-color:rgba(255,255,255,.4);background:transparent}
+.cs-empty{padding:8px;color:var(--txt-dim)}

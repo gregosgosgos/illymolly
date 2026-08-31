@@ -43,6 +43,14 @@ const count = () => ev(() => AI.app.doc.layers.reduce((n, l) => n + l.children.l
 /* 패널은 탭으로 묶여 있으므로 만지기 전에 앞으로 꺼낸다 (사용자가 탭을 누르는 것과 같다) */
 const showPanel = name => page.evaluate(n => AI.ui.showPanel(n), name);
 const U0 = v => Math.round(v * 10) / 10;
+/* 검사 사이에 문서를 비워 앞의 검사가 남긴 것에 걸리지 않게 한다 */
+const toolReset = () => ev(() => {
+  AI.app.doc.layers.forEach(l => { l.children.length = 0; });
+  AI.sel.clear(AI.app);
+  AI.app.transformOrigin = null;
+  AI.app.invalidate();
+});
+
 
 async function drag(a, b, mods = []) {
   for (const m of mods) await page.keyboard.down(m);
@@ -3152,6 +3160,176 @@ await check('자동 저장 · 복구 — 새로 고쳐도 작업이 살아남는
   return `2개 오브젝트 · 색상 유지 · "작업중 [복구됨]" · 기록 정리`;
 });
 
+/* ---------------- 사용 편의 ---------------- */
+const csRows = () => page.$$eval('.cs-row', ns => ns.map(n => ({
+  label: n.querySelector('.cs-label').textContent,
+  where: n.querySelector('.cs-where').textContent,
+  key: (n.querySelector('.cs-key') || {}).textContent || '',
+  off: n.classList.contains('off')
+})));
+
+await check('명령 검색 — 이름·초성으로 찾고, 어느 메뉴에 있는지 알려 준다', async () => {
+  await toolReset();
+  await page.keyboard.press('Control+Slash');
+  await page.waitForTimeout(180);
+  if (await page.evaluate(() => document.activeElement.id) !== 'cs-input') {
+    throw new Error('Ctrl+/ 로 안 열림');
+  }
+  await page.keyboard.type('컴파운');
+  await page.waitForTimeout(180);
+  const byName = await csRows();
+  if (!byName.length) throw new Error('결과 없음');
+  if (byName[0].label.indexOf('컴파운드 패스 만들기') < 0) {
+    throw new Error('첫 결과=' + byName[0].label + ' (쓸 수 있는 것이 위로 와야 한다)');
+  }
+  if (byName[0].where !== '오브젝트') throw new Error('메뉴 경로=' + byName[0].where);
+  if (!byName[0].key) throw new Error('단축키가 안 보임');
+
+  /* 한글 초성으로도 */
+  await page.fill('#cs-input', '');
+  await page.keyboard.type('ㅋㅍㅇ');
+  await page.waitForTimeout(180);
+  const byInitial = await csRows();
+  if (!byInitial.length || byInitial[0].label !== byName[0].label) {
+    throw new Error('초성 검색=' + JSON.stringify(byInitial.slice(0, 2)));
+  }
+
+  /* 도구도 찾힌다 — 지금 쓸 수 있는 것이 먼저 */
+  await page.fill('#cs-input', '');
+  await page.keyboard.type('회전');
+  await page.waitForTimeout(180);
+  const rot = await csRows();
+  if (rot[0].where !== '도구') throw new Error('쓸 수 없는 명령이 도구보다 위=' + JSON.stringify(rot.slice(0, 2)));
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(120);
+  return `"컴파운"→${byName[0].label}[${byName[0].where} ${byName[0].key}] · 초성 · 도구 우선`;
+});
+
+await check('명령 검색 — Enter 로 실행되고, 쓸 수 없으면 이유를 말한다', async () => {
+  await toolReset();
+  await ev(() => {
+    const L = AI.app.doc.layers[AI.app.doc.activeLayer];
+    L.children.push(AI.model.newRect(10, 10, 50, 50, 0), AI.model.newRect(80, 10, 50, 50, 0));
+    AI.sel.set(AI.app, L.children.slice());
+    AI.app.invalidate();
+  });
+  const before = await count();
+  await page.keyboard.press('Control+Slash');
+  await page.keyboard.type('그룹');
+  await page.waitForTimeout(180);
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(250);
+  const after = await ev(() => ({
+    n: AI.app.doc.layers[AI.app.doc.activeLayer].children.length,
+    type: AI.app.doc.layers[AI.app.doc.activeLayer].children[0].type
+  }));
+  if (before !== 2 || after.n !== 1 || after.type !== 'group') {
+    throw new Error(`그룹 실행 ${before} → ${JSON.stringify(after)}`);
+  }
+
+  /* 선택을 비우면 쓸 수 없는 것으로 표시되고, 눌러도 이유만 말한다 */
+  await ev(() => { AI.sel.clear(AI.app); AI.app.invalidate(); });
+  await page.keyboard.press('Control+Slash');
+  await page.keyboard.type('클리핑 마스크 만들');
+  await page.waitForTimeout(180);
+  const rows = await csRows();
+  if (!rows.length || !rows[0].off) throw new Error('비활성 표시가 없다=' + JSON.stringify(rows[0]));
+  const msg = await page.evaluate(async () => {
+    const seen = [];
+    const t = AI.util.toast;
+    AI.util.toast = m => { seen.push(m); };
+    document.querySelector('.cs-row').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 150));
+    AI.util.toast = t;
+    return seen.join(' | ');
+  });
+  if (msg.indexOf('쓸 수 없') < 0) throw new Error('이유를 안 말함=' + msg);
+  await page.keyboard.press('Escape');
+  await toolReset();
+  await refreshBox();
+  return `Enter 로 그룹 실행 · 비활성은 "${msg.slice(0, 30)}…"`;
+});
+
+await check('빈 대지에 시작 안내가 뜨고, 뭔가 그리면 사라진다', async () => {
+  await toolReset();
+  await ev(() => { AI.viewT.fitArtboard(AI.app); AI.app.invalidate(); });
+  await page.waitForTimeout(200);
+  /* 대지 한가운데를 찍어 안내 글자가 실제로 칠해졌는지 본다 */
+  const sample = async () => page.evaluate(() => {
+    const c = AI.app.canvas, g = c.getContext('2d');
+    const ab = AI.app.doc.artboards[AI.app.doc.activeArtboard];
+    const p = AI.viewT.toScreen(AI.app, ab.x + ab.w / 2, ab.y + ab.h / 2);
+    const d = AI.app.dpr || 1;
+    const px = g.getImageData((p.x - 90) * d, (p.y - 26) * d, 180 * d, 12 * d).data;
+    let ink = 0;
+    for (let i = 0; i < px.length; i += 4) if (px[i] < 240) ink++;
+    return ink;
+  });
+  const empty = await sample();
+  if (empty < 30) throw new Error('빈 대지인데 안내가 안 보임 (ink=' + empty + ')');
+
+  await ev(() => {
+    const it = AI.model.newRect(0, 0, 20, 20, 0);
+    AI.app.doc.layers[AI.app.doc.activeLayer].children.push(it);
+    AI.app.invalidate();
+  });
+  await page.waitForTimeout(200);
+  const drawn = await sample();
+  if (drawn > empty / 3) throw new Error(`오브젝트가 생겼는데 안내가 남음 (${empty} → ${drawn})`);
+  await toolReset();
+  return `빈 대지 ink ${empty} → 그린 뒤 ${drawn}`;
+});
+
+await check('보기 > 선택 항목에 맞추기', async () => {
+  await toolReset();
+  const r = await ev(() => {
+    const L = AI.app.doc.layers[AI.app.doc.activeLayer];
+    const a = AI.model.newRect(20, 20, 40, 40, 0);
+    const far = AI.model.newRect(1400, 900, 60, 60, 0);
+    L.children.push(a, far);
+    AI.viewT.fitAll(AI.app);
+    AI.sel.set(AI.app, [far]);
+    const before = AI.app.view.scale;
+    AI.commands.run('fitSelection');
+    const b = AI.render.worldBounds(AI.app.doc, far, false);
+    const c = AI.viewT.toScreen(AI.app, AI.rect.cx(b), AI.rect.cy(b));
+    return {
+      before: Math.round(before * 100) / 100,
+      after: Math.round(AI.app.view.scale * 100) / 100,
+      cx: Math.round(c.x), cy: Math.round(c.y),
+      w: AI.app.canvas.clientWidth, h: AI.app.canvas.clientHeight
+    };
+  });
+  if (!(r.after > r.before)) throw new Error(`배율 ${r.before} → ${r.after} (더 크게 당겨야 한다)`);
+  if (Math.abs(r.cx - r.w / 2) > 4 || Math.abs(r.cy - r.h / 2) > 4) {
+    throw new Error(`가운데로 안 옴 (${r.cx},${r.cy}) 화면 가운데 (${r.w / 2},${r.h / 2})`);
+  }
+  await toolReset();
+  await refreshBox();
+  return `배율 ${r.before} → ${r.after} · 화면 가운데`;
+});
+
+await check('지우면 되돌릴 수 있다고 알려 준다', async () => {
+  await toolReset();
+  const msg = await page.evaluate(async () => {
+    const L = AI.app.doc.layers[AI.app.doc.activeLayer];
+    L.children.push(AI.model.newRect(0, 0, 20, 20, 0), AI.model.newRect(40, 0, 20, 20, 0));
+    AI.sel.set(AI.app, L.children.slice());
+    const seen = [];
+    const t = AI.util.toast;
+    AI.util.toast = m => { seen.push(m); };
+    AI.commands.run('clear');
+    await new Promise(r => setTimeout(r, 100));
+    AI.util.toast = t;
+    return { msg: seen.join(' | '), left: L.children.length };
+  });
+  if (msg.left !== 0) throw new Error('안 지워짐=' + msg.left);
+  if (msg.msg.indexOf('2개 삭제') < 0) throw new Error('개수를 안 알려 줌=' + msg.msg);
+  if (msg.msg.indexOf('Ctrl+Z') < 0) throw new Error('되돌리는 법을 안 알려 줌=' + msg.msg);
+  await toolReset();
+  return `"${msg.msg}"`;
+});
+
 /* ---------------- 반복 (방사형 · 격자 · 미러) ---------------- */
 await check('반복 — 사본을 만들지 않고 규칙만 얹는다 (세 종류)', async () => {
   const r = await ev(() => {
@@ -3290,12 +3468,6 @@ await check('정렬 — 키 오브젝트 기준일 때만 굵게 표시한다', 
 });
 
 /* ---------------- 자주 쓰는 도구의 보조키 (일러스트레이터 규칙) ---------------- */
-const toolReset = () => ev(() => {
-  AI.app.doc.layers.forEach(l => { l.children.length = 0; });
-  AI.sel.clear(AI.app);
-  AI.app.transformOrigin = null;
-  AI.app.invalidate();
-});
 const selBounds = () => ev(() => {
   const it = AI.app.sel[0];
   if (!it) return null;
