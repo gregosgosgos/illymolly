@@ -26,6 +26,10 @@
     }
     p.appendChild(wrap);
 
+    /* 선택한 항목이 목록 밖에 있으면 그리로 스크롤한다 — 캔버스에서 고른 것을
+       레이어 패널에서 찾느라 헤매지 않게 (일러스트레이터와 같다) */
+    UI.scrollIntoPanel(wrap.querySelector('.lyr.item.sel') || wrap.querySelector('.lyr.sel'));
+
     var tools = U.el('div', 'lyr-tools');
     tools.innerHTML =
       '<button class="mini-btn" id="ly-new" title="새 레이어">' + UI.icon('newLayer', 13) + '</button>' +
@@ -118,7 +122,9 @@
   }
 
   function appendItemRows(app, wrap, it, layer, depth) {
-    var row = U.el('div', 'lyr' + (AI.sel.has(app, it) ? ' sel' : ''));
+    /* item — 레이어 줄과 구분한다. 선택을 따라 스크롤할 때 레이어 줄이 아니라
+       고른 오브젝트로 가야 한다 (레이어 줄은 늘 맨 위에 있다). */
+    var row = U.el('div', 'lyr item' + (AI.sel.has(app, it) ? ' sel' : ''));
     row.draggable = true;
     var pad = 4 + depth * 12;
     row.style.paddingLeft = pad + 'px';

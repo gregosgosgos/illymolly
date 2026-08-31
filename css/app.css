@@ -253,6 +253,9 @@ body.no-rulers #ruler-h,body.no-rulers #ruler-v,body.no-rulers #ruler-corner{dis
 
 .panel.tab-hidden{display:none}
 .panel>.body{padding:8px}
+/* 작업 내역도 제 안에서 스크롤한다 — 단계가 쌓인다고 다른 패널을 밀어내면
+   안 된다 (레이어는 .lyr-list 가 이미 제 몫을 하고 있다) */
+#p-history{max-height:min(46vh,420px);overflow-y:auto}
 .row{display:flex;align-items:center;gap:var(--gap-s);margin-bottom:var(--gap)}
 .row:last-child{margin-bottom:0}
 .row label{color:var(--txt-dim);min-width:14px;white-space:nowrap;flex:none}
@@ -408,7 +411,12 @@ select.fld{padding-right:2px;cursor:pointer}
   height:24px;flex:none;display:flex;align-items:center;gap:8px;padding:0 8px;
   background:var(--bg3);border-top:1px solid var(--line);color:var(--txt-dim);
 }
-#statusbar #st-coords{font-variant-numeric:tabular-nums}
+#statusbar #st-coords{font-variant-numeric:tabular-nums;flex:none}
+/* 도구 힌트는 자리가 모자라면 줄여서 보여 준다 — 좌표를 밀어내면 안 된다 */
+#statusbar #st-hint{
+  color:var(--txt-dim);min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap
+}
 .zoombox{display:flex;align-items:center}
 .zoombox input{width:52px;height:16px;background:#1a1a1a;border:1px solid #4a4a4a;border-radius:2px;text-align:right;padding:0 3px}
 .zoombox .pct{display:none}
@@ -614,3 +622,24 @@ select.dlg-input{text-align:left;min-width:110px;cursor:pointer}
 }
 .cs-row.on .cs-key{color:#fff;border-color:rgba(255,255,255,.4);background:transparent}
 .cs-empty{padding:8px;color:var(--txt-dim)}
+
+/* ---- 작업 내역 패널 (ui/history.js) ---- */
+.hist-list{display:flex;flex-direction:column}
+.hist{
+  display:flex;align-items:center;gap:7px;padding:3px 6px;cursor:pointer;
+  border-radius:2px;white-space:nowrap
+}
+.hist:hover{background:var(--bg3)}
+.hist.now{background:var(--accent2);color:#fff}
+/* 되돌려서 지나온 자리 — 다시 실행하면 갈 수 있는 곳 */
+.hist.ahead{opacity:.45}
+.hist-n{
+  min-width:18px;text-align:right;color:var(--txt-dim);
+  font-variant-numeric:tabular-nums;font-size:10px
+}
+.hist.now .hist-n{color:#cfe4ff}
+.hist-l{flex:1;overflow:hidden;text-overflow:ellipsis}
+.hist-foot{
+  margin-top:6px;padding-top:5px;border-top:1px solid var(--bg3);
+  color:var(--txt-dim);font-size:10px
+}

@@ -1789,7 +1789,7 @@ await check('패널 탭 도크 — 전환 · 접기 · 윈도우 메뉴', async 
     };
   });
   if (r0.groups !== 6) throw new Error('그룹 수=' + r0.groups);
-  if (r0.panels !== 15) throw new Error('패널 수=' + r0.panels);
+  if (r0.panels !== 16) throw new Error('패널 수=' + r0.panels);
   if (r0.badGroups) throw new Error('한 번에 하나만 보여야 함 — 어긋난 그룹 ' + r0.badGroups);
   if (!r1.shown || !r1.hidden || !r1.tabOn) throw new Error('탭 전환=' + JSON.stringify(r1));
   if (!collapsed) throw new Error('접기 실패');
@@ -3328,6 +3328,109 @@ await check('지우면 되돌릴 수 있다고 알려 준다', async () => {
   if (msg.msg.indexOf('Ctrl+Z') < 0) throw new Error('되돌리는 법을 안 알려 줌=' + msg.msg);
   await toolReset();
   return `"${msg.msg}"`;
+});
+
+await check('작업 내역 패널 — 아무 지점이나 눌러 그리로 간다', async () => {
+  await toolReset();
+  await ev(() => {
+    /* 앞선 검사가 쌓아 둔 기록을 지우고 깨끗한 상태에서 센다 */
+    AI.app.history.reset(AI.app.doc, '새 문서');
+    ['사각형', '원', '별', '문자'].forEach((n, i) => {
+      AI.app.history.begin(n, AI.app.doc);
+      const it = i === 3 ? AI.model.newText(20 + i * 70, 200, 'A')
+        : i === 1 ? AI.model.newEllipse(20 + i * 70, 40, 50, 50)
+          : i === 2 ? AI.model.newStar(20 + i * 70, 40, 25, 11, 5)
+            : AI.model.newRect(20 + i * 70, 40, 50, 50, 0);
+      AI.app.doc.layers[AI.app.doc.activeLayer].children.push(it);
+      AI.app.history.commit();
+    });
+    AI.ui.showPanel('history');
+    AI.ui.syncAll(AI.app);
+  });
+  await page.waitForTimeout(200);
+  const rows = () => page.$$eval('.hist', ns => ns.map(n => ({
+    n: n.querySelector('.hist-n').textContent,
+    l: n.querySelector('.hist-l').textContent,
+    now: n.classList.contains('now'),
+    ahead: n.classList.contains('ahead')
+  })));
+  const first = await rows();
+  if (first.length !== 5) throw new Error('줄 수=' + first.length);
+  if (first.map(r => r.l).join(',').indexOf('사각형,원,별,문자') < 0) {
+    throw new Error('이름이 안 맞음=' + first.map(r => r.l).join(','));
+  }
+  if (!first[4].now) throw new Error('지금 자리 표시가 마지막이 아님');
+
+  /* 되돌아가기 */
+  await page.click('.hist[data-r="2"]');
+  await page.waitForTimeout(250);
+  const back = await rows();
+  const n2 = await count();
+  if (n2 !== 2) throw new Error('2번 줄인데 오브젝트=' + n2);
+  if (!back[2].now) throw new Error('지금 자리가 2가 아님');
+  if (!back[3].ahead || !back[4].ahead) throw new Error('지나온 자리가 흐리게 안 됨');
+
+  /* 다시 앞으로 */
+  await page.click('.hist[data-r="4"]');
+  await page.waitForTimeout(250);
+  const n4 = await count();
+  if (n4 !== 4) throw new Error('4번 줄인데 오브젝트=' + n4);
+  const foot = await page.textContent('.hist-foot');
+  if (foot.indexOf('단계') < 0) throw new Error('요약이 없음=' + foot);
+  await ev(() => AI.ui.showPanel('layers'));
+  await toolReset();
+  return `5줄 · 2로 되돌리면 오브젝트 2 · 4로 가면 다시 4 · "${foot}"`;
+});
+
+await check('상태 표시줄이 도구마다 보조키를 알려 준다', async () => {
+  const seen = {};
+  for (const [key, tool] of [['KeyM', 'rect'], ['KeyR', 'rotate'], ['KeyI', 'eyedropper'], ['KeyP', 'pen']]) {
+    await page.keyboard.press(key);
+    await page.waitForTimeout(80);
+    if (await ev(() => AI.app.tool) !== tool) throw new Error(tool + ' 전환 실패');
+    seen[tool] = await page.textContent('#st-hint');
+  }
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('KeyV');
+  if (seen.rect.indexOf('Space') < 0) throw new Error('사각형 힌트=' + seen.rect);
+  if (seen.rotate.indexOf('Alt') < 0) throw new Error('회전 힌트=' + seen.rotate);
+  if (seen.eyedropper.indexOf('Shift') < 0) throw new Error('스포이드 힌트=' + seen.eyedropper);
+  if (seen.pen.indexOf('Backspace') < 0) throw new Error('펜 힌트=' + seen.pen);
+  /* 도구 이름도 함께 있어야 한다 */
+  if (seen.rect.indexOf('사각형') < 0) throw new Error('도구 이름이 빠짐');
+  return `사각형·회전·스포이드·펜 모두 보조키 안내`;
+});
+
+await check('레이어 패널이 선택한 항목을 따라 스크롤한다', async () => {
+  await toolReset();
+  await ev(() => {
+    const L = AI.app.doc.layers[AI.app.doc.activeLayer];
+    for (let i = 0; i < 40; i++) L.children.push(AI.model.newRect(i * 4, i * 4, 20, 20, 0));
+    AI.ui.showPanel('layers');
+  });
+  await page.waitForTimeout(150);            /* 탭이 열리고 높이가 잡힐 때까지 */
+  const r = await ev(() => {
+    const L = AI.app.doc.layers[AI.app.doc.activeLayer];
+    AI.sel.set(AI.app, [L.children[0]]);       /* 목록 맨 아래쪽 항목 */
+    AI.ui.syncAll(AI.app);
+    /* 실제로 스크롤되는 것은 목록 상자다 (#p-layers 는 그 바깥) */
+    const p = document.querySelector('#p-layers .lyr-list');
+    return { top: p.scrollTop, h: p.scrollHeight, view: p.clientHeight };
+  });
+  await page.waitForTimeout(150);
+  if (r.h <= r.view) throw new Error('목록이 스크롤될 만큼 길지 않다');
+  if (r.top <= 0) throw new Error('선택 항목으로 스크롤하지 않음 (top=' + r.top + ')');
+  const seen = await ev(() => {
+    const p = document.querySelector('#p-layers .lyr-list');
+    const el = p.querySelector('.lyr.item.sel');   /* 레이어 줄이 아니라 고른 오브젝트 */
+    if (!el) return null;
+    const pr = p.getBoundingClientRect(), rr = el.getBoundingClientRect();
+    return rr.top >= pr.top - 1 && rr.bottom <= pr.bottom + 1;
+  });
+  if (!seen) throw new Error('선택 항목이 여전히 안 보임');
+  await toolReset();
+  await refreshBox();
+  return `40개 중 맨 아래 항목으로 ${Math.round(r.top)}px 스크롤`;
 });
 
 /* ---------------- 반복 (방사형 · 격자 · 미러) ---------------- */

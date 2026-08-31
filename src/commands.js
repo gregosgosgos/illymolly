@@ -847,7 +847,7 @@
     ['stroke', '획'], ['type', '문자'], ['styles', '문자 · 단락 스타일'],
     ['align', '정렬'], ['pathfinder', '패스파인더'],
     ['appearance', '모양'], ['effects', '효과'], ['symbols', '심볼 · 패턴'],
-    ['layers', '레이어'], ['artboards', '대지']
+    ['layers', '레이어'], ['history', '작업 내역'], ['artboards', '대지']
   ];
   C.PANELS.forEach(function (o) {
     def('panel_' + o[0], o[1], null, function (a) {

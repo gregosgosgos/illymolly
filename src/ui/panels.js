@@ -1625,6 +1625,62 @@
   };
 
   /* ================= 동기화 ================= */
+  /* ---------------- 도구별 보조키 힌트 ----------------
+     Shift · Alt · Ctrl · Space 가 도구마다 다른 일을 한다. 아무도 혼자서는
+     알아내지 못하므로 상태 표시줄에 늘 적어 둔다. */
+  UI.TOOL_HINTS = {
+    select: 'Alt 끌기 = 복제 · Shift 45° 이동 · 두 번 누르면 그룹 안으로',
+    groupselect: '누를 때마다 상위 그룹으로 · Alt 끌기 = 복제',
+    directselect: '앵커·방향선 끌기 · Alt 방향선 = 짝 끊기 · 모퉁이 위젯 Alt+클릭 = 종류 · Delete 는 구간까지 지움',
+    pen: '끌면 곡선 · Alt 끌기 = 꺾인 점 · 방금 찍은 점을 누르면 각지게 · Backspace 되돌리기 · Esc 마치기',
+    addanchor: '패스를 눌러 고정점 추가',
+    delanchor: '고정점을 눌러 삭제 — 곡선 모양은 지킵니다',
+    convert: '앵커를 누르면 각지게 · 끌면 부드럽게 · 방향선을 끌면 짝이 끊깁니다',
+    rect: 'Shift 정사각형 · Alt 중심에서 · Space 자리 옮기기 · ↑↓ 모퉁이 반경 · 클릭하면 크기 입력',
+    roundrect: 'Shift 정사각형 · Alt 중심에서 · Space 자리 옮기기 · ↑↓←→ 모퉁이 반경',
+    ellipse: 'Shift 정원 · Alt 중심에서 · Space 자리 옮기기 · 클릭하면 크기 입력',
+    polygon: '↑↓ 변의 수 · Shift 각도 고정 · Space 자리 옮기기',
+    star: '↑↓ 점의 수 · Alt 어깨 곧게 · Ctrl 안쪽 반지름 고정 · Shift 각도 고정',
+    line: 'Shift 45° · Space 자리 옮기기 · 클릭하면 길이 입력',
+    type: '클릭 = 점 문자 · 드래그 = 영역 문자 · 닫힌 도형을 누르면 그 안으로 흐릅니다',
+    typearea: '닫힌 도형을 누르면 그 안으로 · 빈 곳을 끌면 상자',
+    typepath: '패스를 누르면 그 선을 따라 글이 흐릅니다',
+    brush: '끌어서 그리기 · 스타일러스 필압이 두께에 반영됩니다',
+    pencil: '선택한 패스의 끝에서 시작하면 이어 그립니다 · Alt 로 놓으면 닫힘',
+    blob: '끌어서 칠하기 — 겹치면 하나로 합쳐집니다',
+    eraser: '끌어서 지우기 — 패스가 잘립니다',
+    scissors: '패스를 눌러 그 자리에서 자르기',
+    smooth: '패스를 문질러 매끄럽게',
+    shapebuilder: '겹친 영역을 끌어서 합치기 · Alt 로 끌면 지우기',
+    width: '획 위를 끌어 그 자리의 두께를 바꿉니다',
+    rotate: 'Alt 끌기 = 사본을 회전 · 클릭 = 기준점 · Alt+클릭 · Enter = 대화상자 · Shift 15°',
+    scale: 'Alt 끌기 = 사본을 확대 · Shift 비율 유지 · Enter = 대화상자',
+    reflect: 'Alt 끌기 = 사본을 반사 · Shift 45° · Enter = 대화상자',
+    shear: 'Alt 끌기 = 사본을 기울이기 · Enter = 대화상자',
+    freetransform: '바운딩 핸들로 크기·회전 · Shift 비율 유지 · Alt 중심 기준',
+    gradient: '끌어서 방향 · Shift 45° · 정지점 Alt+드래그 = 복제 · 막대 밖으로 끌면 삭제 · 두 번 누르면 색',
+    eyedropper: '클릭 = 모양 전부 가져오기 · Shift = 색만 · Alt = 지금 스타일을 입히기',
+    magicwand: '비슷한 칠을 가진 것들을 한꺼번에 선택',
+    artboard: '끌어서 새 대지 · 대지를 끌어 옮기기',
+    zoom: '클릭 확대 · Alt 축소 · 끌면 그 영역으로',
+    hand: '끌어서 화면 이동 (어느 도구에서나 Space 를 눌러도 됩니다)'
+  };
+
+  /* 목록 안의 한 줄을 보이게 — 스크롤이 걸린 조상까지 거슬러 올라간다 */
+  UI.scrollIntoPanel = function (el) {
+    if (!el) return false;
+    var p = el.parentNode;
+    while (p && p !== document.body) {
+      if (p.scrollHeight > p.clientHeight + 1) break;
+      p = p.parentNode;
+    }
+    if (!p || p === document.body) return false;
+    var pr = p.getBoundingClientRect(), rr = el.getBoundingClientRect();
+    if (rr.top >= pr.top && rr.bottom <= pr.bottom) return false;
+    p.scrollTop += (rr.top - pr.top) - (p.clientHeight - rr.height) / 2;
+    return true;
+  };
+
   UI.syncTool = function (a) {
     U.qa('#toolbar .tool').forEach(function (el) { el.classList.toggle('active', el.dataset.tool === a.tool); });
     UI.buildToolOptions(a);
@@ -1632,7 +1688,11 @@
     var n = document.getElementById('ctl-toolname');
     if (n && t) n.textContent = t.name.replace(' 도구', '');
     var h = document.getElementById('st-hint');
-    if (h && t) h.textContent = t.name;
+    if (h && t) {
+      var hint = UI.TOOL_HINTS[a.tool];
+      h.textContent = t.name + (hint ? ' — ' + hint : '');
+      h.title = h.textContent;
+    }
   };
 
   UI.updateZoom = function (a) {
@@ -1849,5 +1909,6 @@
     UI.syncEffects(a);
     UI.syncArtboards(a);
     UI.buildLayers(a);
+    UI.buildHistory(a);
   };
 })(typeof globalThis !== 'undefined' ? globalThis.AI : window.AI);

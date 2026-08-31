@@ -175,10 +175,14 @@
         <div class="pgroup-tabs">
           <button class="ptab on" data-tab="layers">레이어</button>
           <button class="ptab" data-tab="artboards">대지</button>
+          <button class="ptab" data-tab="history">작업 내역</button>
           <b class="fold" title="패널 그룹 접기/펴기"></b>
         </div>
         <section class="panel" data-panel="layers">
           <div class="body" id="p-layers"></div>
+        </section>
+        <section class="panel tab-hidden" data-panel="history">
+          <div class="body" id="p-history"></div>
         </section>
         <section class="panel tab-hidden" data-panel="artboards">
           <div class="body" id="p-artboards"></div>
@@ -254,6 +258,7 @@
 <script src="src/ui/icons.js"></script>
 <script src="src/ui/panels.js"></script>
 <script src="src/ui/layers.js"></script>
+<script src="src/ui/history.js"></script>
 <script src="src/ui/colorui.js"></script>
 <script src="src/ui/search.js"></script>
 <script src="src/trace.js"></script>
