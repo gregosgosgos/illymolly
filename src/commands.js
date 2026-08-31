@@ -57,6 +57,16 @@
     { enabled: function (a) { return AI.docs.count(a) > 1; } });
   def('docSetup', '문서 설정...', 'Ctrl+Alt+P', function (a) { AI.dialogs.documentSetup(a); });
   def('preferences', '환경 설정...', 'Ctrl+K', function (a) { AI.dialogs.preferences(a); });
+  def('fullKeyboard', '단축키 완전 사용 (전체 화면)', null, function (a) { AI.keymap.toggleLock(a); }, {
+    label2: function () { return AI.keymap.locked ? '단축키 완전 사용 해제' : '단축키 완전 사용 (전체 화면)'; },
+    checked: function () { return AI.keymap.locked; },
+    enabled: function () { return AI.keymap.canLock(); }
+  });
+  def('shortcutList', '단축키...', null, function (a) { AI.dialogs.shortcuts(a); });
+  def('installApp', '앱으로 설치...', null, function () { AI.pwa.install(); }, {
+    label2: function () { return AI.pwa.standalone() ? '앱으로 실행 중' : '앱으로 설치...'; },
+    enabled: function () { return AI.pwa.canInstall(); }
+  });
 
   /* ================= 편집 ================= */
   def('undo', '실행 취소', 'Ctrl+Z', function (a) {
@@ -837,7 +847,7 @@
   /* ================= 메뉴 구조 ================= */
   C.MENUS = [
     {
-      title: '파일', items: ['new', 'open', 'closeDoc', '-', 'save', 'saveAs', '-', 'place', '-', 'exportSvg', 'exportPng', 'exportPdf', 'exportArtboards', '-', 'docSetup']
+      title: '파일', items: ['new', 'open', 'closeDoc', '-', 'save', 'saveAs', '-', 'place', '-', 'exportSvg', 'exportPng', 'exportPdf', 'exportArtboards', '-', 'installApp', '-', 'docSetup']
     },
     {
       title: '편집', items: ['undo', 'redo', '-', 'cut', 'copy', 'paste', 'pasteFront', 'pasteBack', 'pasteInPlace', '-', 'clear', 'duplicate', '-', 'preferences']
@@ -887,6 +897,7 @@
     },
     {
       title: '보기', items: [
+        'fullKeyboard', 'shortcutList', '-',
         'outlineMode', '-', 'zoomIn', 'zoomOut', 'fitArtboard', 'fitAll', 'actualSize', '-',
         'rotateViewCW', 'rotateViewCCW', 'resetRotation', '-',
         'hideEdges', 'showBBox', '-', 'showRulers', 'showGrid', 'snapGrid', 'smartGuides', '-',

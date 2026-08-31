@@ -1,0 +1,24 @@
+{
+  "name": "Illymolly — Vector Studio",
+  "short_name": "Illymolly",
+  "description": "웹에서 바로 쓰는 벡터 그래픽 편집기. 일러스트레이터와 같은 도구·단축키·패널 구성.",
+  "lang": "ko",
+  "dir": "ltr",
+  "start_url": ".",
+  "scope": ".",
+  "id": "illymolly",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1c1c1c",
+  "theme_color": "#1c1c1c",
+  "categories": ["graphics", "productivity", "design"],
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "새 문서", "short_name": "새 문서", "url": "./?new=1", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

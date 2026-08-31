@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="104" fill="#1c1c1c"/>
+  <rect x="8" y="8" width="496" height="496" rx="96" fill="none" stroke="#3a3a3a" stroke-width="4"/>
+  <!-- 베지어 곡선 (펜 도구) -->
+  <path d="M104 356 C 104 172, 408 340, 408 156" fill="none" stroke="#2d8ceb" stroke-width="26" stroke-linecap="round"/>
+  <!-- 방향선 -->
+  <path d="M104 356 L 104 264 M408 156 L 408 248" stroke="#6b6b6b" stroke-width="8" stroke-linecap="round"/>
+  <!-- 앵커 포인트 -->
+  <rect x="80" y="332" width="48" height="48" rx="4" fill="#1c1c1c" stroke="#ffffff" stroke-width="12"/>
+  <rect x="384" y="132" width="48" height="48" rx="4" fill="#ffffff" stroke="#ffffff" stroke-width="12"/>
+  <circle cx="104" cy="264" r="17" fill="#1c1c1c" stroke="#9a9a9a" stroke-width="9"/>
+  <circle cx="408" cy="248" r="17" fill="#1c1c1c" stroke="#9a9a9a" stroke-width="9"/>
+</svg>

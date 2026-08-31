@@ -474,6 +474,7 @@
     T.buildToolbar(app);
     AI.ui.init(app);
     AI.keymap.install(app);
+    AI.pwa.init(app);           /* 앱 설치 · 오프라인 */
     bindCanvas();
     bindRulers();
     bindRulerCorner();

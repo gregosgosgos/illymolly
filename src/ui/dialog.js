@@ -23,6 +23,12 @@
       i.textContent = f.label;
       return i;
     }
+    /* 표처럼 직접 짠 내용을 넣을 자리 (단축키 목록 등) */
+    if (f.type === 'html') {
+      var h = U.el('div', 'dlg-html' + (f.cls ? ' ' + f.cls : ''));
+      h.innerHTML = f.html || '';
+      return h;
+    }
     var row = U.el('div', 'dlg-row');
     if (f.type === 'check') {
       var lab = U.el('label', 'dlg-check');

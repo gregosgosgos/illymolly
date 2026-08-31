@@ -3113,6 +3113,156 @@ await check('자동 저장 · 복구 — 새로 고쳐도 작업이 살아남는
   return `2개 오브젝트 · 색상 유지 · "작업중 [복구됨]" · 기록 정리`;
 });
 
+/* ---------------- 브라우저 단축키 충돌 ---------------- */
+await check('충돌 목록 — 브라우저가 가져가는 키를 알고 있다', async () => {
+  const r = await ev(() => {
+    const K = AI.keymap;
+    const rows = K.audit();
+    return {
+      total: rows.length,
+      clash: rows.filter(x => x.reserved).map(x => x.key).sort(),
+      noAlt: rows.filter(x => x.reserved && !x.alternate).map(x => x.key)
+    };
+  });
+  if (r.total < 60) throw new Error('단축키 수=' + r.total);
+  for (const k of ['Ctrl+1', 'Ctrl+N', 'Ctrl+W', 'Ctrl+Tab', 'Ctrl+Shift+Tab']) {
+    if (r.clash.indexOf(k) < 0) throw new Error(k + ' 가 충돌 목록에 없음');
+  }
+  if (r.noAlt.length) throw new Error('대체 키 없는 충돌=' + r.noAlt.join(','));
+  return `${r.total}개 중 ${r.clash.length}개 충돌 · 모두 대체 키 있음`;
+});
+
+await check('대체 단축키가 같은 명령으로 연결된다', async () => {
+  const r = await ev(() => {
+    const K = AI.keymap;
+    const pairs = Object.keys(K.ALTERNATES).map(k => [k, K.ALTERNATES[k]]);
+    return pairs.map(([a, b]) => [a, b, K.cmdFor(a) || '-', K.cmdFor(b) || '-']);
+  });
+  const bad = r.filter(([a, b, x, y]) => x !== '-' && x !== y);
+  if (bad.length) throw new Error('불일치=' + JSON.stringify(bad));
+  const known = r.filter(([, , x]) => x !== '-');
+  if (known.length < 8) throw new Error('연결된 대체 키가 너무 적음=' + known.length);
+  return known.map(([a, b, x]) => `${a}→${b}:${x}`).join(' · ');
+});
+
+await check('Alt+1 이 실제로 [실제 크기] 를 실행한다', async () => {
+  await ev(() => { AI.app.view.scale = 3; AI.app.invalidate(); });
+  await page.keyboard.press('Alt+Digit1');
+  await page.waitForTimeout(80);
+  const s = await ev(() => Math.round(AI.app.view.scale * 100) / 100);
+  if (s !== 1) throw new Error('배율=' + s);
+  return '배율 3 → 1';
+});
+
+await check('Alt+N 이 새 문서, Ctrl+Alt+→ 가 다음 문서', async () => {
+  const before = await ev(() => AI.docs.count(AI.app));
+  await page.keyboard.press('Alt+KeyN');
+  await page.waitForSelector('.dlg-title', { timeout: 2000 });
+  await page.click('.dlg-btn:has-text("확인"), .dlg-btn.primary');
+  await page.waitForTimeout(200);
+  const after = await ev(() => AI.docs.count(AI.app));
+  if (after !== before + 1) throw new Error(`문서 ${before}→${after}`);
+  const i0 = await ev(() => AI.app.docIndex);
+  await page.keyboard.press('Control+Alt+ArrowRight');
+  await page.waitForTimeout(120);
+  const i1 = await ev(() => AI.app.docIndex);
+  if (i1 === i0) throw new Error('문서 전환 안 됨');
+  await ev(() => { while (AI.docs.count(AI.app) > 1) AI.docs.close(AI.app, AI.docs.count(AI.app) - 1, true); });
+  await refreshBox();
+  return `문서 ${before}→${after} · 탭 전환 ${i0}→${i1}`;
+});
+
+await check('메뉴에 실제로 먹히는 키가 적힌다', async () => {
+  const r = await ev(() => ({
+    actual: AI.keymap.display('Ctrl+1'),
+    fine: AI.keymap.display('Ctrl+Z'),
+    arrow: AI.keymap.display('Ctrl+Tab')
+  }));
+  if (r.actual !== 'Alt+1') throw new Error('Ctrl+1 표시=' + r.actual);
+  if (r.fine !== 'Ctrl+Z') throw new Error('Ctrl+Z 표시=' + r.fine);
+  if (r.arrow !== 'Ctrl+Alt+→') throw new Error('Ctrl+Tab 표시=' + r.arrow);
+  await page.click('.menu-title:has-text("보기")');
+  await page.waitForTimeout(80);
+  const txt = await page.textContent('.menubar-pop');
+  await page.keyboard.press('Escape');
+  if (txt.indexOf('Alt+1') < 0) throw new Error('보기 메뉴에 Alt+1 이 없음');
+  return 'Ctrl+1 → Alt+1 · Ctrl+Tab → Ctrl+Alt+→';
+});
+
+await check('[단축키] 대화상자가 충돌을 짚어 준다', async () => {
+  await ev(() => AI.dialogs.shortcuts(AI.app));
+  await page.waitForSelector('.keys', { timeout: 2000 });
+  const r = await page.evaluate(() => ({
+    rows: document.querySelectorAll('.keys tbody tr').length,
+    clash: document.querySelectorAll('.keys tr.conflict').length,
+    alt: document.querySelectorAll('.keys .alt kbd').length,
+    why: (document.querySelector('.keys tr.conflict .why') || {}).textContent || ''
+  }));
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(100);
+  if (r.rows < 60) throw new Error('행=' + r.rows);
+  if (r.clash < 10) throw new Error('충돌 행=' + r.clash);
+  if (r.alt !== r.clash) throw new Error(`대체 키 ${r.alt} != 충돌 ${r.clash}`);
+  if (r.why.indexOf('브라우저') < 0) throw new Error('설명 없음=' + r.why);
+  return `${r.rows}행 · 충돌 ${r.clash}개 모두 대체 키 표시`;
+});
+
+await check('키보드 잠금 — 켜면 충돌이 사라진다 (상태만 확인)', async () => {
+  const r = await ev(() => {
+    const K = AI.keymap;
+    const before = K.audit().filter(x => x.reserved).length;
+    K.locked = true;                       /* 전체 화면은 사용자 제스처가 필요해 상태만 흉내낸다 */
+    const during = K.audit().filter(x => x.reserved).length;
+    const shown = K.display('Ctrl+1');
+    K.locked = false;
+    return { before, during, shown, after: K.audit().filter(x => x.reserved).length };
+  });
+  if (!r.before) throw new Error('충돌이 원래 없음');
+  if (r.during !== 0) throw new Error('잠금 중에도 충돌=' + r.during);
+  if (r.shown !== 'Ctrl+1') throw new Error('잠금 중 표시=' + r.shown);
+  if (r.after !== r.before) throw new Error('복구 실패');
+  return `${r.before} → 0 → ${r.after}`;
+});
+
+await check('앱 창(PWA) 흉내 — 탭 단축키가 풀린다', async () => {
+  const r = await ev(() => {
+    const K = AI.keymap, orig = K.standalone;
+    K.standalone = () => true;
+    const free = ['Ctrl+1', 'Ctrl+8', 'Ctrl+Tab', 'Ctrl+Shift+Tab'].filter(k => !K.isReserved(k));
+    const still = ['Ctrl+N', 'Ctrl+W', 'Ctrl+T'].filter(k => K.isReserved(k));
+    const shown = K.display('Ctrl+1');
+    K.standalone = orig;
+    return { free, still, shown };
+  });
+  if (r.free.length !== 4) throw new Error('안 풀린 키=' + JSON.stringify(r.free));
+  if (r.still.length !== 3) throw new Error('창 단축키는 앱 창에서도 브라우저 몫=' + JSON.stringify(r.still));
+  if (r.shown !== 'Ctrl+1') throw new Error('앱 창 표시=' + r.shown);
+  return '숫자 · Tab 해제 · N/W/T 유지';
+});
+
+await check('PWA — 매니페스트 · 서비스 워커 · 아이콘', async () => {
+  const href = await page.getAttribute('link[rel=manifest]', 'href');
+  if (!href) throw new Error('manifest 링크 없음');
+  const m = await page.evaluate(async h => (await fetch(h)).json(), href);
+  if (m.display !== 'standalone') throw new Error('display=' + m.display);
+  if (!m.icons.some(i => i.sizes === '512x512')) throw new Error('512 아이콘 없음');
+  if (!m.icons.some(i => i.purpose === 'maskable')) throw new Error('maskable 아이콘 없음');
+  const codes = [];
+  for (const i of m.icons) {
+    const r = await page.evaluate(async u => (await fetch(u)).status, i.src);
+    codes.push(i.src + ':' + r);
+    if (r !== 200) throw new Error('아이콘 ' + i.src + ' = ' + r);
+  }
+  const sw = await page.evaluate(async () => (await fetch('sw.js')).status);
+  if (sw !== 200) throw new Error('sw.js=' + sw);
+  const reg = await page.evaluate(() => navigator.serviceWorker.getRegistration().then(r => !!r));
+  if (!reg) throw new Error('서비스 워커 미등록');
+  const api = await ev(() => ({ has: !!AI.pwa, can: AI.pwa.canInstall(), why: AI.pwa.reason() }));
+  if (!api.has) throw new Error('AI.pwa 없음');
+  if (!api.why) throw new Error('설치 못 할 때 이유를 말해 줘야 한다');
+  return `아이콘 ${m.icons.length}개 · sw 등록 · "${api.why}"`;
+});
+
 /* ---------------- 결과 ---------------- */
 console.log('\n=== Illymolly E2E ===');
 for (const [n, s, d] of results) console.log(`${s === 'OK' ? '✔' : '✘'} ${n}${d ? ' — ' + d : ''}`);

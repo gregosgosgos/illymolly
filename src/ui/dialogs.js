@@ -366,6 +366,54 @@
     });
   };
 
+  /* ---------- 단축키 목록 ----------
+     브라우저가 가져가는 키를 숨기지 않고 그대로 보여 주고, 대신 쓸 키를 옆에 적는다. */
+  Dlg.shortcuts = function (app) {
+    var K = AI.keymap;
+    var rows = K.audit();
+    var clash = rows.filter(function (r) { return r.reserved; });
+
+    function kbd(k) { return '<kbd>' + U.esc(K.pretty(k)) + '</kbd>'; }
+    var body = '<table class="keys"><thead><tr>' +
+      '<th>명령</th><th>단축키</th><th>비고</th></tr></thead><tbody>' +
+      rows.map(function (r) {
+        if (!r.reserved) {
+          return '<tr><td>' + U.esc(r.label) + '</td><td>' + kbd(r.key) + '</td><td></td></tr>';
+        }
+        return '<tr class="conflict"><td>' + U.esc(r.label) + '</td>' +
+          '<td>' + kbd(r.key) + (r.alternate ? ' <span class="alt">' + kbd(r.alternate) + '</span>' : '') + '</td>' +
+          '<td class="why">브라우저가 "' + U.esc(r.reserved) + '" 로 가져감' +
+          (r.alternate ? ' — 파란 키로 쓰세요' : '') + '</td></tr>';
+      }).join('') + '</tbody></table>';
+
+    var head = K.locked
+      ? '키보드 잠금이 켜져 있어 모든 단축키가 앱으로 들어옵니다.'
+      : clash.length
+        ? clash.length + '개 단축키를 브라우저가 가져갑니다. [보기 > 단축키 완전 사용] 을 켜면 전부 앱이 받습니다.'
+        : '모든 단축키를 앱이 그대로 받습니다.';
+
+    D.open({
+      title: '단축키',
+      fields: [
+        { id: 'i', type: 'info', label: head },
+        { id: 'tbl', type: 'html', html: body },
+        { id: 'i2', type: 'info',
+          label: K.standalone() ? '앱 창으로 실행 중 — 탭 단축키(숫자 · N · W · Tab)가 풀려 있습니다.'
+            : '앱으로 설치해 탭 없는 창으로 띄우면 이 충돌이 모두 사라집니다.' +
+              (AI.pwa.reason() ? ' (' + AI.pwa.reason() + ')' : '') }
+      ],
+      buttons: [
+        AI.pwa.canInstall() ? { id: 'install', label: '앱으로 설치' } : null,
+        K.canLock() ? { id: 'lock', label: K.locked ? '잠금 해제' : '단축키 완전 사용' } : null,
+        { id: 'ok', label: '닫기', primary: true }
+      ].filter(Boolean),
+      onDone: function (v, btn) {
+        if (btn === 'lock') K.toggleLock(app);
+        else if (btn === 'install') AI.pwa.install();
+      }
+    });
+  };
+
   /* ---------- 문자 · 단락 스타일 옵션 ---------- */
   Dlg.styleOptions = function (app, kind, st) {
     var ST = AI.styles;

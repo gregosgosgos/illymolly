@@ -539,3 +539,20 @@ select.dlg-input{text-align:left;min-width:110px;cursor:pointer}
 .ab-btn:disabled{opacity:.3;cursor:default}
 .ab-btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 #st-artboard{min-width:56px;text-align:center}
+
+/* ---- 대화상자 안의 표 (단축키 목록) ---- */
+.dlg-html{max-height:52vh;overflow:auto;margin:2px 0}
+.keys{width:100%;border-collapse:collapse;font-size:11px}
+.keys th{
+  position:sticky;top:0;z-index:1;text-align:left;font-weight:600;
+  color:var(--txt-dim);background:var(--bg3);padding:5px 8px;border-bottom:1px solid var(--line2)
+}
+.keys td{padding:4px 8px;border-bottom:1px solid var(--bg3);vertical-align:top}
+.keys tr:hover td{background:var(--bg3)}
+.keys kbd{
+  display:inline-block;padding:1px 5px;border:1px solid var(--line2);border-bottom-width:2px;
+  border-radius:3px;background:var(--bg4);font:inherit;font-size:10px;white-space:nowrap
+}
+.keys .conflict kbd{opacity:.45;text-decoration:line-through}
+.keys .why{color:var(--txt-dim)}
+.keys .alt kbd{border-color:var(--accent);color:#cfe4ff}
