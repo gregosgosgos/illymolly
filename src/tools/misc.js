@@ -44,33 +44,79 @@
   /* ---------------- 스포이드 ---------------- */
   T.mk({
     id: 'eyedropper', name: '스포이드 도구', key: 'i', cursor: 'crosshair',
+
+    /* 일러스트레이터의 스포이드는 세 가지로 쓴다.
+         그냥 클릭   대상의 모양(칠·획 전부)을 가져온다 — 선택이 있으면 거기 바로 입힌다
+         Shift+클릭  색만 가져온다 (두께 · 점선 · 화살표는 건드리지 않는다)
+         Alt+클릭    반대로, 지금 들고 있는 모양을 그 대상에 입힌다 */
     onDown: function (app, e) {
-      var hit = H.itemAt(app, e.x, e.y, true);
-      if (!hit) return;
-      var src = hit;
-      if (src.type === 'group') return;
+      var src = H.itemAt(app, e.x, e.y, true);
+      if (!src || src.type === 'group') return;
+
+      /* Alt — 지금 스타일을 대상에 입힌다 */
       if (e.alt) {
-        /* Alt = 현재 스타일을 대상에 적용 */
         app.history.begin('스타일 적용', app.doc);
-        src.fill = U.deepCopy(app.fill);
-        E.applyStrokeProp(app, 'noop', 0);
-        app.history.commit();
-      } else {
-        app.fill = U.deepCopy(src.fill || Col.none());
-        app.stroke = src.stroke && src.stroke.type !== 'none'
-          ? Col.solid(src.stroke.color, src.stroke.alpha) : Col.none();
-        app.strokeWidth = src.stroke ? src.stroke.width : 1;
-        if (app.sel.length) {
-          app.history.begin('스타일 적용', app.doc);
-          app.sel.forEach(function (it) {
-            it.fill = U.deepCopy(src.fill);
-            it.stroke = U.deepCopy(src.stroke);
-          });
-          app.history.commit();
+        src.fill = U.deepCopy(app.fill || Col.none());
+        var ns = Model.defaultStroke();
+        ns.width = app.strokeWidth || 1;
+        ns.cap = app.strokeCap || 'butt';
+        ns.join = app.strokeJoin || 'miter';
+        ns.align = app.strokeAlign || 'center';
+        ns.dash = (app.strokeDash || []).slice();
+        if (app.stroke && app.stroke.type !== 'none') {
+          Object.keys(app.stroke).forEach(function (k) { ns[k] = U.deepCopy(app.stroke[k]); });
         }
-        AI.ui && AI.ui.syncStyle && AI.ui.syncStyle(app);
+        src.stroke = ns;
+        app.history.commit();
+        app.invalidate();
+        AI.ui && AI.ui.syncAll && AI.ui.syncAll(app);
+        U.toast('스타일 적용: ' + (src.name || src.type));
+        return;
       }
+
+      /* 가져오기 — Shift 면 색만 */
+      var onlyColor = e.shift;
+      app.fill = U.deepCopy(src.fill || Col.none());
+      if (!onlyColor) {
+        app.stroke = src.stroke && src.stroke.type !== 'none'
+          ? U.deepCopy(src.stroke) : Col.none();
+        if (src.stroke) {
+          app.strokeWidth = src.stroke.width;
+          app.strokeCap = src.stroke.cap;
+          app.strokeJoin = src.stroke.join;
+          app.strokeAlign = src.stroke.align;
+          app.strokeDash = (src.stroke.dash || []).slice();
+        }
+      } else if (src.stroke && src.stroke.type !== 'none') {
+        app.stroke = Col.solid(src.stroke.color, src.stroke.alpha);
+      }
+
+      if (app.sel.length) {
+        app.history.begin(onlyColor ? '색 적용' : '스타일 적용', app.doc);
+        app.sel.forEach(function (it) {
+          if (it.type === 'group') return;
+          it.fill = U.deepCopy(src.fill);
+          if (onlyColor) {
+            /* 색만 — 두께 · 점선 · 화살표는 그대로 둔다 */
+            if (it.stroke && src.stroke && src.stroke.type !== 'none') {
+              it.stroke.type = 'solid';
+              it.stroke.color = src.stroke.color;
+              it.stroke.alpha = src.stroke.alpha;
+            }
+          } else {
+            it.stroke = U.deepCopy(src.stroke);
+          }
+        });
+        app.history.commit();
+      }
+      AI.ui && AI.ui.syncStyle && AI.ui.syncStyle(app);
+      AI.ui && AI.ui.syncAll && AI.ui.syncAll(app);
       app.invalidate();
+      U.toast(onlyColor ? '색 가져오기' : '스타일 가져오기');
+    },
+
+    onMove: function (app, e) {
+      AI.cursors.set(app, AI.cursors.eyedropper(e.alt));
     }
   });
 

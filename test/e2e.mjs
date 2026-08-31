@@ -3152,6 +3152,228 @@ await check('자동 저장 · 복구 — 새로 고쳐도 작업이 살아남는
   return `2개 오브젝트 · 색상 유지 · "작업중 [복구됨]" · 기록 정리`;
 });
 
+/* ---------------- 자주 쓰는 도구의 보조키 (일러스트레이터 규칙) ---------------- */
+const toolReset = () => ev(() => {
+  AI.app.doc.layers.forEach(l => { l.children.length = 0; });
+  AI.sel.clear(AI.app);
+  AI.app.transformOrigin = null;
+  AI.app.invalidate();
+});
+const selBounds = () => ev(() => {
+  const it = AI.app.sel[0];
+  if (!it) return null;
+  const r = AI.render.worldBounds(AI.app.doc, it, true);
+  return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(AI.rect.w(r)), h: Math.round(AI.rect.h(r)) };
+});
+
+await check('도형 — 그리는 중 Space 로 자리만 옮긴다 (크기는 그대로)', async () => {
+  await toolReset();
+  await page.keyboard.press('KeyM');
+  await page.mouse.move(box.x + 300, box.y + 250);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 400, box.y + 330, { steps: 5 });
+  const before = await selBounds();
+  await page.keyboard.down('Space');
+  await page.mouse.move(box.x + 500, box.y + 430, { steps: 6 });
+  await page.keyboard.up('Space');
+  const after = await selBounds();
+  await page.mouse.up();
+  await page.waitForTimeout(80);
+  if (!before || !after) throw new Error('도형이 안 만들어짐');
+  if (before.w !== after.w || before.h !== after.h) {
+    throw new Error(`크기가 바뀜 ${before.w}×${before.h} → ${after.w}×${after.h}`);
+  }
+  if (after.x === before.x && after.y === before.y) throw new Error('자리가 안 옮겨짐');
+  return `${before.w}×${before.h} 그대로 · (${before.x},${before.y}) → (${after.x},${after.y})`;
+});
+
+await check('사각형 — 그리는 중 ↑↓ 로 모퉁이 반경, ← 0, → 최대', async () => {
+  await toolReset();
+  await page.keyboard.press('KeyM');
+  await page.mouse.move(box.x + 300, box.y + 250);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 460, box.y + 370, { steps: 5 });
+  for (let i = 0; i < 4; i++) { await page.keyboard.press('ArrowUp'); await page.waitForTimeout(25); }
+  const up = await ev(() => AI.app.sel[0].shape.r);
+  await page.keyboard.press('ArrowDown'); await page.waitForTimeout(30);
+  const down = await ev(() => AI.app.sel[0].shape.r);
+  await page.keyboard.press('ArrowRight'); await page.waitForTimeout(30);
+  const max = await ev(() => ({ r: AI.app.sel[0].shape.r, lim: Math.min(Math.abs(AI.app.sel[0].shape.w), Math.abs(AI.app.sel[0].shape.h)) / 2 }));
+  await page.keyboard.press('ArrowLeft'); await page.waitForTimeout(30);
+  const zero = await ev(() => AI.app.sel[0].shape.r);
+  await page.mouse.up();
+  await page.waitForTimeout(60);
+  if (!(up > 0)) throw new Error('↑ 로 안 커짐=' + up);
+  if (!(down < up)) throw new Error('↓ 로 안 줄어듦=' + down);
+  if (Math.abs(max.r - max.lim) > 0.01) throw new Error(`→ 가 최대가 아님 ${U0(max.r)} / ${U0(max.lim)}`);
+  if (zero !== 0) throw new Error('← 가 0 이 아님=' + zero);
+  /* 화살표가 넛지로 새지 않았는지 — 도형은 하나뿐이어야 한다 */
+  if (await count() !== 1) throw new Error('도형이 여러 개 생김');
+  return `↑ ${U0(up)} · ↓ ${U0(down)} · → ${U0(max.r)}(최대) · ← 0`;
+});
+
+await check('별 — Alt 는 어깨를 곧게, Ctrl 은 안쪽 반지름을 붙잡는다', async () => {
+  await toolReset();
+  await ev(() => AI.tools.setTool(AI.app, 'star'));
+  await page.mouse.move(box.x + 400, box.y + 300);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 400, box.y + 200, { steps: 5 });
+  const ratio = () => ev(() => {
+    const sh = AI.app.sel[0].shape;
+    return Math.round(sh.r2 / sh.r * 1000) / 1000;
+  });
+  const plain = await ratio();
+  await page.keyboard.down('Alt');
+  await page.mouse.move(box.x + 400, box.y + 195, { steps: 3 });
+  const alt = await ratio();
+  await page.keyboard.up('Alt');
+  /* 어깨가 곧으려면 안쪽 점이 바깥 두 점을 잇는 현 위에 있어야 한다 → cos(π/n) */
+  const want = await ev(() => Math.round(Math.cos(Math.PI / AI.app.sel[0].shape.n) * 1000) / 1000);
+  await page.keyboard.down('Control');
+  await page.mouse.move(box.x + 400, box.y + 150, { steps: 4 });
+  const c1 = await ev(() => ({ r: Math.round(AI.app.sel[0].shape.r), r2: Math.round(AI.app.sel[0].shape.r2) }));
+  await page.mouse.move(box.x + 400, box.y + 100, { steps: 4 });
+  const c2 = await ev(() => ({ r: Math.round(AI.app.sel[0].shape.r), r2: Math.round(AI.app.sel[0].shape.r2) }));
+  await page.keyboard.up('Control');
+  await page.mouse.up();
+  await page.waitForTimeout(80);
+  if (Math.abs(plain - 0.5) > 0.01) throw new Error('기본 비율=' + plain);
+  if (Math.abs(alt - want) > 0.005) throw new Error(`Alt 비율 ${alt} (기대 cos(π/n)=${want})`);
+  if (Math.abs(c1.r2 - c2.r2) > 1) throw new Error(`안쪽이 따라 커짐 ${c1.r2} → ${c2.r2}`);
+  if (!(c2.r > c1.r + 5)) throw new Error(`바깥이 안 커짐 ${c1.r} → ${c2.r}`);
+  return `기본 ${plain} · Alt ${alt}(=cos π/n) · Ctrl 안쪽 ${c1.r2} 고정, 바깥 ${c1.r}→${c2.r}`;
+});
+
+await check('회전·크기·반사 — Alt+드래그는 사본을 변형한다', async () => {
+  for (const [key, tool] of [['KeyR', 'rotate'], ['KeyS', 'scale']]) {
+    await toolReset();
+    await ev(() => {
+      const it = AI.model.newRect(100, 100, 120, 80, 0);
+      it.fill = AI.color.solid('#3366cc');
+      AI.app.doc.layers[AI.app.doc.activeLayer].children.push(it);
+      AI.sel.set(AI.app, [it]);
+      AI.viewT.fitArtboard(AI.app);
+      AI.app.invalidate();
+    });
+    await refreshBox();
+    await page.keyboard.press(key);
+    if (await ev(() => AI.app.tool) !== tool) throw new Error(tool + ' 도구 전환 실패');
+    const c = await ev(() => {
+      const r = AI.render.selectionBounds(AI.app, true);
+      return AI.viewT.toScreen(AI.app, AI.rect.cx(r), AI.rect.cy(r));
+    });
+    await page.keyboard.down('Alt');
+    await page.mouse.move(box.x + c.x + 120, box.y + c.y);
+    await page.mouse.down();
+    await page.mouse.move(box.x + c.x + (tool === 'rotate' ? 0 : 200), box.y + c.y + (tool === 'rotate' ? 120 : 0), { steps: 8 });
+    await page.mouse.up();
+    await page.keyboard.up('Alt');
+    await page.waitForTimeout(120);
+    const n = await count();
+    if (n !== 2) throw new Error(`${tool}: 오브젝트 ${n} (원본 + 사본 = 2 여야 한다)`);
+    if (tool === 'rotate') {
+      const angs = await ev(() => AI.app.doc.layers[AI.app.doc.activeLayer].children
+        .map(it => Math.round(AI.util.deg(Math.atan2(it.m[1], it.m[0])))));
+      if (angs[0] !== 0) throw new Error('원본이 돌아갔다=' + angs[0]);
+      if (Math.abs(Math.abs(angs[1]) - 90) > 2) throw new Error('사본 각도=' + angs[1]);
+    }
+  }
+  await toolReset();
+  await page.keyboard.press('KeyV');
+  return '회전·크기 모두 원본을 남기고 사본을 변형';
+});
+
+await check('스포이드 — 클릭은 전부, Shift 는 색만, Alt 는 반대로 입힌다', async () => {
+  await toolReset();
+  await ev(() => {
+    const L = AI.app.doc.layers[AI.app.doc.activeLayer];
+    const a = AI.model.newRect(40, 40, 100, 60, 0);
+    a.fill = AI.color.solid('#e2482a');
+    a.stroke = Object.assign(AI.model.defaultStroke(),
+      { type: 'solid', color: '#123456', width: 7, dash: [4, 2], cap: 'round' });
+    const b2 = AI.model.newRect(220, 40, 100, 60, 0);
+    b2.fill = AI.color.solid('#ffffff');
+    b2.stroke = Object.assign(AI.model.defaultStroke(), { type: 'solid', color: '#000000', width: 1 });
+    L.children.push(a, b2);
+    AI.viewT.fitArtboard(AI.app);
+    AI.sel.clear(AI.app);
+    AI.app.invalidate();
+  });
+  await refreshBox();
+  const at2 = (lx, ly) => page.evaluate(([x, y]) => AI.viewT.toScreen(AI.app, x, y), [lx, ly]);
+  await page.keyboard.press('KeyI');
+
+  let p = await at2(90, 70);
+  await page.mouse.click(box.x + p.x, box.y + p.y);
+  await page.waitForTimeout(120);
+  const picked = await ev(() => ({
+    fill: AI.app.fill.color, width: AI.app.strokeWidth,
+    dash: (AI.app.strokeDash || []).join(','), cap: AI.app.strokeCap
+  }));
+  if (picked.fill !== '#e2482a') throw new Error('칠=' + picked.fill);
+  if (picked.width !== 7 || picked.dash !== '4,2' || picked.cap !== 'round') {
+    throw new Error('획 속성을 다 못 가져옴=' + JSON.stringify(picked));
+  }
+
+  /* Shift — 색만. 두께 · 점선은 대상 것을 지킨다 */
+  await ev(() => AI.sel.set(AI.app, [AI.app.doc.layers[AI.app.doc.activeLayer].children[1]]));
+  p = await at2(90, 70);
+  await page.keyboard.down('Shift');
+  await page.mouse.click(box.x + p.x, box.y + p.y);
+  await page.keyboard.up('Shift');
+  await page.waitForTimeout(120);
+  const only = await ev(() => {
+    const it = AI.app.doc.layers[AI.app.doc.activeLayer].children[1];
+    return { fill: it.fill.color, strokeColor: it.stroke.color, width: it.stroke.width };
+  });
+  if (only.fill !== '#e2482a' || only.strokeColor !== '#123456') throw new Error('색이 안 옮음=' + JSON.stringify(only));
+  if (only.width !== 1) throw new Error('두께까지 옮았다=' + only.width);
+
+  /* Alt — 반대로, 지금 들고 있는 스타일을 대상에 */
+  await ev(() => {
+    AI.app.fill = AI.color.solid('#00cc66');
+    AI.app.stroke = AI.color.solid('#ff9900');
+    AI.app.strokeWidth = 5;
+    AI.sel.clear(AI.app);
+  });
+  p = await at2(270, 70);
+  await page.keyboard.down('Alt');
+  await page.mouse.click(box.x + p.x, box.y + p.y);
+  await page.keyboard.up('Alt');
+  await page.waitForTimeout(120);
+  const applied = await ev(() => {
+    const it = AI.app.doc.layers[AI.app.doc.activeLayer].children[1];
+    return { fill: it.fill.color, stroke: it.stroke.color, width: it.stroke.width };
+  });
+  if (applied.fill !== '#00cc66' || applied.stroke !== '#ff9900' || applied.width !== 5) {
+    throw new Error('입히기 실패=' + JSON.stringify(applied));
+  }
+  await toolReset();
+  await page.keyboard.press('KeyV');
+  return `전부(7pt 4,2 round) · 색만(두께 1 유지) · 입히기(#00cc66/#ff9900 5pt)`;
+});
+
+await check('변형 도구에서 Enter 는 대화상자를 연다', async () => {
+  await toolReset();
+  await ev(() => {
+    const it = AI.model.newRect(100, 100, 80, 80, 0);
+    AI.app.doc.layers[AI.app.doc.activeLayer].children.push(it);
+    AI.sel.set(AI.app, [it]);
+    AI.app.invalidate();
+  });
+  await page.keyboard.press('KeyR');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.dlg-title', { timeout: 2000 });
+  const title = await page.textContent('.dlg-title');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(120);
+  if (title.indexOf('회전') < 0) throw new Error('대화상자=' + title);
+  await toolReset();
+  await page.keyboard.press('KeyV');
+  await refreshBox();
+  return `"${title}"`;
+});
+
 /* ---------------- 펜 도구 · 앵커(노드) ---------------- */
 /* 펜은 커서 위치에 따라 같은 클릭이 다른 일을 한다 — 자리마다 확인한다 */
 const penReset = () => ev(() => {

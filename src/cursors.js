@@ -110,9 +110,12 @@
   };
 
   /* ---------- 기타 ---------- */
-  C.eyedropper = function () {
-    return mk(ol('M2 22 L3 18.4 L12.6 8.8 L15.2 11.4 L5.6 21 Z') +
-      ol('M13.6 7.8 L17.4 4 A2.2 2.2 0 0 1 20.5 7.1 L16.6 10.8 Z'), 2, 22);
+  /* apply=true 면 반대 방향 — 들고 있는 스타일을 대상에 입힌다는 뜻으로 채워 보여 준다 */
+  C.eyedropper = function (apply) {
+    var nib = apply
+      ? '<path d="M2 22 L3 18.4 L12.6 8.8 L15.2 11.4 L5.6 21 Z" fill="#fff" stroke="#000" stroke-width="1"/>'
+      : ol('M2 22 L3 18.4 L12.6 8.8 L15.2 11.4 L5.6 21 Z');
+    return mk(nib + ol('M13.6 7.8 L17.4 4 A2.2 2.2 0 0 1 20.5 7.1 L16.6 10.8 Z'), 2, 22);
   };
   C.gradientT = function () {
     return crosshair('<g><rect x="14" y="15" width="9" height="7" fill="#fff" stroke="#000" stroke-width="1"/>' +

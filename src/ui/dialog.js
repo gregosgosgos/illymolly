@@ -205,7 +205,13 @@
       },
       cancel: function () { done('cancel'); }
     };
-    document.addEventListener('keydown', cur.key, true);
+    /* 이 대화상자를 열게 한 바로 그 키 이벤트가 여기까지 흘러오면 안 된다.
+       (Enter 로 [회전...] 을 열면 그 Enter 가 곧바로 [확인] 을 눌러 버렸다)
+       한 박자 뒤에 붙여, 이미 퍼지고 있는 이벤트는 지나가게 둔다. */
+    var self = cur;
+    setTimeout(function () {
+      if (cur === self) document.addEventListener('keydown', cur.key, true);
+    }, 0);
     U.on(back, 'mousedown', function (ev) { if (ev.target === back) done('cancel'); });
 
     var first = box.querySelector('input:not([type=checkbox]):not([type=radio]):not([type=color]), select');

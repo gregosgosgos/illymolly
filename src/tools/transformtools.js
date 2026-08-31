@@ -37,8 +37,19 @@
         var d = AI.viewT.toDoc(app, e.x, e.y);
         if (U.dist(d.x, d.y, st.start.x, st.start.y) * app.view.scale < 2) return;
         st.moved = true;
+
+        /* Alt 드래그 = 원본을 두고 사본을 변형한다 (일러스트레이터의 회전·반사 복사).
+           끌기 시작한 뒤에 Alt 를 눌러도 되도록 여기서 한 번만 복제한다. */
+        if (e.alt && !st.duped) {
+          for (var k = 0; k < st.sel.length; k++) st.sel[k].m = st.orig[k].slice();
+          AI.sel.set(app, st.sel);
+          var copies = E.duplicate(app, 0, 0);
+          st.duped = true;
+          st.sel = copies;
+          st.orig = copies.map(function (it) { return it.m.slice(); });
+        }
+
         for (var i = 0; i < st.sel.length; i++) st.sel[i].m = st.orig[i].slice();
-        if (st.alt && !st.duped) { /* Alt = 복제 후 변형 */ }
         var W;
         if (kind === 'rotate') {
           var a = Math.atan2(d.y - st.o.y, d.x - st.o.x) - st.startAngle;
@@ -69,7 +80,7 @@
           app.hudText = '기울이기 ' + U.round(U.deg(Math.atan(sh)), 1) + '°';
         }
         app.lastTransformCandidate = W;
-        E.transformSelection(app, W);
+        E.transformSelection(app, W);      /* app.sel — 복제했다면 사본이 들어 있다 */
         app.invalidate();
         AI.ui && AI.ui.syncSelection && AI.ui.syncSelection(app);
       },
@@ -84,11 +95,20 @@
         } else {
           app.lastTransform = app.lastTransformCandidate;
           app.history.commit();
+          if (st.duped) U.toast(st.sel.length + '개 복사 후 ' + name.replace(' 도구', ''));
         }
         app.hudText = null;
         st = null;
         app.invalidate();
       },
+      /* Enter — 대화상자로 정확한 값을 넣는다 (일러스트레이터와 같다) */
+      onKey: function (app, ev) {
+        if (ev.key !== 'Enter' || st) return false;
+        if (!app.sel.length || !AI.dialogs[kind]) return false;
+        AI.dialogs[kind](app);
+        return true;
+      },
+
       drawUI: function (ctx, app) {
         if (!app.sel.length) return;
         var o = origin(app);
