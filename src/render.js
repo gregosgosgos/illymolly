@@ -546,6 +546,16 @@
       ctx.strokeStyle = (i === doc.activeArtboard) ? '#8a8a8a' : '#5a5a5a';
       ctx.lineWidth = 1;
       ctx.strokeRect(Math.round(p.x) + .5, Math.round(p.y) + .5, Math.round(ab.w * s), Math.round(ab.h * s));
+      /* 도련 — 재단선 바깥으로 나가야 하는 여분을 점선으로 보여 준다 */
+      var bl = AI.prepress ? AI.prepress.bleed(doc) : 0;
+      if (bl > 0) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(226,72,60,.85)'; ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(Math.round(p.x - bl * s) + .5, Math.round(p.y - bl * s) + .5,
+          Math.round((ab.w + bl * 2) * s), Math.round((ab.h + bl * 2) * s));
+        ctx.restore();
+      }
       ctx.fillStyle = (i === doc.activeArtboard) ? '#d0d0d0' : '#8a8a8a';
       ctx.font = '11px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
       ctx.fillText(ab.name, p.x, p.y - 5);
@@ -814,14 +824,34 @@
 
   function fillLayer(ctx, app, it, m, paint, vb) {
     if (!Col.isPaint(paint)) return;
+    var op = overprintOn(app, it, 'fill');
+    if (op) { ctx.save(); ctx.globalCompositeOperation = 'multiply'; }
     ctx.beginPath();
     G.tracePath(ctx, it, m);
     ctx.fillStyle = paintStyle(ctx, paint, vb, m);
     ctx.fill('nonzero');
+    if (op) ctx.restore();
+  }
+
+  /* 오버프린트 미리보기 — 밑색을 파내지 않고 겹쳐 찍는 성질을 곱하기로 흉내 낸다.
+     실제 RIP 과 완전히 같지는 않지만 "밑색이 비쳐 보인다" 는 것은 그대로 확인된다. */
+  function overprintOn(app, it, which) {
+    return !!(app.prefs && app.prefs.overprintPreview &&
+      AI.prepress && AI.prepress.hasOverprint(it, which));
   }
 
   function strokeLayer(ctx, app, it, m, s, vb) {
     if (!s || s.type === 'none' || !(s.width > 0)) return;
+    if (overprintOn(app, it, 'stroke')) {
+      ctx.save(); ctx.globalCompositeOperation = 'multiply';
+      var _op = true;
+      try { strokeLayerInner(ctx, app, it, m, s, vb); } finally { ctx.restore(); }
+      return;
+    }
+    strokeLayerInner(ctx, app, it, m, s, vb);
+  }
+
+  function strokeLayerInner(ctx, app, it, m, s, vb) {
 
     var allClosed = it.subs.length > 0 && it.subs.every(function (sub) { return sub.closed; });
     var align = (s.align === 'inside' || s.align === 'outside') && allClosed ? s.align : 'center';

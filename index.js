@@ -17,8 +17,8 @@ const vm = require('vm');
 
 /* 브라우저와 같은 소스를 그대로 읽어 들인다 — 빌드 단계도, 코드 사본도 없다 */
 const CORE = [
-  'util', 'color', 'model', 'geom', 'pathfinder', 'history',
-  'appearance', 'assets', 'distort', 'threed', 'effects', 'render', 'hit', 'view', 'edit', 'styles', 'docs', 'autosave', 'trace', 'pdf', 'io', 'api'
+  'util', 'color', 'model', 'prepress', 'geom', 'pathfinder', 'history',
+  'appearance', 'assets', 'distort', 'threed', 'effects', 'render', 'hit', 'preflight', 'view', 'edit', 'styles', 'docs', 'autosave', 'trace', 'pdf', 'pdfin', 'io', 'api'
 ];
 
 function load() {

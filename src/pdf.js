@@ -15,12 +15,27 @@
 
   function n(v) { return U.round(v, 4); }
 
+  /* PDF 이름은 공백·특수문자를 #XX 로 적는다 (별색 이름이 그대로 들어간다) */
+  function pdfName(s) {
+    return String(s).replace(/[^A-Za-z0-9_.\-]/g, function (ch) {
+      var b = ch.charCodeAt(0);
+      if (b < 256) return '#' + (b < 16 ? '0' : '') + b.toString(16).toUpperCase();
+      return encodeURIComponent(ch).replace(/%/g, '#');
+    });
+  }
+  function docBgPaint(doc) {
+    if (!AI.prepress || AI.prepress.colorMode(doc) !== 'cmyk') return null;
+    return { type: 'solid', color: doc.bg, cmyk: AI.prepress.rgbToCmyk(doc.bg || '#ffffff') };
+  }
+
   /* ---------------- 콘텐츠 스트림 ---------------- */
   function Writer() {
     this.buf = [];
     this.xobjects = {};   /* 이름 -> {kind:'image', src} */
     this.alphas = {};     /* 이름 -> 알파값 */
     this.fonts = {};      /* 이름 -> base font */
+    this.spots = {};      /* 이름 -> {res:'CS1', name, cmyk} — 별색 분판 */
+    this.overprint = false;
     this.seq = 0;
   }
   Writer.prototype.w = function (s) { this.buf.push(s); return this; };
@@ -35,6 +50,13 @@
     this.fonts[key] = base;
     return key;
   };
+  /* 별색은 PDF 의 /Separation 색공간이 된다 — RIP 이 이름으로 판을 만든다 */
+  Writer.prototype.spotName = function (name, cmyk) {
+    if (this.spots[name]) return this.spots[name].res;
+    var res = 'CS' + (Object.keys(this.spots).length + 1);
+    this.spots[name] = { res: res, name: name, cmyk: cmyk };
+    return res;
+  };
   Writer.prototype.imageName = function (src) {
     for (var k in this.xobjects) if (this.xobjects[k].src === src) return k;
     var key = 'Im' + (++this.seq);
@@ -45,6 +67,32 @@
   function rgb(hex) {
     var c = Col.hexToRgb(hex || '#000000');
     return n(c.r / 255) + ' ' + n(c.g / 255) + ' ' + n(c.b / 255);
+  }
+  function cmykOps(v) {
+    return n(v.c / 100) + ' ' + n(v.m / 100) + ' ' + n(v.y / 100) + ' ' + n(v.k / 100);
+  }
+  /* paint 가 담고 있는 만큼만 정확하게 쓴다.
+     별색이면 /Separation, CMYK 값이 있으면 DeviceCMYK, 없으면 DeviceRGB. */
+  function colorOps(w, doc, paint, hex, stroking) {
+    var PP = AI.prepress;
+    if (PP && paint && paint.spot) {
+      var sp = PP.findSpot(doc, paint.spot);
+      if (sp) {
+        var res = w.spotName(sp.name, sp.cmyk);
+        var tint = n((paint.tint == null ? 100 : paint.tint) / 100);
+        return stroking ? ('/' + res + ' CS ' + tint + ' SCN') : ('/' + res + ' cs ' + tint + ' scn');
+      }
+    }
+    var v = PP ? PP.paintCmyk(doc, paint || { type: 'solid', color: hex }) : null;
+    if (v) return cmykOps(v) + (stroking ? ' K' : ' k');
+    return rgb(hex) + (stroking ? ' RG' : ' rg');
+  }
+  /* 오버프린트 — 밑색을 파내지 않고 겹쳐 찍으라는 지시 */
+  function opGS(w, it, which) {
+    var PP = AI.prepress;
+    if (!PP || !PP.hasOverprint(it, which)) return null;
+    w.overprint = true;
+    return '/GSOP gs';
   }
 
   /* 아이템의 서브패스를 PDF 경로 연산자로 */
@@ -175,7 +223,8 @@
         if (!col) return;
         w.w('q');
         setAlpha(w, a * paintAlpha(e.paint));
-        w.w(rgb(col) + ' rg');
+        var opf = opGS(w, it, 'fill'); if (opf) w.w(opf);
+        w.w(colorOps(w, doc, e.paint, col, false));
         pathOps(w, it, wm);
         w.w('f');
         w.w('Q');
@@ -186,7 +235,8 @@
         if (!sc) return;
         w.w('q');
         setAlpha(w, a * paintAlpha(st));
-        w.w(rgb(sc) + ' RG');
+        var ops = opGS(w, it, 'stroke'); if (ops) w.w(ops);
+        w.w(colorOps(w, doc, st, sc, true));
         /* 변환에 담긴 배율만큼 선 두께를 맞춘다 */
         var k = Math.sqrt(Math.abs(wm[0] * wm[3] - wm[1] * wm[2])) || 1;
         w.w(n(Math.max(st.width * k, 0.01)) + ' w');
@@ -297,7 +347,7 @@
     w.w('q');
     w.w('1 0 0 -1 ' + n(-ab.x) + ' ' + n(H + ab.y) + ' cm');
     if (opt.background !== false && doc.bg) {
-      w.w(rgb(doc.bg) + ' rg');
+      w.w(colorOps(w, doc, docBgPaint(doc), doc.bg, false));
       w.w(n(ab.x) + ' ' + n(ab.y) + ' ' + n(W) + ' ' + n(H) + ' re f');
     }
     doc.layers.forEach(function (ly) {
@@ -328,6 +378,17 @@
     Object.keys(w.alphas).forEach(function (k) {
       gsObjs[k] = obj('<< /Type /ExtGState /ca ' + n(w.alphas[k]) + ' /CA ' + n(w.alphas[k]) + ' >>');
     });
+    if (w.overprint) {
+      gsObjs.GSOP = obj('<< /Type /ExtGState /OP true /op true /OPM 1 >>');
+    }
+    /* 별색 — 농도 0~1 을 그 별색의 CMYK 로 옮기는 함수를 달아 준다 */
+    var csObjs = {};
+    Object.keys(w.spots).forEach(function (name) {
+      var sp = w.spots[name];
+      var fn = obj('<< /FunctionType 2 /Domain [0 1] /C0 [0 0 0 0] /C1 [' +
+        cmykOps(sp.cmyk) + '] /N 1 >>');
+      csObjs[sp.res] = obj('[ /Separation /' + pdfName(sp.name) + ' /DeviceCMYK ' + fn + ' 0 R ]');
+    });
 
     var contentObj = obj('<< /Length ' + byteLen(content) + ' >>\nstream\n' + content + '\nendstream');
 
@@ -340,6 +401,9 @@
     }
     if (Object.keys(gsObjs).length) {
       res.push('/ExtGState << ' + Object.keys(gsObjs).map(function (k) { return '/' + k + ' ' + gsObjs[k] + ' 0 R'; }).join(' ') + ' >>');
+    }
+    if (Object.keys(csObjs).length) {
+      res.push('/ColorSpace << ' + Object.keys(csObjs).map(function (k) { return '/' + k + ' ' + csObjs[k] + ' 0 R'; }).join(' ') + ' >>');
     }
     res.push('>>');
 

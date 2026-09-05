@@ -618,6 +618,165 @@ check('describe() 가 새 속성을 모두 담는다', () => {
   return d.split('\n')[0];
 });
 
+/* ---------- 출고 (프리프레스) ---------- */
+check('CMYK 왕복 — 원색 분해가 되돌아온다', () => {
+  const AI = illymolly.AI, PP = AI.prepress;
+  eq(PP.cmykToHex(PP.rgbToCmyk('#ff0000')), '#ff0000', '빨강');
+  eq(PP.cmykToHex(PP.rgbToCmyk('#00a651')), '#00a651', '초록');
+  eq(PP.cmykToHex(PP.rgbToCmyk('#000000')), '#000000', '검정');
+  const v = PP.rgbToCmyk('#ff0000');
+  eq(PP.cmykText(v), 'C0 M100 Y100 K0');
+  eq(PP.inkTotal(PP.RICH_BLACK), 240, '리치블랙 총 잉크량');
+  return '빨강 · 초록 · 검정 무손실 · 리치블랙 240%';
+});
+
+check('업종 프리셋이 문서를 한 번에 맞춘다', () => {
+  const illy = fresh();
+  const r = illy.printSetup({ intent: 'cut' });
+  eq(r.intent, 'cut');
+  const s = illy.printSettings();
+  eq(s.colorMode, 'cmyk');
+  eq(Math.round(s.bleedMm), 3);
+  eq(s.spots.length, 1, '별색');
+  eq(s.spots[0].name, 'CutContour');
+  /* 레이저는 정반대 — RGB 를 요구한다 */
+  const laser = fresh();
+  laser.printSetup({ intent: 'laser' });
+  eq(laser.printSettings().colorMode, 'rgb');
+  return '커팅 → CMYK·3mm·CutContour / 레이저 → RGB';
+});
+
+check('프리플라이트가 반려 사유를 잡아낸다', () => {
+  const illy = fresh();
+  illy.addRect({ x: 10, y: 10, width: 100, height: 50, fill: '#f00', stroke: '#000', strokeWidth: 0.2 });
+  illy.addText({ x: 10, y: 120, text: '반려될 글자', size: 20 });
+  const rep = illy.preflight({ intent: 'print' });
+  const codes = rep.issues.map(i => i.code);
+  ['color-mode', 'no-bleed', 'text-not-outlined', 'thin-stroke'].forEach(c => {
+    if (codes.indexOf(c) < 0) throw new Error('놓친 검사: ' + c + ' / 잡은 것: ' + codes);
+  });
+  if (rep.ok) throw new Error('오류가 있는데 ok');
+  return codes.length + '개 항목 · ' + rep.summary;
+});
+
+check('makePrintReady 가 고치고 무엇을 고쳤는지 말한다', () => {
+  const illy = fresh();
+  illy.addRect({ x: 10, y: 10, width: 100, height: 50, fill: '#f00', stroke: '#000', strokeWidth: 0.2 });
+  const r = illy.makePrintReady({ intent: 'print' });
+  const did = r.fixed.map(f => f.code);
+  ['color-mode', 'no-bleed', 'thin-stroke'].forEach(c => {
+    if (did.indexOf(c) < 0) throw new Error('안 고침: ' + c + ' / 고친 것: ' + did);
+  });
+  const s = illy.printSettings();
+  eq(s.colorMode, 'cmyk');
+  eq(Math.round(s.bleedMm), 3);
+  const after = illy.preflight({ intent: 'print' });
+  if (after.errors) throw new Error('남은 오류 ' + after.errors);
+  /* 글리프 윤곽은 캔버스가 필요하다 — Node 에서는 못 고치는 게 맞다 */
+  return r.fixed.length + '가지 수정 · ' + r.fixed[0].did;
+});
+
+check('레이저 규격 — 인쇄와 정반대인 규칙', () => {
+  const illy = fresh();
+  illy.printSetup({ intent: 'laser' });
+  illy.addRect({ x: 0, y: 0, width: 50, height: 50, fill: 'none', stroke: '#ff2200', strokeWidth: 1 });
+  const before = illy.preflight().issues.map(i => i.code);
+  if (before.indexOf('laser-stroke') < 0) throw new Error('획 두께를 안 잡음: ' + before);
+  if (before.indexOf('laser-color') < 0) throw new Error('규정 색을 안 잡음: ' + before);
+  illy.makePrintReady();
+  const it = illy.get(illy.find({ type: 'path' })[0]);
+  near(it.stroke.width, 0.001, 1e-6, '획 두께');
+  eq(it.stroke.color, '#ff0000', '절단 색으로 스냅');
+  return '0.001pt · #ff0000 으로 맞춤';
+});
+
+check('별색 · 오버프린트가 PDF 에 그대로 실린다', () => {
+  const illy = fresh();
+  illy.printSetup({ intent: 'cut' });
+  const r = illy.addRect({ x: 10, y: 10, width: 100, height: 60, fill: '#ff3366' });
+  illy.setOverprint({ query: r, fill: true });
+  illy.makeCutLine({ query: r, offset: 5 });
+  const pdf = illy.toPDF();
+  if (!/\/Separation \/CutContour \/DeviceCMYK/.test(pdf)) throw new Error('별색 분판이 없음');
+  if (!/\/OP true \/op true/.test(pdf)) throw new Error('오버프린트 지시가 없음');
+  if (!/[\d.]+ [\d.]+ [\d.]+ [\d.]+ k/.test(pdf)) throw new Error('CMYK 칠이 없음');
+  const svg = illy.toSVG();
+  if (svg.indexOf('data-stroke-spot="CutContour"') < 0) throw new Error('SVG 에 별색 이름이 없음');
+  return 'PDF Separation + 오버프린트 + CMYK · SVG 별색 이름 보존';
+});
+
+check('재단 표시 — 잠긴 레이어로 만들고 지운다', () => {
+  const illy = fresh();
+  illy.printSetup({ intent: 'print' });
+  const r = illy.addPrinterMarks({});
+  eq(r.layer, '재단 표시');
+  const info = illy.printSettings();
+  if (!info.marks) throw new Error('재단 표시가 없다고 나옴');
+  if (info.spots.map(s => s.name).indexOf('Registration') < 0) throw new Error('Registration 별색 없음');
+  illy.removePrinterMarks();
+  if (illy.printSettings().marks) throw new Error('안 지워짐');
+  return '재단선 · 등록마크 · 컬러바 → 지우기까지';
+});
+
+check('PDF 왕복 — 우리가 쓴 것을 우리가 다시 읽는다', () => {
+  const a = fresh({ width: 300, height: 200 });
+  a.printSetup({ intent: 'cut' });
+  a.addRect({ x: 20, y: 20, width: 120, height: 80, fill: '#ff3366' });
+  a.addEllipse({ x: 160, y: 30, width: 100, height: 100, fill: '#2d8ceb', stroke: '#112233', strokeWidth: 3 });
+  a.addText({ x: 24, y: 170, text: 'Hello PDF', size: 22 });
+  a.makeCutLine({ query: a.find({ type: 'path' }) });
+  const pdf = a.toPDF();
+
+  const b = fresh({ width: 10, height: 10 });
+  const rep = b.importPDF({ data: pdf });
+  eq(rep.imported, 1, '페이지 수');
+  if (rep.paths < 3) throw new Error('패스 ' + rep.paths + '개만 들어옴');
+  if (rep.texts < 1) throw new Error('문자를 못 가져옴');
+  /* 별색은 이름과 CMYK 까지 살아 있어야 한다 */
+  const spots = b.spots();
+  if (!spots.some(s => s.name === 'CutContour')) throw new Error('별색 유실: ' + JSON.stringify(spots));
+  /* 크기 · 위치가 맞는지 */
+  const info = b.documentInfo();
+  near(info.artboards[0].width, 300, 0.5, '대지 폭');
+  near(info.artboards[0].height, 200, 0.5, '대지 높이');
+  return `패스 ${rep.paths} · 문자 ${rep.texts} · 별색 CutContour · 대지 300×200`;
+});
+
+check('PDF 가져오기 — 못 가져온 것을 숨기지 않는다', () => {
+  const a = fresh({ width: 100, height: 100 });
+  a.addRect({ x: 0, y: 0, width: 50, height: 50, fill: '#000' });
+  const b = fresh({ width: 10, height: 10 });
+  const rep = b.importPDF({ data: a.toPDF() });
+  if (typeof rep.skipped !== 'object') throw new Error('skipped 보고가 없음');
+  if (!Array.isArray(rep.pages)) throw new Error('페이지별 보고가 없음');
+  return 'skipped · pages 보고 있음';
+});
+
+check('DEFLATE 를 스스로 푼다 (외부 라이브러리 없이)', () => {
+  const zlib = require('node:zlib');
+  const AI = illymolly.AI;
+  const src = Buffer.from('일러스트레이터 호환 벡터 편집기 '.repeat(40), 'utf8');
+  const packed = new Uint8Array(zlib.deflateSync(src));
+  const out = AI.pdfin.inflate(packed);
+  eq(out.length, src.length, '길이');
+  for (let i = 0; i < out.length; i++) if (out[i] !== src[i]) throw new Error('바이트 ' + i + ' 불일치');
+  const raw = new Uint8Array(zlib.deflateRawSync(src));
+  eq(AI.pdfin.inflate(raw).length, src.length, 'raw deflate');
+  return src.length + '바이트 · zlib · raw 둘 다';
+});
+
+check('이미지 해상도를 헤더만 읽고 판정한다', () => {
+  const AI = illymolly.AI, PP = AI.prepress;
+  /* 4×4 PNG (테스트 서버가 쓰는 것과 같은 최소 파일) */
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAFklEQVR4nGP8//8/AzGAiShVowpHFQIAT4YDAdGivsIAAAAASUVORK5CYII=';
+  const sz = PP.imageSize(png);
+  eq(sz.w, 4); eq(sz.h, 4);
+  /* 4px 를 100pt 로 늘리면 3dpi 도 안 된다 */
+  const dpi = PP.imageDpi({ src: png, w: 100, h: 100, m: [1, 0, 0, 1, 0, 0] });
+  if (dpi > 10) throw new Error('dpi=' + dpi);
+  return '4×4 PNG · 100pt 배치 → ' + dpi + 'dpi';
+});
+
 /* ---------- 결과 ---------- */
 console.log('\n=== 자동화 API (Node 헤드리스) ===');
 let fail = 0;

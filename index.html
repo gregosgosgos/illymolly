@@ -173,6 +173,19 @@
       </div>
       <div class="pgroup" data-group="5">
         <div class="pgroup-tabs">
+          <button class="ptab on" data-tab="prepress">출고</button>
+          <button class="ptab" data-tab="spots">별색</button>
+          <b class="fold" title="패널 그룹 접기/펴기"></b>
+        </div>
+        <section class="panel" data-panel="prepress">
+          <div class="body" id="p-prepress"></div>
+        </section>
+        <section class="panel tab-hidden" data-panel="spots">
+          <div class="body" id="p-spots"></div>
+        </section>
+      </div>
+      <div class="pgroup" data-group="6">
+        <div class="pgroup-tabs">
           <button class="ptab on" data-tab="layers">레이어</button>
           <button class="ptab" data-tab="artboards">대지</button>
           <button class="ptab" data-tab="history">작업 내역</button>
@@ -220,6 +233,7 @@
 <script src="src/util.js"></script>
 <script src="src/color.js"></script>
 <script src="src/model.js"></script>
+<script src="src/prepress.js"></script>
 <script src="src/geom.js"></script>
 <script src="src/pathfinder.js"></script>
 <script src="src/history.js"></script>
@@ -231,6 +245,7 @@
 <script src="src/effects.js"></script>
 <script src="src/render.js"></script>
 <script src="src/hit.js"></script>
+<script src="src/preflight.js"></script>
 <script src="src/cursors.js"></script>
 <script src="src/view.js"></script>
 <script src="src/edit.js"></script>
@@ -263,6 +278,7 @@
 <script src="src/ui/search.js"></script>
 <script src="src/trace.js"></script>
 <script src="src/pdf.js"></script>
+<script src="src/pdfin.js"></script>
 <script src="src/io.js"></script>
 <script src="src/clipboard.js"></script>
 <script src="src/api.js"></script>

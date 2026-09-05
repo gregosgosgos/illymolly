@@ -721,3 +721,29 @@ input,textarea,[contenteditable]{user-select:text;-webkit-user-select:text}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}
 }
+
+/* ---- 출고 검사 결과 (ui/panels.js · preflight.js) ---- */
+.pf-head{
+  margin-top:9px;padding:7px 9px;border-radius:var(--radius);font-weight:600;
+  border-left:3px solid var(--line2);background:var(--sunken);
+}
+.pf-head.ok{border-left-color:#3fae5a;color:#9fe0ae}
+.pf-head.bad{border-left-color:#e2483c;color:#ffb3ab}
+.pf-fixed{margin:7px 0 0;padding:0 0 0 16px;color:#8fc79c;font-size:10.5px;line-height:1.7}
+.pf-issue{margin-top:8px;border:1px solid var(--rule,#333);border-left-width:3px;
+  border-radius:var(--radius);background:var(--sunken);padding:7px 9px}
+.pf-issue.error{border-left-color:#e2483c}
+.pf-issue.warn{border-left-color:#e0a03a}
+.pf-issue.info{border-left-color:#4a90d9}
+.pf-title{display:flex;align-items:center;gap:6px;font-weight:600}
+.pf-lv{font-size:9.5px;letter-spacing:.06em;color:var(--txt-dim);
+  border:1px solid var(--line2);border-radius:2px;padding:0 4px;flex:none}
+.pf-n{margin-left:auto;color:var(--txt-dim);font-variant-numeric:tabular-nums}
+.pf-item{margin-top:4px;color:var(--txt-dim);font-size:10.5px;line-height:1.55;
+  cursor:default;overflow:hidden;text-overflow:ellipsis}
+.pf-item[data-pfid]{cursor:pointer}
+.pf-item[data-pfid]:hover{color:var(--txt);text-decoration:underline}
+.pf-item b{color:var(--txt);font-weight:500}
+.pf-item.more{opacity:.6}
+.row label.ck{display:inline-flex;align-items:center;gap:5px;flex:1;min-width:0;cursor:pointer}
+.row label.ck input{accent-color:var(--accent);margin:0;cursor:pointer}

@@ -1789,8 +1789,8 @@ await check('패널 탭 도크 — 전환 · 접기 · 윈도우 메뉴', async 
       otherChecked: AI.commands.defs.panel_swatches.checked(AI.app)
     };
   });
-  if (r0.groups !== 6) throw new Error('그룹 수=' + r0.groups);
-  if (r0.panels !== 16) throw new Error('패널 수=' + r0.panels);
+  if (r0.groups !== 7) throw new Error('그룹 수=' + r0.groups);
+  if (r0.panels !== 18) throw new Error('패널 수=' + r0.panels);
   if (r0.badGroups) throw new Error('한 번에 하나만 보여야 함 — 어긋난 그룹 ' + r0.badGroups);
   if (!r1.shown || !r1.hidden || !r1.tabOn) throw new Error('탭 전환=' + JSON.stringify(r1));
   if (!collapsed) throw new Error('접기 실패');
@@ -5046,6 +5046,168 @@ await check('PWA — 매니페스트 · 서비스 워커 · 아이콘', async ()
   if (!api.has) throw new Error('AI.pwa 없음');
   if (!api.why) throw new Error('설치 못 할 때 이유를 말해 줘야 한다');
   return `아이콘 ${m.icons.length}개 · sw 등록 · "${api.why}"`;
+});
+
+const makeForeignPdf = async () => {
+  const p2 = await browser.newPage();
+  await p2.setContent(`<style>body{font-family:Helvetica,Arial;margin:30px}
+    h1{color:#2d8ceb;font-size:28px} .b{width:180px;height:90px;background:#2d8ceb}</style>
+    <h1>Foreign PDF</h1><p>본문 abc 123</p><div class="b"></div>
+    <svg width="200" height="110"><polygon points="10,100 100,10 190,100" fill="#7bd142"/></svg>`);
+  const buf = await p2.pdf({ width: '360px', height: '480px', printBackground: true,
+    margin: { top: '0', bottom: '0', left: '0', right: '0' } });
+  await p2.close();
+  return Buffer.from(buf).toString('base64');
+};
+
+/* ================= 출고 (프리프레스) ================= */
+await check('출고 패널 — 업종을 고르면 문서가 그 규격이 된다', async () => {
+  await ev(() => { AI.app.setDoc(AI.model.newDoc(300, 200)); AI.ui.showPanel('prepress'); });
+  await page.selectOption('#pp-intent', 'cut');
+  await page.waitForTimeout(120);
+  const r = await ev(() => ({
+    mode: AI.prepress.colorMode(AI.app.doc),
+    bleed: Math.round(AI.prepress.bleed(AI.app.doc) / (72 / 25.4)),
+    spot: AI.prepress.spots(AI.app.doc).map(s => s.name),
+    note: document.getElementById('pp-note').textContent,
+    segOn: [...document.querySelectorAll('[data-cmode].on')].map(b => b.dataset.cmode)
+  }));
+  if (r.mode !== 'cmyk') throw new Error('색상 모드=' + r.mode);
+  if (r.bleed !== 3) throw new Error('도련=' + r.bleed);
+  if (r.spot.indexOf('CutContour') < 0) throw new Error('별색=' + r.spot);
+  if (r.segOn.join() !== 'cmyk') throw new Error('세그먼트 표시=' + r.segOn);
+  if (!/CutContour/.test(r.note)) throw new Error('안내 문구=' + r.note);
+  await page.selectOption('#pp-intent', 'print');
+  await page.waitForTimeout(80);
+  return `커팅 → CMYK · 도련 3mm · ${r.spot.join('')} · 안내 문구까지`;
+});
+
+await check('출고 검사 — 반려 사유를 세어 보여 주고, 눌러 그 오브젝트로 간다', async () => {
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(300, 200));
+    AI.ui.showPanel('prepress');
+    illy.addRect({ x: 10, y: 10, width: 100, height: 50, fill: '#ff0000', stroke: '#000000', strokeWidth: 0.2 });
+    illy.addText({ x: 10, y: 150, text: '반려될 글자', size: 20 });
+    AI.ui.syncAll(app);
+  });
+  await page.click('[data-pp="check"]');
+  await page.waitForTimeout(200);
+  const before = await ev(() => ({
+    head: document.querySelector('#pp-result .pf-head').textContent,
+    codes: [...document.querySelectorAll('#pp-result .pf-issue')].map(e => e.className.replace('pf-issue ', '')),
+    clickable: document.querySelectorAll('#pp-result .pf-item[data-pfid]').length
+  }));
+  if (!/오류/.test(before.head)) throw new Error('요약=' + before.head);
+  if (before.codes.indexOf('error') < 0) throw new Error('오류 항목이 없음');
+  if (!before.clickable) throw new Error('누를 수 있는 항목이 없음');
+  /* 항목을 누르면 그 오브젝트가 선택된다 */
+  await page.click('#pp-result .pf-item[data-pfid]');
+  await page.waitForTimeout(120);
+  const sel = await ev(() => AI.app.sel.length);
+  if (!sel) throw new Error('눌러도 선택되지 않음');
+  return `${before.head} · 항목 클릭 → 선택 ${sel}개`;
+});
+
+await check('출고 자동 수정 — 글꼴 윤곽선까지 실제로 고친다', async () => {
+  await page.click('[data-pp="fix"]');
+  await page.waitForTimeout(400);
+  const r = await ev(() => ({
+    ok: AI.preflight.run(AI.app).ok,
+    texts: AI.app.doc.layers.reduce((n, l) => n + l.children.filter(c => c.type === 'text').length, 0),
+    mode: AI.prepress.colorMode(AI.app.doc),
+    bleed: Math.round(AI.prepress.bleed(AI.app.doc) / (72 / 25.4)),
+    fixed: [...document.querySelectorAll('#pp-result .pf-fixed li')].map(e => e.textContent)
+  }));
+  if (!r.ok) throw new Error('아직 오류가 남음');
+  if (r.texts) throw new Error('문자가 윤곽선으로 안 바뀜 (' + r.texts + '개 남음)');
+  if (r.mode !== 'cmyk' || r.bleed !== 3) throw new Error('문서 설정=' + r.mode + '/' + r.bleed);
+  if (r.fixed.length < 3) throw new Error('수정 보고 ' + r.fixed.length + '줄');
+  /* 한 번 더 눌러도 안전해야 한다 */
+  await page.click('[data-pp="fix"]');
+  await page.waitForTimeout(200);
+  return r.fixed.length + '가지 수정 · 문자 0개 · 되돌릴 수 있음';
+});
+
+await check('오버프린트 미리보기 — 밑색이 비쳐 보인다', async () => {
+  await refreshBox();
+  await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(200, 200));
+    AI.viewT.setZoom(app, 1); app.view.tx = 0; app.view.ty = 0;
+    app.prefs.overprintPreview = false;
+    const a = illy.addRect({ x: 20, y: 20, width: 120, height: 120, fill: '#ffff00' });
+    const b = illy.addRect({ x: 60, y: 60, width: 100, height: 100, fill: '#00ffff' });
+    illy.setOverprint({ query: b, fill: true });
+    app.invalidate();
+  });
+  await page.waitForTimeout(150);
+  const at = () => ev(() => {
+    const c = document.getElementById('view'), d = AI.app.dpr || 1;
+    return [...c.getContext('2d').getImageData(Math.round(100 * d), Math.round(100 * d), 1, 1).data];
+  });
+  const off = await at();
+  await ev(() => { AI.app.prefs.overprintPreview = true; AI.app.invalidate(); });
+  await page.waitForTimeout(150);
+  const on = await at();
+  await ev(() => { AI.app.prefs.overprintPreview = false; AI.app.invalidate(); });
+  /* 겹친 자리: 평소엔 위쪽 청록, 오버프린트면 노랑×청록 = 초록 */
+  if (!(off[0] < 60 && off[1] > 200 && off[2] > 200)) throw new Error('평소 색=' + off);
+  if (!(on[0] < 60 && on[1] > 200 && on[2] < 60)) throw new Error('오버프린트 색=' + on);
+  return `평소 rgb(${off.slice(0, 3)}) → 오버프린트 rgb(${on.slice(0, 3)})`;
+});
+
+await check('칼선 만들기 — 칠을 없애고 CutContour 획만 남긴다', async () => {
+  const r = await ev(() => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(300, 200));
+    illy.printSetup({ intent: 'cut' });
+    const id = illy.addRect({ x: 40, y: 40, width: 120, height: 80, fill: '#ff3366' });
+    illy.select({ ids: [id] });
+    const res = illy.makeCutLine({ offset: 8 });
+    const made = AI.model.find(app.doc, res.ids[0]);
+    return {
+      count: res.count, spot: res.spot,
+      fill: made.fill.type, strokeSpot: made.stroke.spot,
+      width: made.stroke.width,
+      orig: AI.model.find(app.doc, id).fill.type
+    };
+  });
+  if (r.fill !== 'none') throw new Error('칼선에 칠이 남음');
+  if (r.strokeSpot !== 'CutContour') throw new Error('별색=' + r.strokeSpot);
+  if (Math.abs(r.width - 0.25) > 1e-6) throw new Error('획 두께=' + r.width);
+  if (r.orig !== 'solid') throw new Error('원본이 사라짐');
+  return `칠 없음 · 별색 ${r.strokeSpot} · 0.25pt · 원본 유지`;
+});
+
+await check('PDF 가져오기 — 남이 만든 PDF 가 편집 가능한 오브젝트로 들어온다', async () => {
+  /* 브라우저가 직접 만든 PDF 를 쓴다 — 우리 출력이 아닌 진짜 남의 파일 */
+  const pdfB64 = await makeForeignPdf();
+  const r = await page.evaluate(async b64 => {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i) & 255;
+    const before = AI.docs.count(AI.app);
+    AI.io.importPDFBytes(AI.app, bytes, '남의파일.pdf');
+    const doc = AI.app.doc;
+    const items = [];
+    AI.model.walk(doc, it => { items.push({ type: it.type, name: it.name, fill: it.fill && it.fill.color }); });
+    return {
+      tabs: AI.docs.count(AI.app) - before,
+      name: doc.name,
+      paths: items.filter(i => i.type === 'path').length,
+      texts: items.filter(i => i.type === 'text').length,
+      colors: items.map(i => i.fill).filter(Boolean),
+      w: Math.round(doc.artboards[0].w), h: Math.round(doc.artboards[0].h)
+    };
+  }, pdfB64);
+  if (r.tabs !== 1) throw new Error('새 탭으로 안 열림');
+  if (r.name !== '남의파일') throw new Error('문서 이름=' + r.name);
+  if (r.paths < 2) throw new Error('패스 ' + r.paths + '개만 들어옴');
+  if (r.texts < 1) throw new Error('문자를 못 가져옴');
+  if (!r.colors.some(c => c === '#2d8ceb')) throw new Error('색이 안 맞음: ' + r.colors.join(','));
+  await ev(() => AI.docs.close(AI.app));
+  return `패스 ${r.paths} · 문자 ${r.texts} · 색 보존 · ${r.w}×${r.h}pt`;
 });
 
 /* ---------------- 결과 ---------------- */

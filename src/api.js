@@ -2067,6 +2067,259 @@
   });
 
   /* ---------- 출력 ---------- */
+  /* ================= 출고 (프리프레스) =================
+     인쇄소·커팅기·레이저가 요구하는 규격을 맞추는 연산들. 사람은 메뉴 한 번,
+     AI 는 호출 한 번으로 끝나야 하므로 "문서 전체를 한 방에" 를 기본으로 둔다. */
+  var INTENTS = ['print', 'cut', 'laser', 'screen'];
+
+  op('printSetup', {
+    undoable: true, group: '출고',
+    desc: '출고 업종을 정하고 문서를 그 규격에 맞춥니다 (색상 모드 · 도련 · 필요한 별색). 나머지 출고 연산은 이 설정을 따릅니다.',
+    params: {
+      intent: p('string', '업종', { enum: INTENTS, required: true }),
+      bleedMm: p('number', '도련 (mm) — 생략하면 업종 기본값'),
+      colorMode: p('string', '색상 모드를 직접 지정', { enum: ['rgb', 'cmyk'] })
+    },
+    run: function (ctx, a) {
+      var r = AI.prepress.applyPreset(ctx, a.intent);
+      if (a.bleedMm != null) {
+        AI.prepress.setBleed(ctx.doc, AI.prepress.mm(a.bleedMm));
+        r.changed.push('도련 → ' + a.bleedMm + 'mm');
+      }
+      if (a.colorMode) {
+        AI.prepress.setColorMode(ctx.doc, a.colorMode);
+        r.changed.push('색상 모드 → ' + a.colorMode.toUpperCase());
+      }
+      return r;
+    }
+  });
+
+  op('printSettings', {
+    undoable: false, group: '출고',
+    desc: '지금 문서의 출고 설정(업종 · 색상 모드 · 도련 · 별색 · 재단 표시)을 반환합니다.',
+    params: {},
+    run: function (ctx) {
+      var PP = AI.prepress;
+      return {
+        intent: ctx.doc.intent || 'print',
+        preset: PP.preset(ctx.doc.intent || 'print').label,
+        colorMode: PP.colorMode(ctx.doc),
+        bleedPt: U.round(PP.bleed(ctx.doc), 3),
+        bleedMm: U.round(PP.bleed(ctx.doc) / (72 / 25.4), 3),
+        marks: PP.hasMarks(ctx.doc),
+        spots: PP.spots(ctx.doc).map(function (s) {
+          return { name: s.name, cmyk: PP.cmykText(s.cmyk), hex: s.hex, kind: s.kind };
+        }),
+        spotsUsed: AI.preflight.usedSpots(ctx.doc)
+      };
+    }
+  });
+
+  op('setColorMode', {
+    undoable: true, group: '출고',
+    desc: '문서 색상 모드를 바꿉니다. 인쇄는 cmyk, 레이저 커팅은 rgb 를 요구합니다.',
+    params: { mode: p('string', '색상 모드', { enum: ['rgb', 'cmyk'], required: true }) },
+    run: function (ctx, a) {
+      AI.prepress.setColorMode(ctx.doc, a.mode);
+      return { colorMode: AI.prepress.colorMode(ctx.doc) };
+    }
+  });
+
+  op('setBleed', {
+    undoable: true, group: '출고',
+    desc: '도련(재단선 바깥 여분)을 정합니다. 인쇄물은 보통 3mm 입니다.',
+    params: { mm: p('number', '도련 (mm)', { required: true }) },
+    run: function (ctx, a) {
+      AI.prepress.setBleed(ctx.doc, AI.prepress.mm(a.mm));
+      return { bleedMm: U.round(a.mm, 3), bleedPt: U.round(AI.prepress.bleed(ctx.doc), 3) };
+    }
+  });
+
+  op('spots', {
+    undoable: false, group: '출고', desc: '문서에 등록된 별색 목록을 반환합니다.',
+    params: {},
+    run: function (ctx) {
+      return AI.prepress.spots(ctx.doc).map(function (s) {
+        return { name: s.name, cmyk: s.cmyk, hex: s.hex, kind: s.kind };
+      });
+    }
+  });
+
+  op('addSpot', {
+    undoable: true, group: '출고',
+    desc: '별색을 등록합니다. 별색은 분판에서 잉크 한 통, 커팅기에서는 칼선이 됩니다.',
+    params: {
+      name: p('string', "별색 이름. 커팅기는 정확히 'CutContour' 를 찾습니다", { required: true }),
+      c: p('number', 'C (0~100)'), m: p('number', 'M (0~100)'),
+      y: p('number', 'Y (0~100)'), k: p('number', 'K (0~100)'),
+      hex: p('string', '화면 표시색 (생략하면 CMYK 에서 계산)')
+    },
+    run: function (ctx, a) {
+      var PP = AI.prepress;
+      var cmyk = (a.c != null || a.m != null || a.y != null || a.k != null)
+        ? PP.cmyk(a.c, a.m, a.y, a.k) : (a.hex ? PP.rgbToCmyk(normalizeHex(a.hex)) : PP.cmyk(0, 100, 0, 0));
+      var s = PP.addSpot(ctx.doc, { name: a.name, cmyk: cmyk, hex: a.hex ? normalizeHex(a.hex) : null });
+      PP.resolveAll(ctx.doc);
+      return { name: s.name, cmyk: s.cmyk, hex: s.hex };
+    }
+  });
+
+  op('applySpot', {
+    undoable: true, group: '출고',
+    desc: '선택 항목의 칠 또는 획을 별색으로 바꿉니다.',
+    params: {
+      query: Q, name: p('string', '별색 이름', { required: true }),
+      target: p('string', '적용할 곳', { enum: ['fill', 'stroke'], default: 'fill' }),
+      tint: p('number', '농도 % (0~100)', { default: 100 })
+    },
+    run: function (ctx, a) {
+      var PP = AI.prepress;
+      var spot = PP.findSpot(ctx.doc, a.name);
+      if (!spot) throw err('NO_SPOT', "별색을 찾을 수 없습니다: '" + a.name + "'. addSpot 으로 먼저 등록하세요");
+      var list = need(ctx, a.query, 'applySpot'), n = 0;
+      list.forEach(function (it) {
+        var paint = PP.spotPaint(spot, a.tint == null ? 100 : a.tint);
+        if (a.target === 'stroke') {
+          var s = it.stroke && it.stroke.type !== 'none' ? it.stroke : Model.mkStroke(spot.hex, 1);
+          s.type = 'solid'; s.color = paint.color; s.cmyk = paint.cmyk;
+          s.spot = paint.spot; s.tint = paint.tint;
+          it.stroke = s;
+        } else {
+          it.fill = paint;
+        }
+        n++;
+      });
+      return { count: n, spot: a.name, target: a.target || 'fill' };
+    }
+  });
+
+  op('setOverprint', {
+    undoable: true, group: '출고',
+    desc: '오버프린트(밑색을 파내지 않고 겹쳐 찍기)를 켜고 끕니다. K100 검정에 쓰면 흰 테가 안 생깁니다.',
+    params: {
+      query: Q,
+      fill: p('boolean', '칠 오버프린트'), stroke: p('boolean', '획 오버프린트')
+    },
+    run: function (ctx, a) {
+      var list = need(ctx, a.query, 'setOverprint'), n = 0;
+      list.forEach(function (it) {
+        if (a.fill != null) AI.prepress.setOverprint(it, 'fill', a.fill);
+        if (a.stroke != null) AI.prepress.setOverprint(it, 'stroke', a.stroke);
+        n++;
+      });
+      return { count: n };
+    }
+  });
+
+  op('addPrinterMarks', {
+    undoable: true, group: '출고',
+    desc: '재단선 · 등록마크 · 컬러바를 잠긴 레이어에 만듭니다. 다시 부르면 새로 만듭니다.',
+    params: {
+      all: p('boolean', '모든 대지에', { default: false }),
+      registration: p('boolean', '등록마크 포함', { default: true }),
+      colorBar: p('boolean', '컬러바 포함', { default: true })
+    },
+    run: function (ctx, a) {
+      return AI.prepress.addMarks(ctx, {
+        all: !!a.all, registration: a.registration !== false, colorBar: a.colorBar !== false
+      });
+    }
+  });
+
+  op('removePrinterMarks', {
+    undoable: true, group: '출고', desc: '재단 표시 레이어를 지웁니다.',
+    params: {},
+    run: function (ctx) { AI.prepress.removeMarks(ctx); return { ok: true }; }
+  });
+
+  op('makeCutLine', {
+    undoable: true, group: '출고',
+    desc: "선택한 패스를 칼선으로 바꿉니다 — 칠을 없애고 별색(기본 CutContour) 획만 남깁니다.",
+    params: {
+      query: Q,
+      spot: p('string', '칼선 별색 이름', { default: 'CutContour' }),
+      width: p('number', '획 두께 (pt)', { default: 0.25 }),
+      offset: p('number', '원본에서 바깥으로 벌릴 거리 (pt). 주면 원본은 그대로 두고 칼선을 새로 만듭니다')
+    },
+    run: function (ctx, a) {
+      var PP = AI.prepress, targets = null;
+      withSel(ctx, a.query, 'makeCutLine', function (list) {
+        if (a.offset) {
+          /* 원본은 남기고 바깥으로 벌린 사본을 칼선으로 삼는다 */
+          if (E.offsetPath(ctx, a.offset, { replace: false }) === false) {
+            throw err('OFFSET_EMPTY', '오프셋할 수 있는 닫힌 패스가 없습니다');
+          }
+          targets = ctx.sel.slice();
+        } else {
+          targets = list.slice();
+        }
+      });
+      if (!targets || !targets.length) throw err('NO_SELECTION', '칼선으로 만들 패스를 선택하세요');
+      var r = PP.makeCutLine(ctx, targets, { spot: a.spot, width: a.width });
+      r.ids = targets.map(function (t) { return t.id; });
+      return r;
+    }
+  });
+
+  op('preflight', {
+    undoable: false, group: '출고',
+    desc: '출고 전 검사. 색상 모드 · 글꼴 윤곽선 · 얇은 획 · 이미지 해상도 · 도련 · 오버프린트 등을 한 번에 확인하고 무엇이 왜 걸렸는지 돌려줍니다.',
+    params: { intent: p('string', '업종 (생략하면 문서 설정)', { enum: INTENTS }) },
+    run: function (ctx, a) {
+      var rep = AI.preflight.run(ctx, a.intent);
+      rep.summary = AI.preflight.summary(rep);
+      return rep;
+    }
+  });
+
+  op('makePrintReady', {
+    undoable: true, group: '출고',
+    desc: '프리플라이트에서 걸린 것 중 고칠 수 있는 것을 고치고, 무엇을 왜 고쳤는지 돌려줍니다. 못 고친 것은 remaining 에 남습니다.',
+    params: {
+      intent: p('string', '업종 (생략하면 문서 설정)', { enum: INTENTS }),
+      warnings: p('boolean', '경고 · 참고까지 고치기', { default: false }),
+      only: p('string[]', '이 검사 항목만 고치기 (preflight 의 code)'),
+      skip: p('string[]', '이 검사 항목은 빼고')
+    },
+    run: function (ctx, a) {
+      var r = AI.preflight.fix(ctx, {
+        intent: a.intent,
+        levels: a.warnings ? ['error', 'warn', 'info'] : ['error'],
+        only: a.only, skip: a.skip
+      });
+      r.summary = AI.preflight.summary(r.report);
+      return r;
+    }
+  });
+
+  op('importPDF', {
+    undoable: true, group: '출고',
+    desc: 'PDF 를 열어 편집 가능한 벡터 · 문자 · 이미지로 가져옵니다. 별색(칼선 포함)은 이름 그대로 등록됩니다.',
+    params: {
+      data: p('string', 'PDF 내용 — data URL 또는 latin1 바이트 문자열', { required: true }),
+      pages: p('number[]', '가져올 페이지 번호 (0부터, 생략 시 전체)'),
+      maxPages: p('number', '최대 페이지 수')
+    },
+    run: function (ctx, a) {
+      if (!AI.pdfin) throw err('NO_PDFIN', 'PDF 가져오기 모듈을 찾을 수 없습니다');
+      var raw = String(a.data);
+      var i = raw.indexOf('base64,');
+      var bytes;
+      if (i >= 0) {
+        var b64 = raw.slice(i + 7).replace(/\s/g, '');
+        var bin = (typeof atob === 'function') ? atob(b64)
+          : (typeof Buffer !== 'undefined' ? Buffer.from(b64, 'base64').toString('latin1') : '');
+        bytes = new Uint8Array(bin.length);
+        for (var k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k) & 255;
+      } else {
+        bytes = new Uint8Array(raw.length);
+        for (var j = 0; j < raw.length; j++) bytes[j] = raw.charCodeAt(j) & 255;
+      }
+      if (bytes.length < 5) throw err('BAD_PDF', 'PDF 내용이 비어 있습니다');
+      return AI.pdfin.importInto(ctx, bytes, { pages: a.pages, maxPages: a.maxPages });
+    }
+  });
+
   op('toSVG', {
     undoable: false, group: '출력', desc: '대지 하나를 SVG 문자열로 반환합니다 (생략 시 활성 대지).',
     params: { artboard: p('number', '대지 번호 (0부터)') }, returns: 'string',

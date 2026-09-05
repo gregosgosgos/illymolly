@@ -28,6 +28,8 @@
     buildAppearance();
     buildEffects();
     buildArtboards();
+    buildPrepress();
+    buildSpots();
     UI.buildLayers(a);
     bindPanelFolding();
     UI.syncDocTabs(a);
@@ -247,6 +249,234 @@
     });
     U.qa('[data-cmd]', p).forEach(function (b) { U.on(b, 'click', function () { C.run(b.dataset.cmd); }); });
   }
+
+
+  /* ================= 출고 (프리프레스) =================
+     인쇄소·커팅기에 넘기기 전에 해야 하는 일을 한 화면에 모았다.
+     업종을 고르면 색상 모드·도련·별색이 한 번에 맞춰지고, [검사] 한 번으로
+     반려 사유를 전부 보여 준 뒤 고칠 수 있는 것은 버튼 하나로 고친다. */
+  var PP_INTENTS = [
+    ['print', '인쇄'], ['cut', '커팅'], ['laser', '레이저'], ['screen', '실크스크린']
+  ];
+
+  function buildPrepress() {
+    var p = document.getElementById('p-prepress');
+    if (!p) return;
+    p.innerHTML =
+      '<div class="row"><label class="lbl">업종</label><select class="fld" id="pp-intent">' +
+      PP_INTENTS.map(function (o) { return '<option value="' + o[0] + '">' + o[1] + '</option>'; }).join('') +
+      '</select></div>' +
+      '<div class="hint" id="pp-note"></div>' +
+
+      '<div class="sec">문서</div>' +
+      '<div class="row"><label class="lbl">색상</label>' +
+      UI.seg([{ value: 'rgb', label: 'RGB', title: '화면 · 레이저 커팅' },
+              { value: 'cmyk', label: 'CMYK', title: '인쇄' }], 'data-cmode', 'tight') + '</div>' +
+      '<div class="row"><label class="lbl">도련</label>' +
+      '<input class="fld" id="pp-bleed" value="0"><span class="unit">mm</span></div>' +
+      '<div class="row"><label class="ck"><input type="checkbox" id="pp-oppv"> 오버프린트 미리보기</label></div>' +
+
+      '<div class="sec">재단 표시</div>' +
+      '<div class="bar">' +
+      UI.btn({ label: '만들기', title: '재단선 · 등록마크 · 컬러바', data: { pp: 'marks' } }) +
+      UI.btn({ label: '지우기', data: { pp: 'nomarks' } }) +
+      '</div>' +
+
+      '<div class="sec">검사</div>' +
+      '<div class="bar">' +
+      UI.btn({ label: '검사', title: '출고 전 전 항목 검사', data: { pp: 'check' } }) +
+      UI.btn({ label: '고칠 수 있는 것 고치기', data: { pp: 'fix' } }) +
+      '</div>' +
+      '<div id="pp-result"></div>';
+
+    U.on(U.q('#pp-intent', p), 'change', function () {
+      app.history.begin('출고 업종', app.doc);
+      var r = AI.api.execute(app, 'printSetup', { intent: this.value });
+      app.history.commit();
+      UI.syncAll(app); app.invalidate();
+      if (r && r.changed && r.changed.length) U.toast(r.changed.join(' · '));
+    });
+    U.qa('[data-cmode]', p).forEach(function (b) {
+      U.on(b, 'click', function () {
+        app.history.begin('색상 모드', app.doc);
+        AI.prepress.setColorMode(app.doc, b.dataset.cmode);
+        app.history.commit();
+        UI.syncAll(app); app.invalidate();
+      });
+    });
+    num(U.q('#pp-bleed', p), function () { return AI.prepress.bleed(app.doc) / (72 / 25.4); },
+      function (v) { AI.prepress.setBleed(app.doc, AI.prepress.mm(U.clamp(v, 0, 100))); }, '도련');
+    U.on(U.q('#pp-oppv', p), 'change', function () {
+      app.prefs.overprintPreview = this.checked;
+      app.invalidate();
+    });
+    U.qa('[data-pp]', p).forEach(function (b) { U.on(b, 'click', function () { prepressAction(b.dataset.pp); }); });
+  }
+
+  function prepressAction(kind) {
+    var out = U.q('#pp-result');
+    if (kind === 'marks' || kind === 'nomarks') {
+      app.history.begin(kind === 'marks' ? '재단 표시 만들기' : '재단 표시 지우기', app.doc);
+      if (kind === 'marks') AI.prepress.addMarks(app, {});
+      else AI.prepress.removeMarks(app);
+      app.history.commit();
+      UI.syncAll(app); app.invalidate();
+      U.toast(kind === 'marks' ? '재단 표시를 만들었습니다' : '재단 표시를 지웠습니다');
+      return;
+    }
+    if (kind === 'fix') {
+      app.history.begin('출고 자동 수정', app.doc);
+      var r = AI.preflight.fix(app, { levels: ['error', 'warn', 'info'] });
+      app.history.commit();
+      UI.syncAll(app); app.invalidate();
+      renderReport(out, r.report, r.fixed);
+      U.toast(r.fixed.length ? r.fixed.length + '가지를 고쳤습니다' : '고칠 수 있는 것이 없습니다');
+      return;
+    }
+    renderReport(out, AI.preflight.run(app), null);
+  }
+
+  var LEVEL_LABEL = { error: '오류', warn: '경고', info: '참고' };
+
+  function renderReport(host, rep, fixed) {
+    if (!host) return;
+    var html = '<div class="pf-head ' + (rep.ok ? 'ok' : 'bad') + '">' +
+      U.esc(AI.preflight.summary(rep)) + '</div>';
+    if (fixed && fixed.length) {
+      html += '<ul class="pf-fixed">' + fixed.map(function (f) {
+        return '<li>' + U.esc(f.did) + '</li>';
+      }).join('') + '</ul>';
+    }
+    html += rep.issues.map(function (i) {
+      return '<div class="pf-issue ' + i.level + '">' +
+        '<div class="pf-title"><span class="pf-lv">' + LEVEL_LABEL[i.level] + '</span>' +
+        U.esc(i.label) + '<span class="pf-n">' + i.count + '</span></div>' +
+        i.items.slice(0, 6).map(function (h) {
+          return '<div class="pf-item"' + (h.id ? ' data-pfid="' + U.esc(h.id) + '"' : '') + '>' +
+            (h.name ? '<b>' + U.esc(h.name) + '</b> ' : '') + U.esc(h.detail) + '</div>';
+        }).join('') +
+        (i.count > 6 ? '<div class="pf-item more">… 외 ' + (i.count - 6) + '개</div>' : '') +
+        '</div>';
+    }).join('');
+    if (!rep.issues.length) html += '<div class="pf-item">넘길 준비가 됐습니다.</div>';
+    host.innerHTML = html;
+    /* 항목을 누르면 그 오브젝트를 선택해 화면에 보여 준다 */
+    U.qa('[data-pfid]', host).forEach(function (el) {
+      U.on(el, 'click', function () {
+        var it = Model.find(app.doc, el.dataset.pfid);
+        if (!it) return;
+        AI.sel.set(app, [it]);
+        AI.viewT.fitRect(app, Rn.selectionBounds(app, false), 60);
+        UI.syncAll(app); app.invalidate();
+      });
+    });
+  }
+
+  /* 메뉴에서 부른 검사 결과도 같은 패널에 그린다 */
+  UI.runPreflight = function (a, fixResult) {
+    var out = U.q('#pp-result');
+    if (!out) return;
+    if (fixResult) renderReport(out, fixResult.report, fixResult.fixed);
+    else renderReport(out, AI.preflight.run(a), null);
+  };
+
+  UI.syncPrepress = function (a) {
+    var p = document.getElementById('p-prepress');
+    if (!p) return;
+    var PP = AI.prepress;
+    var it = a.doc.intent || 'print';
+    var sel = U.q('#pp-intent', p); if (sel) sel.value = it;
+    var note = U.q('#pp-note', p); if (note) note.textContent = PP.preset(it).note;
+    U.qa('[data-cmode]', p).forEach(function (b) {
+      b.classList.toggle('on', b.dataset.cmode === PP.colorMode(a.doc));
+    });
+    var bl = U.q('#pp-bleed', p);
+    if (bl && document.activeElement !== bl) bl.value = U.round(PP.bleed(a.doc) / (72 / 25.4), 2);
+    var ck = U.q('#pp-oppv', p); if (ck) ck.checked = !!a.prefs.overprintPreview;
+    UI.syncSpots(a);
+  };
+
+  /* ================= 별색 ================= */
+  function buildSpots() {
+    var p = document.getElementById('p-spots');
+    if (!p) return;
+    p.innerHTML =
+      '<div id="sp-list" class="list"></div>' +
+      '<div class="sec">새 별색</div>' +
+      '<div class="row"><input class="fld" id="sp-name" placeholder="이름 (예: CutContour)" style="flex:1"></div>' +
+      '<div class="grid4">' +
+      '<input class="fld" id="sp-c" placeholder="C">' +
+      '<input class="fld" id="sp-m" placeholder="M">' +
+      '<input class="fld" id="sp-y" placeholder="Y">' +
+      '<input class="fld" id="sp-k" placeholder="K">' +
+      '</div>' +
+      '<div class="bar" style="margin-top:var(--gap)">' +
+      UI.btn({ label: '등록', data: { sp: 'add' } }) +
+      UI.btn({ label: '칠에 적용', data: { sp: 'fill' } }) +
+      UI.btn({ label: '획에 적용', data: { sp: 'stroke' } }) +
+      '</div>' +
+      '<div class="hint">별색은 분판에서 잉크 한 통이 됩니다. 커팅기는 정확히 CutContour 라는 이름을 찾습니다.</div>';
+
+    U.qa('[data-sp]', p).forEach(function (b) { U.on(b, 'click', function () { spotAction(b.dataset.sp); }); });
+  }
+
+  function selectedSpotName() {
+    var row = U.q('#sp-list .list-row.on');
+    return row ? row.dataset.spot : (U.q('#sp-name') || {}).value;
+  }
+
+  function spotAction(kind) {
+    var PP = AI.prepress;
+    if (kind === 'add') {
+      var name = (U.q('#sp-name').value || '').trim();
+      if (!name) { U.toast('별색 이름을 적어 주세요'); return; }
+      app.history.begin('별색 등록', app.doc);
+      PP.addSpot(app.doc, {
+        name: name,
+        cmyk: PP.cmyk(U.parseNum(U.q('#sp-c').value, 0), U.parseNum(U.q('#sp-m').value, 100),
+          U.parseNum(U.q('#sp-y').value, 0), U.parseNum(U.q('#sp-k').value, 0))
+      });
+      PP.resolveAll(app.doc);
+      app.history.commit();
+      UI.syncAll(app); app.invalidate();
+      U.toast("별색 '" + name + "' 등록");
+      return;
+    }
+    var nm = selectedSpotName();
+    if (!nm) { U.toast('적용할 별색을 목록에서 고르세요'); return; }
+    if (!app.sel.length) { U.toast('오브젝트를 먼저 선택하세요'); return; }
+    app.history.begin('별색 적용', app.doc);
+    AI.api.execute(app, 'applySpot', { name: nm, target: kind });
+    app.history.commit();
+    UI.syncAll(app); app.invalidate();
+  }
+
+  UI.syncSpots = function (a) {
+    var host = U.q('#sp-list');
+    if (!host) return;
+    var PP = AI.prepress, used = AI.preflight.usedSpots(a.doc);
+    var list = PP.spots(a.doc);
+    var cur = (U.q('#sp-list .list-row.on') || {}).dataset;
+    host.innerHTML = list.length ? list.map(function (s) {
+      return '<div class="list-row' + (cur && cur.spot === s.name ? ' on' : '') + '" data-spot="' + U.esc(s.name) + '">' +
+        '<span class="chip"><i style="background:' + s.hex + '"></i></span>' +
+        '<span class="list-name">' + U.esc(s.name) + '</span>' +
+        '<span class="list-sub">' + PP.cmykText(s.cmyk) + (used.indexOf(s.name) >= 0 ? ' · 사용중' : '') + '</span>' +
+        '</div>';
+    }).join('') : '<div class="list-empty">등록된 별색이 없습니다</div>';
+    U.qa('.list-row', host).forEach(function (row) {
+      U.on(row, 'click', function () {
+        U.qa('.list-row', host).forEach(function (r) { r.classList.remove('on'); });
+        row.classList.add('on');
+        var nm = U.q('#sp-name'); if (nm) nm.value = row.dataset.spot;
+        var s = PP.findSpot(a.doc, row.dataset.spot);
+        if (s) {
+          U.q('#sp-c').value = U.round(s.cmyk.c, 1); U.q('#sp-m').value = U.round(s.cmyk.m, 1);
+          U.q('#sp-y').value = U.round(s.cmyk.y, 1); U.q('#sp-k').value = U.round(s.cmyk.k, 1);
+        }
+      });
+    });
+  };
 
   /* ================= 변형 ================= */
   function buildTransform() {
@@ -1907,6 +2137,7 @@
     UI.syncAppearance(a);
     UI.syncEffects(a);
     UI.syncArtboards(a);
+    UI.syncPrepress(a);
     UI.buildLayers(a);
     UI.buildHistory(a);
   };

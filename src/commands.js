@@ -46,10 +46,43 @@
   def('save', '저장', 'Ctrl+S', function (a) { AI.io.save(a); });
   def('saveAs', '다른 이름으로 저장...', 'Ctrl+Shift+S', function (a) { AI.io.save(a, true); });
   def('place', '가져오기(이미지)...', 'Ctrl+Shift+P', function (a) { AI.io.placeImage(a); });
+  def('openPdf', 'PDF 가져오기...', null, function (a) { AI.io.openPDF(a); });
   def('exportSvg', 'SVG로 내보내기...', 'Ctrl+Alt+Shift+S', function (a) { AI.io.exportSVG(a); });
   def('exportPng', 'PNG로 내보내기...', 'Ctrl+Alt+E', function (a) { AI.io.exportPNG(a); });
   def('exportPdf', 'PDF로 내보내기...', null, function (a) { AI.io.exportPDF(a); });
   def('exportArtboards', '대지별로 내보내기...', null, function (a) { AI.io.exportArtboards(a, 'png'); });
+  /* ---- 출고 (프리프레스) ---- */
+  [['ppPrint', 'print', '인쇄 규격으로'], ['ppCut', 'cut', '커팅 규격으로'],
+   ['ppLaser', 'laser', '레이저 규격으로'], ['ppScreen', 'screen', '실크스크린 규격으로']
+  ].forEach(function (o) {
+    def(o[0], o[2], null, hist('출고 규격', function (a) {
+      var r = AI.api.execute(a, 'printSetup', { intent: o[1] });
+      U.toast(r.changed.length ? r.changed.join(' · ') : r.label + ' — 이미 맞습니다');
+    }), { checked: function (a) { return (a.doc.intent || 'print') === o[1]; } });
+  });
+  def('ppMarks', '재단 표시 만들기', null, hist('재단 표시', function (a) {
+    AI.prepress.addMarks(a, {});
+    U.toast('재단선 · 등록마크 · 컬러바를 만들었습니다');
+  }));
+  def('ppNoMarks', '재단 표시 지우기', null, hist('재단 표시 지우기', function (a) {
+    AI.prepress.removeMarks(a);
+  }), { enabled: function (a) { return AI.prepress.hasMarks(a.doc); } });
+  def('ppCheck', '출고 검사...', null, function (a) {
+    AI.ui.showPanel('prepress');
+    var rep = AI.preflight.run(a);
+    U.toast(AI.preflight.summary(rep));
+    if (AI.ui.runPreflight) AI.ui.runPreflight(a);
+  });
+  def('ppFix', '출고 자동 수정', null, hist('출고 자동 수정', function (a) {
+    var r = AI.preflight.fix(a, { levels: ['error', 'warn', 'info'] });
+    AI.ui.showPanel('prepress');
+    U.toast(r.fixed.length ? r.fixed.length + '가지를 고쳤습니다' : '고칠 수 있는 것이 없습니다');
+    if (AI.ui.runPreflight) AI.ui.runPreflight(a, r);
+  }));
+  def('overprintPreview', '오버프린트 미리보기', null, function (a) {
+    a.prefs.overprintPreview = !a.prefs.overprintPreview;
+  }, { checked: function (a) { return !!a.prefs.overprintPreview; } });
+
   def('closeDoc', '닫기', 'Ctrl+W', function (a) { AI.docs.close(a); });
   def('nextDoc', '다음 문서', 'Ctrl+Tab', function (a) { AI.docs.next(a, 1); },
     { enabled: function (a) { return AI.docs.count(a) > 1; } });
@@ -936,7 +969,7 @@
   /* ================= 메뉴 구조 ================= */
   C.MENUS = [
     {
-      title: '파일', items: ['new', 'open', 'closeDoc', '-', 'save', 'saveAs', '-', 'place', '-', 'exportSvg', 'exportPng', 'exportPdf', 'exportArtboards', '-', 'installApp', '-', 'docSetup']
+      title: '파일', items: ['new', 'open', 'closeDoc', '-', 'save', 'saveAs', '-', 'place', 'openPdf', '-', 'exportSvg', 'exportPng', 'exportPdf', 'exportArtboards', '-', 'installApp', '-', { label: '출고', items: ['ppPrint', 'ppCut', 'ppLaser', 'ppScreen', '-', 'ppMarks', 'ppNoMarks', '-', 'ppCheck', 'ppFix'] }, '-', 'docSetup']
     },
     {
       title: '편집', items: ['undo', 'redo', '-', 'cut', 'copy', 'paste', 'pasteFront', 'pasteBack', 'pasteInPlace', '-', 'clear', 'duplicate', '-', 'preferences']
@@ -988,7 +1021,7 @@
     {
       title: '보기', items: [
         'commandSearch', 'fullKeyboard', 'shortcutList', '-',
-        'outlineMode', '-', 'zoomIn', 'zoomOut', 'fitArtboard', 'fitAll', 'fitSelection', 'actualSize', '-',
+        'outlineMode', 'overprintPreview', '-', 'zoomIn', 'zoomOut', 'fitArtboard', 'fitAll', 'fitSelection', 'actualSize', '-',
         'rotateViewCW', 'rotateViewCCW', 'resetRotation', '-',
         'hideEdges', 'showBBox', '-', 'showRulers', 'showGrid', 'snapGrid', 'smartGuides', '-',
         'showGuides', 'lockGuides', 'makeGuides', 'releaseGuides', 'clearGuides'

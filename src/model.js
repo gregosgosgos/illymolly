@@ -332,6 +332,11 @@
       charStyles: [],    /* 문자 스타일 */
       paraStyles: [],    /* 단락 스타일 */
       rulerOrigin: { x: 0, y: 0 },   /* 눈금자 0 위치 (문서 좌표의 반대 부호) */
+      /* ---- 출고(프리프레스) ---- */
+      colorMode: 'rgb',  /* 'rgb' | 'cmyk' — 인쇄는 cmyk, 레이저 커팅은 rgb */
+      intent: 'print',   /* 출고 업종 — 프리플라이트 규칙이 여기에 맞춰진다 */
+      bleed: 0,          /* 도련 (pt). 대지 밖으로 나가는 여분 */
+      spots: [],         /* 별색 [{name, cmyk, hex, kind}] */
       bg: '#ffffff'
     };
   };

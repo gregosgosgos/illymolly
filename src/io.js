@@ -73,13 +73,64 @@
     });
   };
 
-  IO.openFile = function (app) {
+  /* ---- PDF 가져오기 ----
+     페이지의 벡터·문자·이미지를 편집 가능한 오브젝트로 되살린다.
+     별색(칼선 포함)은 이름 그대로 문서에 등록된다. */
+  IO.importPDFBytes = function (app, bytes, name, opts) {
+    if (!AI.pdfin) { U.toast('PDF 모듈을 찾을 수 없습니다'); return null; }
+    var doc = Model.newDoc(600, 400);
+    doc.name = String(name || 'PDF').replace(/\.pdf$/i, '');
+    var tmp = { doc: doc };
+    var rep;
+    try {
+      rep = AI.pdfin.importInto(tmp, bytes, opts || {});
+    } catch (e) {
+      U.toast('PDF 를 읽지 못했습니다: ' + e.message);
+      return null;
+    }
+    AI.docs.add(app, doc, { label: 'PDF 가져오기' });
+    U.toast(IO.pdfReport(rep));
+    return rep;
+  };
+
+  IO.pdfReport = function (rep) {
+    var parts = [];
+    if (rep.paths) parts.push('패스 ' + rep.paths);
+    if (rep.texts) parts.push('문자 ' + rep.texts);
+    if (rep.images) parts.push('이미지 ' + rep.images);
+    if (rep.spots && rep.spots.length) parts.push('별색 ' + rep.spots.join('·'));
+    var skip = Object.keys(rep.skipped || {});
+    var head = (rep.imported > 1 ? rep.imported + '쪽 · ' : '') + (parts.join(' · ') || '가져온 것 없음');
+    return head + (skip.length ? ' (못 가져옴: ' + skip.map(function (k) { return k + ' ' + rep.skipped[k]; }).join(', ') + ')' : '');
+  };
+
+  IO.openPDF = function (app) {
     var inp = document.createElement('input');
     inp.type = 'file';
-    inp.accept = '.json,.illy,.svg,application/json,image/svg+xml';
+    inp.accept = '.pdf,application/pdf';
     inp.onchange = function () {
       var f = inp.files[0];
       if (!f) return;
+      var r = new FileReader();
+      r.onload = function () { IO.importPDFBytes(app, new Uint8Array(r.result), f.name); };
+      r.readAsArrayBuffer(f);
+    };
+    inp.click();
+  };
+
+  IO.openFile = function (app) {
+    var inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = '.json,.illy,.svg,.pdf,application/json,image/svg+xml,application/pdf';
+    inp.onchange = function () {
+      var f = inp.files[0];
+      if (!f) return;
+      if (/\.pdf$/i.test(f.name) || f.type === 'application/pdf') {
+        var rp = new FileReader();
+        rp.onload = function () { IO.importPDFBytes(app, new Uint8Array(rp.result), f.name); };
+        rp.readAsArrayBuffer(f);
+        return;
+      }
       var r = new FileReader();
       r.onload = function () {
         try {
@@ -390,13 +441,30 @@
     return out.join('');
   }
 
+  /* 별색과 CMYK 는 SVG 표준에 자리가 없다. 값을 잃지 않도록 data- 속성에 적어
+     둔다 — 우리 파일로 다시 읽을 때, 그리고 RIP·워크플로 스크립트가 이름으로
+     칼선을 찾을 때 쓰인다. */
+  function prepressAttr(paint, which) {
+    if (!paint || paint.type === 'none') return '';
+    var out = '';
+    if (paint.spot) {
+      out += ' data-' + which + '-spot="' + U.esc(paint.spot) + '"';
+      if (paint.tint != null && paint.tint < 100) out += ' data-' + which + '-tint="' + U.round(paint.tint, 2) + '"';
+    }
+    var v = AI.prepress && AI.prepress.paintCmyk(IO.__doc, paint);
+    if (v) out += ' data-' + which + '-cmyk="' + AI.prepress.cmykText(v) + '"';
+    return out;
+  }
+
   /* 칠 · 획 한 쌍을 SVG 속성 문자열로 */
   function styleFor(it, fill, stroke, defs, b) {
     var f = paintSvg(fill, defs, b);
     var out = ' fill="' + f.attr + '"' + (f.op < 1 ? ' fill-opacity="' + U.round(f.op, 3) + '"' : '');
+    out += prepressAttr(fill, 'fill');
     if (stroke && stroke.type !== 'none' && stroke.width > 0) {
       var s = paintSvg(stroke, defs, b);
       out += ' stroke="' + s.attr + '" stroke-width="' + U.round(stroke.width, 3) + '"';
+      out += prepressAttr(stroke, 'stroke');
       if (s.op < 1) out += ' stroke-opacity="' + U.round(s.op, 3) + '"';
       if (stroke.cap && stroke.cap !== 'butt') out += ' stroke-linecap="' + stroke.cap + '"';
       if (stroke.join && stroke.join !== 'miter') out += ' stroke-linejoin="' + stroke.join + '"';

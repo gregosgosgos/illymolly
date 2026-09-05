@@ -78,6 +78,72 @@ window.addEventListener('message', e => {
 
 ---
 
+## 2-1. 출고 (프리프레스) — AI 가 가장 강한 자리
+
+인쇄소가 파일을 반려하는 이유는 규칙이 명문화되어 있고, 항목이 수십 개이며,
+사람이 눈으로 훑다가 빠뜨립니다. 창의성이 아니라 정확성만 필요한 일이라
+문서를 통째로 읽을 수 있는 API 가 사람보다 잘합니다.
+
+```js
+illy.printSetup({ intent: 'print' });   // 색상 모드 · 도련 · 별색을 한 번에
+illy.preflight();                        // 무엇이 왜 걸렸는지
+illy.makePrintReady();                   // 고칠 수 있는 것을 고치고 보고
+```
+
+`preflight()` 는 이렇게 돌려줍니다.
+
+```js
+{
+  intent: 'print', preset: '인쇄 (오프셋 · 디지털)',
+  ok: false, errors: 4, warnings: 0, notes: 1,
+  summary: '오류 4 · 참고 1 (인쇄 (오프셋 · 디지털))',
+  issues: [
+    { code: 'color-mode', level: 'error', label: '문서 색상 모드', count: 1,
+      fixable: true, items: [{ detail: '문서가 RGB 인데 CMYK 이어야 합니다' }] },
+    { code: 'thin-stroke', level: 'error', label: '너무 얇은 획', count: 1,
+      fixable: true, items: [{ id: 'path-3', name: '사각형', detail: '0.2pt < 0.5pt' }] }
+  ]
+}
+```
+
+`makePrintReady()` 는 **무엇을 왜 고쳤는지** 말합니다. 못 고치는 것은 남겨 둡니다.
+
+```js
+{ fixed: [{ code: 'color-mode', did: '색상 모드를 CMYK 로 바꿨습니다' },
+          { code: 'thin-stroke', did: '1개 획을 0.5pt 로 올렸습니다' }],
+  remaining: [], ok: true }
+```
+
+업종마다 규칙이 정반대인 곳이 있습니다 — 인쇄는 CMYK 를, 레이저 커팅은 RGB 를
+요구하고, 인쇄는 얇은 선을 싫어하는데 레이저는 0.001pt 를 요구합니다.
+`intent` 로 갈립니다: `print` · `cut` · `laser` · `screen`.
+
+| 연산 | 하는 일 |
+|---|---|
+| `printSetup({intent})` | 업종 규격으로 문서를 맞춘다 |
+| `printSettings()` | 지금 설정(업종 · 색상 모드 · 도련 · 별색 · 재단 표시) |
+| `setColorMode({mode})` · `setBleed({mm})` | 개별 설정 |
+| `spots()` · `addSpot({name,c,m,y,k})` · `applySpot({name,target,tint})` | 별색 |
+| `setOverprint({fill,stroke})` | 오버프린트 |
+| `addPrinterMarks()` · `removePrinterMarks()` | 재단선 · 등록마크 · 컬러바 |
+| `makeCutLine({spot,width,offset})` | 칼선으로 바꾸기 (칠 제거 + 별색 획) |
+| `preflight({intent})` · `makePrintReady({warnings,only,skip})` | 검사 · 자동 수정 |
+| `importPDF({data,pages})` | PDF 를 편집 가능한 오브젝트로 |
+
+스티커 한 장을 통째로 만드는 예:
+
+```js
+illy.printSetup({ intent: 'cut' });                    // CMYK · 도련 3mm · CutContour
+const logo = illy.addPath({ d: '...', fill: '#e2482a' });
+illy.makeCutLine({ query: logo, offset: 8 });          // 로고 바깥 8pt 에 칼선
+illy.addPrinterMarks({});
+const r = illy.makePrintReady();                       // 남은 규격 위반 정리
+if (!r.ok) console.log(r.remaining);                   // 사람이 손봐야 하는 것만
+illy.toPDF();                                          // 별색 분판까지 실려 나간다
+```
+
+---
+
 ## 3. 선택자
 
 대상을 지정하는 모든 자리에 쓰입니다. 생략하면 **현재 선택**이 대상입니다.
