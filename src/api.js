@@ -2558,12 +2558,19 @@
     }
   });
   op('toPDF', {
-    undoable: false, group: '출력', desc: '활성 대지를 벡터 PDF 문자열로 반환합니다 (latin1 바이트 문자열).',
-    params: { artboard: p('number', '대지 번호 (생략 시 활성 대지)') }, returns: 'string',
+    undoable: false, group: '출력',
+    desc: '벡터 PDF 문자열을 반환합니다 (latin1 바이트 문자열). 레이어는 PDF 의 선택적 콘텐츠(OCG)로, 대지는 쪽으로 담깁니다.',
+    params: {
+      artboard: p('number', '대지 하나만 (생략하면 전체)'),
+      allArtboards: p('boolean', '모든 대지를 쪽마다', { default: true })
+    },
+    returns: 'string',
     run: function (ctx, a) {
       if (!AI.pdf) throw err('NO_PDF', 'toPDF: PDF 모듈을 찾을 수 없습니다');
-      var str = AI.pdf.toPDF(ctx, { artboard: a.artboard });
-      return str;
+      return AI.pdf.toPDF(ctx, {
+        artboard: a.artboard,
+        artboards: (a.artboard == null && a.allArtboards !== false) ? 'all' : null
+      });
     }
   });
 
@@ -2588,13 +2595,17 @@
     desc: "Illustrator 가 바로 여는 .ai 파일 내용을 반환합니다 (latin1 바이트 문자열). .ai 는 내부가 PDF 라서 패스 · 색 · 이미지가 그대로 편집됩니다. 한글은 글꼴을 심어 넣으므로 텍스트로 열리고 모양도 원본 그대로입니다 — 먼저 loadFonts 로 글꼴을 준비하세요.",
     params: {
       artboard: p('number', '대지 번호 (생략 시 활성 대지)'),
+      allArtboards: p('boolean', '모든 대지를 쪽마다 담기 — 일러스트레이터가 쪽마다 대지를 만들어 줍니다', { default: true }),
       outlineText: p('boolean', '글꼴을 심지 않고 문자를 윤곽선으로 바꿔서 내보내기', { default: false }),
       background: p('boolean', '대지 배경 포함', { default: true })
     },
+    returns: 'string',
     run: function (ctx, a) {
       if (!AI.pdf) throw err('NO_PDF', 'PDF 모듈을 찾을 수 없습니다');
       return AI.pdf.toAI(ctx, {
-        artboard: a.artboard, outlineText: !!a.outlineText, background: a.background !== false
+        artboard: a.artboard,
+        artboards: (a.artboard == null && a.allArtboards !== false) ? 'all' : null,
+        outlineText: !!a.outlineText, background: a.background !== false
       });
     }
   });

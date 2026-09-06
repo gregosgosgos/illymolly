@@ -795,6 +795,37 @@ check('.ai 로 저장 — 일러스트레이터가 여는 형식(내부는 PDF)'
   return `%PDF- 헤더 · 되읽기 패스 ${rep.paths} · 대지 300pt 보존`;
 });
 
+check('.ai 가 레이어와 대지를 통째로 담는다', () => {
+  const illy = fresh({ width: 200, height: 150 });
+  illy.setDocument({ name: '표고 상세' });
+  illy.addLayer({ name: '배경' });
+  illy.addRect({ x: 0, y: 0, width: 200, height: 150, fill: '#eeeeff' });
+  illy.addLayer({ name: '제품 사진' });
+  illy.addEllipse({ x: 40, y: 40, width: 80, height: 80, fill: '#2d8ceb' });
+  illy.addArtboard({ name: '뒷면', x: 240, y: 0, width: 200, height: 150 });
+  illy.addRect({ x: 270, y: 40, width: 140, height: 70, fill: '#7bd142' });
+
+  const ai = illy.toAI({ outlineText: false });
+  const P = illymolly.AI.pdf;
+  eq(P.lastPages, 2, '쪽 수(대지)');
+  eq(P.lastLayers, 2, '레이어(OCG) 수');   /* 빈 기본 레이어는 안 담긴다 */
+
+  /* 레이어는 PDF 의 선택적 콘텐츠 그룹으로 — 일러스트레이터가 레이어로 되살린다 */
+  if (!/\/OCProperties/.test(ai)) throw new Error('OCProperties 없음');
+  if (!/\/OC \/OC\d+ BDC/.test(ai)) throw new Error('콘텐츠에 레이어 표시가 없음');
+  if (!/\/Count 2/.test(ai)) throw new Error('쪽 수가 2가 아님');
+
+  /* 한글 레이어 이름은 UTF-16 으로 실려야 한다 (? 가 되면 안 된다) */
+  const names = [...ai.matchAll(/\/Type \/OCG \/Name <([0-9A-F]+)>/g)].map(m => {
+    const h = m[1].slice(4);
+    let out = '';
+    for (let i = 0; i < h.length; i += 4) out += String.fromCharCode(parseInt(h.substr(i, 4), 16));
+    return out;
+  });
+  if (names.join(',') !== '배경,제품 사진') throw new Error('레이어 이름=' + names);
+  return `대지 2쪽 · 레이어 ${names.join(' / ')} · 이름 UTF-16 보존`;
+});
+
 /* ---------- 글꼴 심기 ---------- */
 const asyncChecks = [];
 const checkAsync = (name, fn) => asyncChecks.push([name, fn]);

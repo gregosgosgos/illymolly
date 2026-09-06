@@ -24,6 +24,19 @@
     });
   }
   function hex4(v) { return ('0000' + (v & 0xffff).toString(16).toUpperCase()).slice(-4); }
+
+  /* PDF 문자열 — ASCII 는 (그대로), 한글 등은 UTF-16BE 16진 문자열로.
+     레이어 이름 · 문서 제목처럼 사용자가 그린 글자가 아닌 것에 쓴다
+     (그래서 '? 로 대체' 개수에도 들어가지 않는다). */
+  function pdfString(str) {
+    var s2 = String(str == null ? '' : str);
+    if (!/[^\x20-\x7e]/.test(s2)) {
+      return '(' + s2.replace(/([\\()])/g, '\\$1') + ')';
+    }
+    var hex = 'FEFF';
+    for (var i = 0; i < s2.length; i++) hex += hex4(s2.charCodeAt(i));
+    return '<' + hex + '>';
+  }
   function utf16hex(cp) {
     if (cp <= 0xffff) return hex4(cp);
     var v = cp - 0x10000;
@@ -63,6 +76,7 @@
     this.fonts = {};      /* 이름 -> base font */
     this.spots = {};      /* 이름 -> {res:'CS1', name, cmyk} — 별색 분판 */
     this.embed = {};      /* 이름 -> {font, gids:{원본gid:1}} — 심을 글꼴 */
+    this.ocgs = [];       /* [{res:'OC0', name, visible}] — 레이어 (PDF 의 선택적 콘텐츠) */
     this.overprint = false;
     this.seq = 0;
   }
@@ -85,6 +99,15 @@
     this.spots[name] = { res: res, name: name, cmyk: cmyk };
     return res;
   };
+  /* 레이어 한 겹 = PDF 의 선택적 콘텐츠 그룹(OCG) 하나.
+     일러스트레이터는 PDF 를 열 때 OCG 를 레이어로 되살린다. */
+  Writer.prototype.ocgName = function (layer) {
+    for (var i = 0; i < this.ocgs.length; i++) if (this.ocgs[i].layer === layer) return this.ocgs[i].res;
+    var res = 'OC' + this.ocgs.length;
+    this.ocgs.push({ res: res, layer: layer, name: layer.name || ('레이어 ' + (this.ocgs.length + 1)), visible: layer.visible !== false });
+    return res;
+  };
+
   /* 심는 글꼴 — 쓰인 글리프를 모아 두었다가 마지막에 서브셋해서 넣는다 */
   Writer.prototype.embedName = function (font) {
     var key = 'E' + font.key.replace(/[^A-Za-z0-9]/g, '');
@@ -506,23 +529,39 @@
     droppedText = 0;
     P.lastEmbedded = 0; P.lastEmbedBytes = 0;
     var doc = app.doc;
-    var ab = doc.artboards[opt.artboard == null ? doc.activeArtboard : opt.artboard];
-    var W = ab.w, H = ab.h;
+
+    /* 어느 대지를 담을지 — 여럿이면 여러 페이지가 된다.
+       일러스트레이터는 여러 쪽 PDF 를 열 때 쪽마다 대지를 만들어 준다. */
+    var idx;
+    if (opt.artboards === 'all') idx = doc.artboards.map(function (_, i) { return i; });
+    else if (Array.isArray(opt.artboards) && opt.artboards.length) {
+      idx = opt.artboards.map(function (v) { return U.clamp(Math.round(v), 0, doc.artboards.length - 1); });
+    } else idx = [opt.artboard == null ? doc.activeArtboard : opt.artboard];
 
     var w = new Writer();
-    /* 대지 좌상단을 원점으로, y 아래 방향으로 맞춘다 */
-    w.w('q');
-    w.w('1 0 0 -1 ' + n(-ab.x) + ' ' + n(H + ab.y) + ' cm');
-    if (opt.background !== false && doc.bg) {
-      w.w(colorOps(w, doc, docBgPaint(doc), doc.bg, false));
-      w.w(n(ab.x) + ' ' + n(ab.y) + ' ' + n(W) + ' ' + n(H) + ' re f');
-    }
-    doc.layers.forEach(function (ly) {
-      if (!ly.visible) return;
-      ly.children.forEach(function (c) { drawItem(w, doc, c, M.ident(), 1); });
+    var pages = idx.map(function (ai2) {
+      var ab = doc.artboards[ai2];
+      w.buf = [];
+      /* 대지 좌상단을 원점으로, y 아래 방향으로 맞춘다 */
+      w.w('q');
+      w.w('1 0 0 -1 ' + n(-ab.x) + ' ' + n(ab.h + ab.y) + ' cm');
+      if (opt.background !== false && doc.bg) {
+        w.w(colorOps(w, doc, docBgPaint(doc), doc.bg, false));
+        w.w(n(ab.x) + ' ' + n(ab.y) + ' ' + n(ab.w) + ' ' + n(ab.h) + ' re f');
+      }
+      /* 레이어마다 OCG 로 감싼다 — 일러스트레이터가 레이어로 되살린다 */
+      doc.layers.forEach(function (ly) {
+        if (!ly.visible) return;
+        if (!ly.children.length) return;
+        var oc = w.ocgName(ly);
+        w.w('/OC /' + oc + ' BDC');
+        ly.children.forEach(function (c) { drawItem(w, doc, c, M.ident(), 1); });
+        w.w('EMC');
+      });
+      w.w('Q');
+      return { index: ai2, name: ab.name, w: ab.w, h: ab.h, content: w.buf.join('\n') };
     });
-    w.w('Q');
-    var content = w.buf.join('\n');
+    var W = pages[0].w, H = pages[0].h;
 
     /* --- 객체 --- */
     var objs = [];
@@ -610,7 +649,14 @@
       csObjs[sp.res] = obj('[ /Separation /' + pdfName(sp.name) + ' /DeviceCMYK ' + fn + ' 0 R ]');
     });
 
-    var contentObj = obj('<< /Length ' + byteLen(content) + ' >>\nstream\n' + content + '\nendstream');
+    var contentObjs = pages.map(function (pg) {
+      return obj('<< /Length ' + byteLen(pg.content) + ' >>\nstream\n' + pg.content + '\nendstream');
+    });
+
+    /* --- 레이어 (선택적 콘텐츠 그룹) --- */
+    var ocgObjs = w.ocgs.map(function (o) {
+      return obj('<< /Type /OCG /Name ' + pdfString(o.name) + ' >>');
+    });
 
     var res = ['<< /ProcSet [/PDF /Text /ImageC]'];
     if (Object.keys(fontObjs).length) {
@@ -625,17 +671,36 @@
     if (Object.keys(csObjs).length) {
       res.push('/ColorSpace << ' + Object.keys(csObjs).map(function (k) { return '/' + k + ' ' + csObjs[k] + ' 0 R'; }).join(' ') + ' >>');
     }
+    if (ocgObjs.length) {
+      res.push('/Properties << ' + w.ocgs.map(function (o, i) {
+        return '/' + o.res + ' ' + ocgObjs[i] + ' 0 R';
+      }).join(' ') + ' >>');
+    }
     res.push('>>');
+    var resStr = res.join(' ');
 
-    var pagesNo = objs.length + 2;      /* 아래 순서를 미리 계산 */
-    var pageObj = obj('<< /Type /Page /Parent ' + pagesNo + ' 0 R /MediaBox [0 0 ' + n(W) + ' ' + n(H) +
-      '] /Resources ' + res.join(' ') + ' /Contents ' + contentObj + ' 0 R >>');
-    var pages = obj('<< /Type /Pages /Kids [' + pageObj + ' 0 R] /Count 1 >>');
-    /* 제목의 비ASCII 는 사용자가 그린 글자가 아니므로 경고 수에 넣지 않는다 */
-    var dropAtTitle = droppedText;
-    var info = obj('<< /Producer (Illymolly) /Title (' + escapeText(String(doc.name || '무제')) + ') >>');
-    droppedText = dropAtTitle;
-    var root = obj('<< /Type /Catalog /Pages ' + pages + ' 0 R >>');
+    var pagesNo = objs.length + pages.length + 1;   /* 아래 순서를 미리 계산 */
+    var pageObjs = pages.map(function (pg, i) {
+      return obj('<< /Type /Page /Parent ' + pagesNo + ' 0 R /MediaBox [0 0 ' + n(pg.w) + ' ' + n(pg.h) +
+        '] /Resources ' + resStr + ' /Contents ' + contentObjs[i] + ' 0 R >>');
+    });
+    var pagesObj = obj('<< /Type /Pages /Kids [' +
+      pageObjs.map(function (o) { return o + ' 0 R'; }).join(' ') +
+      '] /Count ' + pageObjs.length + ' >>');
+    var info = obj('<< /Producer (Illymolly) /Title ' + pdfString(doc.name || '무제') + ' >>');
+    var ocProps = '';
+    if (ocgObjs.length) {
+      var refs = ocgObjs.map(function (o) { return o + ' 0 R'; }).join(' ');
+      var onRefs = ocgObjs.filter(function (_, i) { return w.ocgs[i].visible; })
+        .map(function (o) { return o + ' 0 R'; }).join(' ');
+      var offRefs = ocgObjs.filter(function (_, i) { return !w.ocgs[i].visible; })
+        .map(function (o) { return o + ' 0 R'; }).join(' ');
+      ocProps = ' /OCProperties << /OCGs [' + refs + '] /D << /Order [' + refs + ']' +
+        ' /ON [' + onRefs + '] /OFF [' + offRefs + '] /BaseState /ON >> >>';
+    }
+    var root = obj('<< /Type /Catalog /Pages ' + pagesObj + ' 0 R' + ocProps + ' >>');
+    P.lastPages = pageObjs.length;
+    P.lastLayers = ocgObjs.length;
 
     /* --- 직렬화 --- */
     var out = '%PDF-1.4\n%\xE2\xE3\xCF\xD3\n';

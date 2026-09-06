@@ -17,15 +17,18 @@ const out = await pg.evaluate(async file => {
   const pdfjs = await import('http://localhost:8086/node_modules/pdfjs-dist/build/pdf.mjs');
   pdfjs.GlobalWorkerOptions.workerSrc = 'http://localhost:8086/node_modules/pdfjs-dist/build/pdf.worker.mjs';
   const doc = await pdfjs.getDocument({ url: file }).promise;
+  const oc = await doc.getOptionalContentConfig();
+  const groups = [...(oc?.getGroups?.() ? Object.entries(oc.getGroups()) : [])]
+    .map(([id, g]) => (g?.name ?? g) + (oc.isVisible({type:'OCG', id}) ? '' : '(숨김)'));
   const page = await doc.getPage(1);
   const vp = page.getViewport({ scale: 2 });
   const c = document.getElementById('c');
   c.width = vp.width; c.height = vp.height;
   await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
   const tc = await page.getTextContent();
-  return { text: tc.items.map(i => i.str).join('|'), w: vp.width, h: vp.height, pages: doc.numPages };
+  return { text: tc.items.map(i => i.str).join('|'), w: vp.width, h: vp.height, pages: doc.numPages, groups };
 }, 'http://localhost:8086/sp/' + FILE);
-console.log('pdf.js 렌더:', out.w+'x'+out.h, '· 페이지', out.pages);
+console.log('pdf.js 렌더:', out.w+'x'+out.h, '· 페이지', out.pages, '· 레이어:', out.groups.join(' / ') || '(없음)');
 console.log('추출한 텍스트:', out.text);
 console.log('오류:', errs.slice(0,3));
 const el = await pg.$('#c');

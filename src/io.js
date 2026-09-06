@@ -614,11 +614,11 @@
 
   IO.exportPDF = function (app) {
     if (!AI.pdf) { U.toast('PDF 모듈이 없습니다'); return; }
-    if (app.doc.artboards.length > 1) { IO.exportArtboards(app, 'pdf'); return; }
+    /* 대지가 여럿이면 쪽마다 담는다 — 파일을 쪼개지 않는다 */
     return withFonts(app, function () {
-      var str = AI.pdf.toPDF(app);
+      var str = AI.pdf.toPDF(app, { artboards: 'all' });
       download(baseName(app) + '.pdf', new Blob([AI.pdf.toBytes(str)], { type: 'application/pdf' }));
-      U.toast('PDF 내보내기 완료' + fontNote());
+      U.toast('PDF 내보내기 완료 — ' + structNote() + fontNote());
     });
   };
 
@@ -627,9 +627,11 @@
     opts = opts || {};
     if (!AI.pdf) { U.toast('PDF 모듈이 없습니다'); return; }
     return withFonts(app, function () {
-      var str = AI.pdf.toAI(app, opts);
+      var o2 = { artboards: 'all' };
+      Object.keys(opts).forEach(function (k) { o2[k] = opts[k]; });
+      var str = AI.pdf.toAI(app, o2);
       download(baseName(app) + '.ai', new Blob([AI.pdf.toBytes(str)], { type: 'application/illustrator' }));
-      U.toast('AI 파일로 저장했습니다' + fontNote());
+      U.toast('AI 파일로 저장했습니다 — ' + structNote() + fontNote());
     });
   };
 
@@ -647,6 +649,15 @@
       U.toast('한글 글꼴을 받지 못해 글자를 윤곽선으로 내보냅니다');
       run();
     });
+  }
+
+  /* 무엇이 통째로 담겼는지 알려 준다 */
+  function structNote() {
+    var P = AI.pdf;
+    var parts = [];
+    if (P.lastPages > 1) parts.push('대지 ' + P.lastPages + '개');
+    if (P.lastLayers) parts.push('레이어 ' + P.lastLayers + '겹');
+    return parts.length ? parts.join(' · ') + ' 유지' : '';
   }
 
   function fontNote() {

@@ -5261,6 +5261,38 @@ await check('AI 파일 저장 — 글꼴이 심겨 윤곽선으로 안 바뀐다
   return `글꼴 ${(r.size / 1024).toFixed(1)}KB vs 윤곽선 ${(r.outlinedSize / 1024).toFixed(1)}KB · 원본 문서 그대로`;
 });
 
+await check('AI 파일 — 레이어 · 대지 · 글꼴을 한 파일에 통째로', async () => {
+  const r = await ev(async () => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(200, 150));
+    app.doc.name = '표고 상세';
+    illy.addLayer({ name: '배경' });
+    illy.addRect({ x: 0, y: 0, width: 200, height: 150, fill: '#eeeeff' });
+    illy.addLayer({ name: '제품 사진' });
+    illy.addText({ x: 20, y: 60, text: '국내산 표고', size: 16 });
+    illy.addArtboard({ name: '뒷면', x: 240, y: 0, width: 200, height: 150 });
+    illy.addRect({ x: 270, y: 40, width: 140, height: 70, fill: '#7bd142' });
+    await illy.loadFonts();
+    const ai = illy.toAI({});
+    return {
+      pages: AI.pdf.lastPages, layers: AI.pdf.lastLayers,
+      embedded: AI.pdf.lastEmbedded, oc: ai.indexOf('/OCProperties') >= 0,
+      bdc: /\/OC \/OC\d+ BDC/.test(ai), font: ai.indexOf('/FontFile2') >= 0,
+      names: [...ai.matchAll(/\/Type \/OCG \/Name <([0-9A-F]+)>/g)].map(m => {
+        const h = m[1].slice(4); let o = '';
+        for (let i = 0; i < h.length; i += 4) o += String.fromCharCode(parseInt(h.substr(i, 4), 16));
+        return o;
+      })
+    };
+  });
+  if (r.pages !== 2) throw new Error('쪽 수=' + r.pages);
+  if (r.layers !== 2) throw new Error('레이어 수=' + r.layers);
+  if (!r.oc || !r.bdc) throw new Error('레이어가 OCG 로 안 담김');
+  if (!r.font || !r.embedded) throw new Error('글꼴이 안 심김');
+  if (r.names.join(',') !== '배경,제품 사진') throw new Error('레이어 이름=' + r.names);
+  return `대지 2쪽 · 레이어 ${r.names.join(' / ')} · 글꼴 ${r.embedded}벌`;
+});
+
 /* ---------------- 결과 ---------------- */
 console.log('\n=== Illymolly E2E ===');
 for (const [n, s, d] of results) console.log(`${s === 'OK' ? '✔' : '✘'} ${n}${d ? ' — ' + d : ''}`);
