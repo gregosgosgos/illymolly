@@ -622,6 +622,19 @@
       (AI.pdf.lastDroppedText ? ' — 한글 등 비ASCII 글자 ' + AI.pdf.lastDroppedText + '자는 ?로 대체되었습니다 (윤곽선 만들기 권장)' : ''));
   };
 
+  /* .ai 로 저장 — 일러스트레이터가 바로 여는 형식 (내부는 PDF) */
+  IO.exportAI = function (app, opts) {
+    opts = opts || {};
+    if (!AI.pdf) { U.toast('PDF 모듈이 없습니다'); return; }
+    var str = AI.pdf.toAI(app, opts);
+    var bytes = AI.pdf.toBytes(str);
+    download(baseName(app) + '.ai', new Blob([bytes], { type: 'application/illustrator' }));
+    var msg = 'AI 파일로 저장했습니다';
+    if (AI.pdf.lastOutlined) msg += ' — 글자 ' + AI.pdf.lastOutlined + '개는 윤곽선으로 변환했습니다';
+    else if (AI.pdf.lastDroppedText) msg += ' — 한글 ' + AI.pdf.lastDroppedText + '자가 ?로 대체되었습니다';
+    U.toast(msg);
+  };
+
   /* 문서에 담기지 않고 주소만 걸린 그림 — 브라우저가 캔버스를 잠가 버려
      PNG · PDF 로 내보낼 수 없게 만든다. 미리 이름을 알려 줄 수 있게 모아 둔다. */
   IO.linkedImages = function (doc) {

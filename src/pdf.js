@@ -335,6 +335,41 @@
   }
 
   /* ---------------- 파일 조립 ---------------- */
+  /* ---------------- .ai 로 저장 ----------------
+     Illustrator 9(2000) 이후의 .ai 는 사실 PDF 다. 헤더가 %PDF- 로 시작하고,
+     일러스트레이터만 읽는 비공개 스트림(PGF)이 하나 더 들어 있을 뿐이다.
+     그 비공개 부분은 공개된 규격이 없으므로 우리는 쓰지 않는다 — 대신
+     일러스트레이터가 "PDF 호환" 경로로 읽는 부분을 정확히 쓴다.
+     열면 패스 · 색 · 이미지가 그대로 편집된다 (라이브 셰이프 · 효과는 평면화).
+
+     한글은 표준 14 글꼴에 없어 ? 가 되므로, 기본으로 문자를 윤곽선으로 바꾼
+     사본을 만들어 내보낸다. 원본 문서는 건드리지 않는다. */
+  P.toAI = function (app, opt) {
+    opt = opt || {};
+    P.lastOutlined = 0;
+    if (opt.outlineText === false) return P.toPDF(app, opt);
+    if (!U.hasDOM || !AI.trace) return P.toPDF(app, opt);   /* 글리프 윤곽은 캔버스가 필요하다 */
+
+    var copy = U.deepCopy(app.doc);
+    var tmp = {
+      doc: copy, view: app.view, prefs: app.prefs, sel: [], selPts: [],
+      dpr: 1, invalidate: function () { }
+    };
+    var n = 0, guard = 0;
+    for (;;) {
+      var found = null;
+      Model.walk(copy, function (it, list, i) {
+        if (it.type === 'text') { found = { it: it, list: list, i: i }; return false; }
+      });
+      if (!found || guard++ > 2000) break;
+      var outline = AI.trace.textToOutlines(tmp, found.it);
+      if (outline) { found.list.splice(found.i, 1, outline); n++; }
+      else found.list.splice(found.i, 1);   /* 윤곽선을 못 만들면 빼는 편이 ? 보다 낫다 */
+    }
+    P.lastOutlined = n;
+    return P.toPDF(tmp, opt);
+  };
+
   P.toPDF = function (app, opt) {
     opt = opt || {};
     droppedText = 0;

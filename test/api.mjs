@@ -777,6 +777,24 @@ check('이미지 해상도를 헤더만 읽고 판정한다', () => {
   return '4×4 PNG · 100pt 배치 → ' + dpi + 'dpi';
 });
 
+check('.ai 로 저장 — 일러스트레이터가 여는 형식(내부는 PDF)', () => {
+  const a = fresh({ width: 300, height: 200 });
+  a.addRect({ x: 20, y: 20, width: 120, height: 80, fill: '#ff3366' });
+  a.addEllipse({ x: 160, y: 30, width: 90, height: 90, fill: '#2d8ceb' });
+  /* Node 에는 캔버스가 없어 윤곽선 변환을 못 하므로 문자 없이 검증한다 */
+  const ai = a.toAI({ outlineText: false });
+  if (ai.slice(0, 5) !== '%PDF-') throw new Error('헤더=' + JSON.stringify(ai.slice(0, 8)));
+  if (!/trailer/.test(ai) || !/%%EOF/.test(ai)) throw new Error('PDF 구조가 온전하지 않음');
+
+  /* 되읽어서 내용이 살아 있는지 — 일러스트레이터가 읽는 것과 같은 경로다 */
+  const b = fresh({ width: 10, height: 10 });
+  const rep = b.importPDF({ data: ai });
+  if (rep.paths < 2) throw new Error('패스 ' + rep.paths + '개만 살아남음');
+  const info = b.documentInfo();
+  near(info.artboards[0].width, 300, 0.5, '대지 폭');
+  return `%PDF- 헤더 · 되읽기 패스 ${rep.paths} · 대지 300pt 보존`;
+});
+
 /* ---------- 결과 ---------- */
 console.log('\n=== 자동화 API (Node 헤드리스) ===');
 let fail = 0;

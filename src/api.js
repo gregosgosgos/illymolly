@@ -2567,6 +2567,23 @@
     }
   });
 
+  op('toAI', {
+    undoable: false, group: '출력',
+    desc: "Illustrator 가 바로 여는 .ai 파일 내용을 반환합니다 (latin1 바이트 문자열). .ai 는 내부가 PDF 라서 패스·색·이미지가 그대로 편집됩니다. 한글이 살아남도록 기본으로 문자를 윤곽선으로 바꾼 사본을 씁니다 (브라우저 전용).",
+    params: {
+      artboard: p('number', '대지 번호 (생략 시 활성 대지)'),
+      outlineText: p('boolean', '문자를 윤곽선으로 바꿔서 내보내기', { default: true }),
+      background: p('boolean', '대지 배경 포함', { default: true })
+    },
+    run: function (ctx, a) {
+      if (!AI.pdf) throw err('NO_PDF', 'PDF 모듈을 찾을 수 없습니다');
+      var out = AI.pdf.toAI(ctx, {
+        artboard: a.artboard, outlineText: a.outlineText !== false, background: a.background !== false
+      });
+      return out;
+    }
+  });
+
   op('toPNG', {
     undoable: false, group: '출력', desc: '활성 대지를 PNG data URL 로 반환합니다 (브라우저 전용).',
     params: {
