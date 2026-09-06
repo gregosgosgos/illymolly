@@ -5210,6 +5210,57 @@ await check('PDF 가져오기 — 남이 만든 PDF 가 편집 가능한 오브�
   return `패스 ${r.paths} · 문자 ${r.texts} · 색 보존 · ${r.w}×${r.h}pt`;
 });
 
+await check('한글 글꼴 심기 — 브라우저에서 받아 PDF 에 넣는다', async () => {
+  const r = await ev(async () => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(400, 160));
+    illy.addText({ x: 20, y: 50, text: '햇볕에 말린 참나무 표고', size: 24, weight: 700 });
+    illy.addText({ x: 20, y: 100, text: '두께 3mm 슬라이스 · 불리면 5배', size: 14 });
+    const load = await illy.loadFonts();
+    const pdf = illy.toPDF();
+    return {
+      load, dropped: AI.pdf.lastDroppedText, embedded: AI.pdf.lastEmbedded,
+      bytes: AI.pdf.lastEmbedBytes, size: pdf.length,
+      type0: pdf.indexOf('/Subtype /Type0') >= 0,
+      cid: pdf.indexOf('/CIDFontType2') >= 0,
+      file: pdf.indexOf('/FontFile2') >= 0,
+      uni: pdf.indexOf('/ToUnicode') >= 0
+    };
+  });
+  if (!r.load.needed) throw new Error('한글이 있는데 글꼴이 필요 없다고 함');
+  if (!r.load.loaded.length) throw new Error('글꼴을 못 받음');
+  if (r.load.missing.length) throw new Error('글리프 없는 글자: ' + r.load.missing.join(''));
+  if (r.dropped) throw new Error(r.dropped + '자가 ? 로 대체됨');
+  if (!r.embedded) throw new Error('글꼴이 안 심김');
+  if (!r.type0 || !r.cid || !r.file || !r.uni) throw new Error('PDF 글꼴 구조가 빠짐: ' + JSON.stringify(r));
+  return `글꼴 ${r.embedded}벌 · ${(r.bytes / 1024).toFixed(1)}KB · 받은 것 ${r.load.loaded.join(',')}`;
+});
+
+await check('AI 파일 저장 — 글꼴이 심겨 윤곽선으로 안 바뀐다', async () => {
+  const r = await ev(async () => {
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(300, 140));
+    illy.addRect({ x: 10, y: 10, width: 100, height: 50, fill: '#7bd142' });
+    illy.addText({ x: 10, y: 110, text: '국내산 표고버섯 100g', size: 18 });
+    await illy.loadFonts();
+    const ai = illy.toAI({});
+    /* 일부러 윤곽선을 고르면 그것도 되어야 한다 */
+    const outlined = illy.toAI({ outlineText: true });
+    return {
+      header: ai.slice(0, 5), font: ai.indexOf('/FontFile2') >= 0,
+      embedded: AI.pdf.lastEmbedded, size: ai.length,
+      outlinedSize: outlined.length, outlinedCount: AI.pdf.lastOutlined,
+      texts: AI.app.doc.layers.reduce((n, l) => n + l.children.filter(c => c.type === 'text').length, 0)
+    };
+  });
+  if (r.header !== '%PDF-') throw new Error('헤더=' + r.header);
+  if (!r.font) throw new Error('글꼴이 안 실림');
+  if (!r.outlinedCount) throw new Error('윤곽선 방식이 동작 안 함');
+  if (r.size >= r.outlinedSize) throw new Error('글꼴 방식이 더 큼');
+  if (r.texts !== 1) throw new Error('원본 문서가 바뀜 — 문자 ' + r.texts + '개');
+  return `글꼴 ${(r.size / 1024).toFixed(1)}KB vs 윤곽선 ${(r.outlinedSize / 1024).toFixed(1)}KB · 원본 문서 그대로`;
+});
+
 /* ---------------- 결과 ---------------- */
 console.log('\n=== Illymolly E2E ===');
 for (const [n, s, d] of results) console.log(`${s === 'OK' ? '✔' : '✘'} ${n}${d ? ' — ' + d : ''}`);

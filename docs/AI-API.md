@@ -129,6 +129,8 @@ illy.makePrintReady();                   // 고칠 수 있는 것을 고치고 �
 | `makeCutLine({spot,width,offset})` | 칼선으로 바꾸기 (칠 제거 + 별색 획) |
 | `preflight({intent})` · `makePrintReady({warnings,only,skip})` | 검사 · 자동 수정 |
 | `importPDF({data,pages})` | PDF 를 편집 가능한 오브젝트로 |
+| `loadFonts()` | 한글 글꼴 준비 (비동기 — `toAI` · `toPDF` 전에 await) |
+| `toAI({outlineText})` | Illustrator 가 여는 `.ai` — 한글은 글꼴을 심어 텍스트로 |
 
 스티커 한 장을 통째로 만드는 예:
 

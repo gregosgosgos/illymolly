@@ -18,7 +18,7 @@ const vm = require('vm');
 /* 브라우저와 같은 소스를 그대로 읽어 들인다 — 빌드 단계도, 코드 사본도 없다 */
 const CORE = [
   'util', 'color', 'model', 'prepress', 'geom', 'pathfinder', 'history',
-  'appearance', 'assets', 'distort', 'threed', 'effects', 'render', 'hit', 'preflight', 'view', 'edit', 'styles', 'docs', 'autosave', 'trace', 'pdf', 'pdfin', 'io', 'api'
+  'appearance', 'assets', 'distort', 'threed', 'effects', 'render', 'hit', 'preflight', 'view', 'edit', 'styles', 'docs', 'autosave', 'trace', 'pdf', 'pdfin', 'fontembed', 'io', 'api'
 ];
 
 function load() {
@@ -31,6 +31,11 @@ function load() {
 }
 
 const AI = load();
+
+/* 브라우저 밖에서는 fetch 가 없으므로 파일을 직접 읽어 준다 */
+if (AI.fontembed) {
+  AI.fontembed.reader = (rel) => fs.readFileSync(path.join(__dirname, rel));
+}
 
 module.exports = {
   AI,
@@ -54,5 +59,11 @@ module.exports = {
   },
 
   /** 결정적 id 를 위해 카운터를 리셋 — 재현 가능한 스크립트를 만들 때 */
-  resetIds(n) { AI.util.resetIds(n || 0); }
+  resetIds(n) { AI.util.resetIds(n || 0); },
+
+  /** PDF · AI 로 내보낼 때 심을 한글 글꼴을 미리 읽어 둔다 */
+  loadFonts(keys) {
+    const list = keys || Object.keys(AI.fontembed.FONTS);
+    return Promise.all(list.map(k => AI.fontembed.load(k)));
+  }
 };

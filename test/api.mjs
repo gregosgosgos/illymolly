@@ -795,7 +795,81 @@ check('.ai 로 저장 — 일러스트레이터가 여는 형식(내부는 PDF)'
   return `%PDF- 헤더 · 되읽기 패스 ${rep.paths} · 대지 300pt 보존`;
 });
 
+/* ---------- 글꼴 심기 ---------- */
+const asyncChecks = [];
+const checkAsync = (name, fn) => asyncChecks.push([name, fn]);
+
+checkAsync('한글 글꼴을 읽고 서브셋한다', async () => {
+  await illymolly.loadFonts(['kr-400', 'la-400']);
+  const FE = illymolly.AI.fontembed;
+  const f = FE.get('kr-400');
+  if (!f) throw new Error('글꼴을 못 읽음');
+  eq(f.unitsPerEm, 1000, 'unitsPerEm');
+  if (f.numGlyphs < 5000) throw new Error('글리프 ' + f.numGlyphs + '개뿐');
+  /* 한글 · ASCII · 가운뎃점이 모두 있어야 상세페이지가 통째로 들어간다 */
+  for (const ch of '햇볕에말린참나무표고 3mm·%()') {
+    if (!FE.has(f, ch.codePointAt(0))) throw new Error("'" + ch + "' 글리프 없음");
+  }
+  const gids = [...new Set([...'햇볕에 말린 참나무 표고 3mm'].map(c => FE.gid(f, c.codePointAt(0))))];
+  const sub = FE.subset(f, gids);
+  /* 서브셋은 넘긴 순서를 지켜야 한다 — PDF 가 CID 로 그 번호를 쓴다 */
+  gids.forEach((g, i) => { if (sub.map[g] !== i + 1) throw new Error('순서 어긋남 ' + i); });
+  const back = FE.parse(sub.data, { name: 'sub' });
+  eq(back.numGlyphs, sub.count, '되읽은 글리프 수');
+  const g0 = gids[0];
+  const a = f.tables.glyf.slice(f.loca[g0], f.loca[g0 + 1]);
+  const b = back.tables.glyf.slice(back.loca[1], back.loca[2]);
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) throw new Error('글리프 데이터 불일치 ' + i);
+  if (sub.data.length > 40000) throw new Error('서브셋이 너무 큼 ' + sub.data.length);
+  return `${f.numGlyphs}글리프 중 ${sub.count}개만 · ${(sub.data.length / 1024).toFixed(1)}KB`;
+});
+
+checkAsync('한글이 ? 가 아니라 진짜 글꼴로 PDF 에 들어간다', async () => {
+  await illymolly.loadFonts();
+  const illy = fresh({ width: 400, height: 160 });
+  illy.addText({ x: 20, y: 50, text: '햇볕에 말린 참나무 표고', size: 24, weight: 700 });
+  illy.addText({ x: 20, y: 100, text: '두께 3mm 슬라이스 · 불리면 5배', size: 14 });
+  const pdf = illy.toPDF();
+  const P = illymolly.AI.pdf;
+  eq(P.lastDroppedText, 0, '? 로 대체된 글자');
+  if (!P.lastEmbedded) throw new Error('글꼴이 안 심김');
+  ['/Subtype /Type0', '/Subtype /CIDFontType2', '/Encoding /Identity-H', '/FontFile2', '/ToUnicode', '/CIDToGIDMap /Identity']
+    .forEach(k => { if (pdf.indexOf(k) < 0) throw new Error('PDF 에 ' + k + ' 가 없음'); });
+  if (pdf.indexOf('?') >= 0 && /\(\?+\)/.test(pdf)) throw new Error('아직 ? 로 나감');
+  return `글꼴 ${P.lastEmbedded}벌 · ${(P.lastEmbedBytes / 1024).toFixed(1)}KB · 전체 ${(pdf.length / 1024).toFixed(1)}KB`;
+});
+
+checkAsync('.ai 로 저장하면 글꼴이 심긴 채로 나간다', async () => {
+  await illymolly.loadFonts();
+  const illy = fresh({ width: 300, height: 120 });
+  illy.addRect({ x: 10, y: 10, width: 90, height: 50, fill: '#7bd142' });
+  illy.addText({ x: 10, y: 100, text: '국내산 표고버섯', size: 18 });
+  const ai = illy.toAI({});
+  if (ai.slice(0, 5) !== '%PDF-') throw new Error('헤더');
+  if (ai.indexOf('/FontFile2') < 0) throw new Error('글꼴이 안 실림');
+  if (illymolly.AI.pdf.lastOutlined) throw new Error('윤곽선으로 돌아감');
+  /* 윤곽선 방식보다 훨씬 작아야 한다 */
+  const sizeKB = ai.length / 1024;
+  if (sizeKB > 120) throw new Error('파일이 큼 ' + sizeKB.toFixed(0) + 'KB');
+  return `${sizeKB.toFixed(0)}KB · 텍스트 유지 · 윤곽선 0개`;
+});
+
+checkAsync('문서에 한글이 없으면 글꼴을 받지 않는다', async () => {
+  const illy = fresh({ width: 200, height: 100 });
+  illy.addText({ x: 10, y: 50, text: 'ASCII only', size: 14 });
+  const r = await illymolly.AI.fontembed.ensureFor(illy._context().doc);
+  if (r.needed) throw new Error('한글이 없는데 글꼴을 받으려 함');
+  const pdf = illy.toPDF();
+  if (pdf.indexOf('/FontFile2') >= 0) throw new Error('쓸데없이 글꼴을 심음');
+  return '받지 않음 · 표준 글꼴로만';
+});
+
 /* ---------- 결과 ---------- */
+for (const [name, fn] of asyncChecks) {
+  try { results.push([name, true, (await fn()) ?? '']); }
+  catch (e) { results.push([name, false, e.message]); }
+}
+
 console.log('\n=== 자동화 API (Node 헤드리스) ===');
 let fail = 0;
 for (const [n, ok, d] of results) {

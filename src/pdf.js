@@ -23,6 +23,33 @@
       return encodeURIComponent(ch).replace(/%/g, '#');
     });
   }
+  function hex4(v) { return ('0000' + (v & 0xffff).toString(16).toUpperCase()).slice(-4); }
+  function utf16hex(cp) {
+    if (cp <= 0xffff) return hex4(cp);
+    var v = cp - 0x10000;
+    return hex4(0xd800 + (v >> 10)) + hex4(0xdc00 + (v & 0x3ff));
+  }
+  function chunk(a, n2) {
+    var out = [];
+    for (var i = 0; i < a.length; i += n2) out.push(a.slice(i, i + n2));
+    return out;
+  }
+  function bytesToLatin1(b) {
+    var s2 = '';
+    for (var i = 0; i < b.length; i += 8192) {
+      s2 += String.fromCharCode.apply(null, b.subarray(i, i + 8192));
+    }
+    return s2;
+  }
+  /* 서브셋한 글꼴에는 여섯 글자 태그를 붙이는 것이 규칙이다 */
+  function subsetTag(seed) {
+    var h = 0;
+    for (var i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+    var out = '';
+    for (var k = 0; k < 6; k++) { out += String.fromCharCode(65 + (h % 26)); h = Math.floor(h / 26) + 7; }
+    return out;
+  }
+
   function docBgPaint(doc) {
     if (!AI.prepress || AI.prepress.colorMode(doc) !== 'cmyk') return null;
     return { type: 'solid', color: doc.bg, cmyk: AI.prepress.rgbToCmyk(doc.bg || '#ffffff') };
@@ -35,6 +62,7 @@
     this.alphas = {};     /* 이름 -> 알파값 */
     this.fonts = {};      /* 이름 -> base font */
     this.spots = {};      /* 이름 -> {res:'CS1', name, cmyk} — 별색 분판 */
+    this.embed = {};      /* 이름 -> {font, gids:{원본gid:1}} — 심을 글꼴 */
     this.overprint = false;
     this.seq = 0;
   }
@@ -56,6 +84,23 @@
     var res = 'CS' + (Object.keys(this.spots).length + 1);
     this.spots[name] = { res: res, name: name, cmyk: cmyk };
     return res;
+  };
+  /* 심는 글꼴 — 쓰인 글리프를 모아 두었다가 마지막에 서브셋해서 넣는다 */
+  Writer.prototype.embedName = function (font) {
+    var key = 'E' + font.key.replace(/[^A-Za-z0-9]/g, '');
+    if (!this.embed[key]) this.embed[key] = { font: font, order: [], cid: {}, uni: {} };
+    return key;
+  };
+  /* 콘텐츠에 적을 CID 를 그 자리에서 정한다 — 서브셋 글꼴의 새 글리프 번호가
+     이 번호와 같아지도록 아래에서 같은 순서로 서브셋한다. */
+  Writer.prototype.useGlyph = function (key, gid, cp) {
+    var e = this.embed[key];
+    if (e.cid[gid] == null) {
+      e.order.push(gid);
+      e.cid[gid] = e.order.length;      /* 0 은 .notdef 자리 */
+      e.uni[e.cid[gid]] = cp;
+    }
+    return e.cid[gid];
   };
   Writer.prototype.imageName = function (src) {
     for (var k in this.xobjects) if (this.xobjects[k].src === src) return k;
@@ -287,9 +332,7 @@
       L.glyphs.forEach(function (g) {
         var gm = M.mulAll(m, M.translate(g.x, g.y), M.rotate(g.ang), M.scale(1, -1));
         w.w('BT');
-        w.w('/' + fname + ' ' + n(t.size) + ' Tf');
-        w.w([n(gm[0]), n(gm[1]), n(gm[2]), n(gm[3]), n(gm[4]), n(gm[5])].join(' ') + ' Tm');
-        w.w('(' + escapeText(g.ch) + ') Tj');
+        writeRun(w, t, g.ch, gm, fname);
         w.w('ET');
       });
       w.w('Q');
@@ -302,13 +345,98 @@
       /* 글자는 y 가 위로 가는 좌표계에서 그려야 하므로 줄마다 상하반전을 넣는다 */
       var mm = M.mulAll(m, M.translate(lx, ly), M.scale(1, -1));
       w.w('BT');
-      w.w('/' + fname + ' ' + n(t.size) + ' Tf');
       if (t.tracking) w.w(n(t.tracking) + ' Tc');
-      w.w([n(mm[0]), n(mm[1]), n(mm[2]), n(mm[3]), n(mm[4]), n(mm[5])].join(' ') + ' Tm');
-      w.w('(' + escapeText(L.lines[i]) + ') Tj');
+      writeRun(w, t, L.lines[i], mm, fname);
       w.w('ET');
     }
     w.w('Q');
+  }
+
+  /* 한 줄을 쓴다.
+     ASCII 밖 글자가 있고 심을 글꼴이 있으면 글꼴을 심어서 쓴다 — 그러면
+     글자 모양이 원본 그대로이고, 일러스트레이터에서 편집 가능한 텍스트로 열린다.
+     글꼴이 없으면 예전처럼 표준 14 글꼴로 쓰고 못 담는 글자는 ? 가 된다.
+     글꼴이 바뀌는 자리에서 줄을 토막 내고, 토막마다 진행 폭을 계산해 이어 붙인다. */
+  function writeRun(w, t, text, mm, fname) {
+    var FE = AI.fontembed;
+    var weight = t.weight || 400;
+
+    /* 줄에 한글이 섞여 있으면 **줄 전체**를 심은 글꼴로 쓴다.
+       라틴 부분만 표준 글꼴로 떼어 내면 그 구간의 진행 폭을 우리가 추정해야
+       하는데, 추정이 조금만 어긋나도 띄어쓰기 간격이 눈에 띄게 벌어진다.
+       한 글꼴로 쓰면 글꼴이 가진 폭이 그대로 쓰이므로 어긋날 여지가 없다. */
+    var whole = wholeLineFont(FE, text, weight);
+    if (whole) {
+      w.w([n(mm[0]), n(mm[1]), n(mm[2]), n(mm[3]), n(mm[4]), n(mm[5])].join(' ') + ' Tm');
+      var wkey = w.embedName(whole), whex = '';
+      for (var q = 0; q < text.length; q++) {
+        var wcp = text.codePointAt(q);
+        if (wcp > 0xffff) q++;
+        var wgid = FE.gid(whole, wcp);
+        whex += ('0000' + w.useGlyph(wkey, wgid, wcp).toString(16)).slice(-4);
+      }
+      w.w('/' + wkey + ' ' + n(t.size) + ' Tf');
+      w.w('<' + whex + '> Tj');
+      return;
+    }
+
+    var runs = [], cur = null;
+    for (var i = 0; i < text.length; i++) {
+      var cp = text.codePointAt(i);
+      var wide = cp > 0xffff;
+      var ch = wide ? text.slice(i, i + 2) : text[i];
+      if (wide) i++;
+      var font = (FE && cp > 0x7e) ? FE.pick(cp, weight) : null;
+      if (!cur || cur.font !== font) { cur = { font: font, chars: [] }; runs.push(cur); }
+      cur.chars.push({ ch: ch, cp: cp });
+    }
+    var dx = 0;
+    runs.forEach(function (r) {
+      var rm = M.mul(mm, M.translate(dx, 0));
+      w.w([n(rm[0]), n(rm[1]), n(rm[2]), n(rm[3]), n(rm[4]), n(rm[5])].join(' ') + ' Tm');
+      if (r.font) {
+        var key = w.embedName(r.font);
+        var hex = '', adv = 0, upm = r.font.unitsPerEm || 1000;
+        r.chars.forEach(function (c) {
+          var gid = FE.gid(r.font, c.cp);
+          var cid = w.useGlyph(key, gid, c.cp);
+          hex += ('0000' + cid.toString(16)).slice(-4);
+          adv += FE.advance(r.font, gid) / upm * t.size + (t.tracking || 0);
+        });
+        w.w('/' + key + ' ' + n(t.size) + ' Tf');
+        w.w('<' + hex + '> Tj');
+        dx += adv;
+      } else {
+        var str = r.chars.map(function (c) { return c.ch; }).join('');
+        w.w('/' + fname + ' ' + n(t.size) + ' Tf');
+        w.w('(' + escapeText(str) + ') Tj');
+        dx += measureAscii(t, str);
+      }
+    });
+  }
+
+  /* 이 줄을 통째로 담을 수 있는 심은 글꼴 — 한글이 하나라도 있을 때만 */
+  function wholeLineFont(FE, text, weight) {
+    if (!FE) return null;
+    var hasWide = false, cps = [];
+    for (var i = 0; i < text.length; i++) {
+      var cp = text.codePointAt(i);
+      if (cp > 0xffff) i++;
+      if (cp > 0x7e) hasWide = true;
+      cps.push(cp);
+    }
+    if (!hasWide) return null;
+    var cand = FE.pick(cps.find(function (c) { return c > 0x7e; }), weight);
+    if (!cand) return null;
+    for (var k = 0; k < cps.length; k++) if (!FE.has(cand, cps[k])) return null;
+    return cand;
+  }
+
+  /* 표준 14 글꼴 구간의 진행 폭 — 화면 렌더러의 계산을 그대로 쓴다 */
+  function measureAscii(t, str) {
+    if (!str) return 0;
+    var wdt = Rn.measureLine ? Rn.measureLine(str, t) : str.length * t.size * 0.5;
+    return wdt + (t.tracking || 0) * str.length;
   }
 
   function lineX(L, i, t) {
@@ -347,7 +475,10 @@
   P.toAI = function (app, opt) {
     opt = opt || {};
     P.lastOutlined = 0;
-    if (opt.outlineText === false) return P.toPDF(app, opt);
+    /* 글꼴을 심을 수 있으면 그게 낫다 — 글자 모양이 원본 그대로이고
+       일러스트레이터에서 **편집 가능한 텍스트**로 열린다. 윤곽선은
+       글꼴을 못 받았거나 일부러 요청했을 때만 쓴다. */
+    if (!opt.outlineText) return P.toPDF(app, opt);
     if (!U.hasDOM || !AI.trace) return P.toPDF(app, opt);   /* 글리프 윤곽은 캔버스가 필요하다 */
 
     var copy = U.deepCopy(app.doc);
@@ -373,6 +504,7 @@
   P.toPDF = function (app, opt) {
     opt = opt || {};
     droppedText = 0;
+    P.lastEmbedded = 0; P.lastEmbedBytes = 0;
     var doc = app.doc;
     var ab = doc.artboards[opt.artboard == null ? doc.activeArtboard : opt.artboard];
     var W = ab.w, H = ab.h;
@@ -409,6 +541,59 @@
     Object.keys(w.fonts).forEach(function (k) {
       fontObjs[k] = obj('<< /Type /Font /Subtype /Type1 /BaseFont /' + w.fonts[k] + ' /Encoding /WinAnsiEncoding >>');
     });
+
+    /* --- 심는 글꼴 (Type0 / CIDFontType2, Identity-H) ---
+       쓰인 글리프만 서브셋해서 넣는다. 글리프 번호를 그대로 CID 로 쓰므로
+       CIDToGIDMap 은 /Identity 다. ToUnicode 를 붙여 복사 · 검색도 되게 한다. */
+    var embedded = 0, embedBytes = 0;
+    Object.keys(w.embed).forEach(function (k) {
+      var e = w.embed[k], f = e.font;
+      if (!e.order.length) return;
+      var sub;
+      try { sub = AI.fontembed.subset(f, e.order); } catch (err) { return; }
+      embedded++; embedBytes += sub.data.length;
+
+      /* 콘텐츠에 적은 CID 와 서브셋의 새 글리프 번호는 같아야 한다 */
+      var used = e.order.map(function (g, i) {
+        return { cid: i + 1, gid: g, cp: e.uni[i + 1] };
+      });
+
+      var upm = f.unitsPerEm || 1000;
+      var Wparts = used.map(function (x) {
+        return x.cid + ' [' + n(AI.fontembed.advance(f, x.gid) / upm * 1000) + ']';
+      });
+
+      var bfr = used.filter(function (x) { return x.cp != null; }).map(function (x) {
+        return '<' + hex4(x.cid) + '> <' + utf16hex(x.cp) + '>';
+      });
+      var toUni = '/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n' +
+        '/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n' +
+        '/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n' +
+        chunk(bfr, 100).map(function (g) {
+          return g.length + ' beginbfchar\n' + g.join('\n') + '\nendbfchar';
+        }).join('\n') +
+        '\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend';
+
+      var fileObj = obj('<< /Length ' + sub.data.length + ' /Length1 ' + sub.data.length + ' >>\nstream\n' +
+        bytesToLatin1(sub.data) + '\nendstream');
+      var tag = subsetTag(f.psName || 'Font') + '+' + (f.psName || 'Font');
+      var fd = obj('<< /Type /FontDescriptor /FontName /' + tag +
+        ' /Flags 4 /FontBBox [' + [f.xMin, f.yMin, f.xMax, f.yMax].map(function (v) { return Math.round(v / upm * 1000); }).join(' ') + ']' +
+        ' /ItalicAngle 0 /Ascent ' + Math.round(f.ascent / upm * 1000) +
+        ' /Descent ' + Math.round(f.descent / upm * 1000) +
+        ' /CapHeight ' + Math.round(f.ascent / upm * 1000 * 0.72) +
+        ' /StemV 80 /FontFile2 ' + fileObj + ' 0 R >>');
+      var uniObj = obj('<< /Length ' + byteLen(toUni) + ' >>\nstream\n' + toUni + '\nendstream');
+      var cidFont = obj('<< /Type /Font /Subtype /CIDFontType2 /BaseFont /' + tag +
+        ' /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >>' +
+        ' /FontDescriptor ' + fd + ' 0 R /DW 1000 /W [' + Wparts.join(' ') + ']' +
+        ' /CIDToGIDMap /Identity >>');
+      fontObjs[k] = obj('<< /Type /Font /Subtype /Type0 /BaseFont /' + tag +
+        ' /Encoding /Identity-H /DescendantFonts [' + cidFont + ' 0 R]' +
+        ' /ToUnicode ' + uniObj + ' 0 R >>');
+    });
+    P.lastEmbedded = embedded;
+    P.lastEmbedBytes = embedBytes;
     var gsObjs = {};
     Object.keys(w.alphas).forEach(function (k) {
       gsObjs[k] = obj('<< /Type /ExtGState /ca ' + n(w.alphas[k]) + ' /CA ' + n(w.alphas[k]) + ' >>');

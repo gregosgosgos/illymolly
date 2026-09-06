@@ -2567,20 +2567,35 @@
     }
   });
 
+  op('loadFonts', {
+    undoable: false, group: '출력',
+    desc: 'PDF · AI 로 내보낼 때 심을 한글 글꼴을 미리 읽어 둡니다. 문서에 한글이 없으면 아무것도 받지 않습니다. 비동기이므로 await 하세요.',
+    params: {},
+    returns: 'object',
+    run: function (ctx) {
+      if (!AI.fontembed) throw err('NO_FONT', '글꼴 모듈을 찾을 수 없습니다');
+      return AI.fontembed.ensureFor(ctx.doc).then(function (r) {
+        return {
+          needed: r.needed, loaded: r.loaded,
+          missing: AI.fontembed.missing(ctx.doc).map(function (c) { return String.fromCodePoint(c); })
+        };
+      });
+    }
+  });
+
   op('toAI', {
     undoable: false, group: '출력',
-    desc: "Illustrator 가 바로 여는 .ai 파일 내용을 반환합니다 (latin1 바이트 문자열). .ai 는 내부가 PDF 라서 패스·색·이미지가 그대로 편집됩니다. 한글이 살아남도록 기본으로 문자를 윤곽선으로 바꾼 사본을 씁니다 (브라우저 전용).",
+    desc: "Illustrator 가 바로 여는 .ai 파일 내용을 반환합니다 (latin1 바이트 문자열). .ai 는 내부가 PDF 라서 패스 · 색 · 이미지가 그대로 편집됩니다. 한글은 글꼴을 심어 넣으므로 텍스트로 열리고 모양도 원본 그대로입니다 — 먼저 loadFonts 로 글꼴을 준비하세요.",
     params: {
       artboard: p('number', '대지 번호 (생략 시 활성 대지)'),
-      outlineText: p('boolean', '문자를 윤곽선으로 바꿔서 내보내기', { default: true }),
+      outlineText: p('boolean', '글꼴을 심지 않고 문자를 윤곽선으로 바꿔서 내보내기', { default: false }),
       background: p('boolean', '대지 배경 포함', { default: true })
     },
     run: function (ctx, a) {
       if (!AI.pdf) throw err('NO_PDF', 'PDF 모듈을 찾을 수 없습니다');
-      var out = AI.pdf.toAI(ctx, {
-        artboard: a.artboard, outlineText: a.outlineText !== false, background: a.background !== false
+      return AI.pdf.toAI(ctx, {
+        artboard: a.artboard, outlineText: !!a.outlineText, background: a.background !== false
       });
-      return out;
     }
   });
 

@@ -615,25 +615,48 @@
   IO.exportPDF = function (app) {
     if (!AI.pdf) { U.toast('PDF 모듈이 없습니다'); return; }
     if (app.doc.artboards.length > 1) { IO.exportArtboards(app, 'pdf'); return; }
-    var str = AI.pdf.toPDF(app);
-    var bytes = AI.pdf.toBytes(str);
-    download(baseName(app) + '.pdf', new Blob([bytes], { type: 'application/pdf' }));
-    U.toast('PDF 내보내기 완료' +
-      (AI.pdf.lastDroppedText ? ' — 한글 등 비ASCII 글자 ' + AI.pdf.lastDroppedText + '자는 ?로 대체되었습니다 (윤곽선 만들기 권장)' : ''));
+    return withFonts(app, function () {
+      var str = AI.pdf.toPDF(app);
+      download(baseName(app) + '.pdf', new Blob([AI.pdf.toBytes(str)], { type: 'application/pdf' }));
+      U.toast('PDF 내보내기 완료' + fontNote());
+    });
   };
 
   /* .ai 로 저장 — 일러스트레이터가 바로 여는 형식 (내부는 PDF) */
   IO.exportAI = function (app, opts) {
     opts = opts || {};
     if (!AI.pdf) { U.toast('PDF 모듈이 없습니다'); return; }
-    var str = AI.pdf.toAI(app, opts);
-    var bytes = AI.pdf.toBytes(str);
-    download(baseName(app) + '.ai', new Blob([bytes], { type: 'application/illustrator' }));
-    var msg = 'AI 파일로 저장했습니다';
-    if (AI.pdf.lastOutlined) msg += ' — 글자 ' + AI.pdf.lastOutlined + '개는 윤곽선으로 변환했습니다';
-    else if (AI.pdf.lastDroppedText) msg += ' — 한글 ' + AI.pdf.lastDroppedText + '자가 ?로 대체되었습니다';
-    U.toast(msg);
+    return withFonts(app, function () {
+      var str = AI.pdf.toAI(app, opts);
+      download(baseName(app) + '.ai', new Blob([AI.pdf.toBytes(str)], { type: 'application/illustrator' }));
+      U.toast('AI 파일로 저장했습니다' + fontNote());
+    });
   };
+
+  /* 한글이 있으면 글꼴을 먼저 받아 둔다 — 그래야 윤곽선이 아니라
+     진짜 글꼴로 심겨 일러스트레이터에서 편집 가능한 텍스트로 열린다. */
+  function withFonts(app, run) {
+    if (!AI.fontembed) { run(); return Promise.resolve(); }
+    var scan = AI.fontembed.scan(app.doc);
+    if (!scan.needsEmbed) { run(); return Promise.resolve(); }
+    var busy = setTimeout(function () { U.toast('한글 글꼴을 준비하는 중…'); }, 300);
+    return AI.fontembed.ensureFor(app.doc).then(function () {
+      clearTimeout(busy); run();
+    }, function () {
+      clearTimeout(busy);
+      U.toast('한글 글꼴을 받지 못해 글자를 윤곽선으로 내보냅니다');
+      run();
+    });
+  }
+
+  function fontNote() {
+    var P = AI.pdf;
+    if (P.lastEmbedded) return ' — 글꼴 ' + P.lastEmbedded + '벌을 심었습니다 (' +
+      Math.round(P.lastEmbedBytes / 1024) + 'KB, 텍스트 그대로 편집됩니다)';
+    if (P.lastOutlined) return ' — 글자 ' + P.lastOutlined + '개를 윤곽선으로 바꿨습니다';
+    if (P.lastDroppedText) return ' — 한글 ' + P.lastDroppedText + '자가 ?로 대체되었습니다';
+    return '';
+  }
 
   /* 문서에 담기지 않고 주소만 걸린 그림 — 브라우저가 캔버스를 잠가 버려
      PNG · PDF 로 내보낼 수 없게 만든다. 미리 이름을 알려 줄 수 있게 모아 둔다. */
