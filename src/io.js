@@ -79,7 +79,7 @@
   IO.importPDFBytes = function (app, bytes, name, opts) {
     if (!AI.pdfin) { U.toast('PDF 모듈을 찾을 수 없습니다'); return null; }
     var doc = Model.newDoc(600, 400);
-    doc.name = String(name || 'PDF').replace(/\.pdf$/i, '');
+    doc.name = String(name || 'PDF').replace(/\.(pdf|ai)$/i, '');
     var tmp = { doc: doc };
     var rep;
     try {
@@ -107,7 +107,7 @@
   IO.openPDF = function (app) {
     var inp = document.createElement('input');
     inp.type = 'file';
-    inp.accept = '.pdf,application/pdf';
+    inp.accept = '.pdf,.ai,application/pdf,application/illustrator';
     inp.onchange = function () {
       var f = inp.files[0];
       if (!f) return;
@@ -118,34 +118,57 @@
     inp.click();
   };
 
+  /* 확장자는 거짓말을 한다 — .ai 도 내용은 PDF 이고, 확장자를 바꿔 둔 파일도 있다.
+     그래서 앞 몇 바이트를 보고 무엇인지 정한다. */
+  IO.sniff = function (bytes) {
+    var head = '';
+    for (var i = 0; i < Math.min(bytes.length, 1024); i++) head += String.fromCharCode(bytes[i]);
+    if (head.indexOf('%PDF-') === 0) return 'pdf';
+    /* 파일 앞에 쓰레기가 붙은 PDF 도 있다 — 조금 뒤까지 본다 */
+    if (head.indexOf('%PDF-') > 0 && head.indexOf('%PDF-') < 1024) return 'pdf';
+    if (/^\s*[{[]/.test(head)) return 'json';
+    if (/^\s*(<\?xml|<svg)/i.test(head)) return 'svg';
+    if (head.indexOf('%!PS-Adobe') === 0) return 'eps';
+    return null;
+  };
+
+  IO.openBytes = function (app, bytes, name) {
+    var kind = IO.sniff(bytes);
+    if (kind === 'pdf') return IO.importPDFBytes(app, bytes, name);
+    if (kind === 'eps') {
+      U.toast('EPS 는 아직 지원하지 않습니다 — PDF 또는 AI 로 저장해 주세요');
+      return null;
+    }
+    var text = '';
+    for (var i = 0; i < bytes.length; i++) text += String.fromCharCode(bytes[i]);
+    try { text = decodeURIComponent(escape(text)); } catch (e) { }   /* UTF-8 되살리기 */
+    if (kind === 'svg') return IO.importSVG(app, text, name);
+    try {
+      var o = JSON.parse(text);
+      var doc = o.doc || o;
+      if (!doc.layers) throw new Error('문서 형식이 아닙니다');
+      normalizeDoc(doc);
+      /* 일러스트레이터처럼 파일은 새 탭으로 열린다 */
+      AI.docs.add(app, doc, { label: '열기' });
+      U.toast(name + ' 열기 완료');
+      return true;
+    } catch (e) {
+      U.toast('열 수 없는 파일입니다: ' + name +
+        ' — .illy.json · .svg · .pdf · .ai 를 열 수 있습니다');
+      return false;
+    }
+  };
+
   IO.openFile = function (app) {
     var inp = document.createElement('input');
     inp.type = 'file';
-    inp.accept = '.json,.illy,.svg,.pdf,application/json,image/svg+xml,application/pdf';
+    inp.accept = '.json,.illy,.svg,.pdf,.ai,application/json,image/svg+xml,application/pdf,application/illustrator';
     inp.onchange = function () {
       var f = inp.files[0];
       if (!f) return;
-      if (/\.pdf$/i.test(f.name) || f.type === 'application/pdf') {
-        var rp = new FileReader();
-        rp.onload = function () { IO.importPDFBytes(app, new Uint8Array(rp.result), f.name); };
-        rp.readAsArrayBuffer(f);
-        return;
-      }
       var r = new FileReader();
-      r.onload = function () {
-        try {
-          if (/\.svg$/i.test(f.name)) { IO.importSVG(app, String(r.result), f.name); return; }
-          var o = JSON.parse(String(r.result));
-          var doc = o.doc || o;
-          normalizeDoc(doc);
-          /* 일러스트레이터처럼 파일은 새 탭으로 열린다 */
-          AI.docs.add(app, doc, { label: '열기' });
-          U.toast(f.name + ' 열기 완료');
-        } catch (e) {
-          U.toast('파일을 읽을 수 없습니다: ' + e.message);
-        }
-      };
-      r.readAsText(f);
+      r.onload = function () { IO.openBytes(app, new Uint8Array(r.result), f.name); };
+      r.readAsArrayBuffer(f);
     };
     inp.click();
   };

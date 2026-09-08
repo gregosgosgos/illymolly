@@ -339,7 +339,11 @@ python3 -m http.server 8080
   변형·클리핑·저장·SVG 내보내기 모두 지원
 - 가져오기: `.svg` (path/rect/circle/ellipse/line/polygon/image/text/group, transform 포함).
   최상위 `<g id="...">` 는 레이어로 매핑되어 자체 SVG 왕복이 무손실에 가깝습니다.
-- **PDF 가져오기 (`파일 > PDF 가져오기`)** — 페이지의 벡터 패스 · 문자 · 이미지를
+- **여는 파일은 확장자가 아니라 내용으로 판단합니다.** `.ai` 는 내용이 PDF 이고,
+  확장자를 바꿔 둔 파일도 있기 때문입니다. `파일 > 열기` 하나로 `.illy.json` ·
+  `.svg` · `.pdf` · `.ai` 를 모두 열고, 끌어다 놓아도 같습니다.
+  못 여는 파일은 무엇을 열 수 있는지 함께 알려 줍니다.
+- **PDF · AI 가져오기 (`파일 > PDF 가져오기`)** — 페이지의 벡터 패스 · 문자 · 이미지를
   편집 가능한 오브젝트로 되돌립니다. 외부 라이브러리 없이 DEFLATE 를 직접 풀고,
   상호 참조표(xref)가 깨진 파일도 열리도록 오브젝트를 브루트포스로 훑습니다.
   CMYK · 회색 · **별색(Separation)** 은 값과 이름을 그대로 살려서 들어오므로
@@ -505,7 +509,7 @@ iframe 으로 임베드하면 `postMessage` RPC 로 창 밖에서 제어할 수 
 
 | 스크립트 | 내용 |
 |---|---|
-| `npm test` | E2E 178개 — 실제 마우스/키보드 조작으로 도구·단축키·대화상자·패널·커서·API·RPC 검증 |
+| `npm test` | E2E 180개 — 실제 마우스/키보드 조작으로 도구·단축키·대화상자·패널·커서·API·RPC 검증 |
 | `npm run test:deep` | 심층 107개 — 기하/모델/불리언 연산의 수학적 불변식을 직접 검증 |
 | `npm run test:api` | 자동화 API 55개 — 헤드리스 Node, 브라우저 불필요 |
 | `npm run test:mobile` | 모바일 17개 — 실제 TouchEvent 로 제스처·마킹 메뉴·타깃 크기 실측 |
@@ -513,7 +517,7 @@ iframe 으로 임베드하면 `postMessage` RPC 로 창 밖에서 제어할 수 
 ```bash
 npm run test:api                  # Playwright 없이 바로 실행 가능
 npm i -D playwright && npx playwright install chromium
-npm run test:all                  # 357개 전부
+npm run test:all                  # 359개 전부
 ```
 
 심층 스위트는 원∩원 넓이를 해석해와 비교하고, 그룹 변환 왕복·다단계 undo/redo 동일성·

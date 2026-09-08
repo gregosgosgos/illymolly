@@ -5293,6 +5293,56 @@ await check('AI 파일 — 레이어 · 대지 · 글꼴을 한 파일에 통째
   return `대지 2쪽 · 레이어 ${r.names.join(' / ')} · 글꼴 ${r.embedded}벌`;
 });
 
+await check('파일 열기 — .ai 도 열린다 (확장자가 아니라 내용을 본다)', async () => {
+  const AI_BYTES = await ev(async () => {
+    /* 우리가 만든 .ai 를 그대로 다시 연다 */
+    const app = AI.app;
+    app.setDoc(AI.model.newDoc(200, 150));
+    app.doc.name = '표고 상세';
+    illy.addLayer({ name: '배경' });
+    illy.addRect({ x: 0, y: 0, width: 200, height: 150, fill: '#eeeeff' });
+    illy.addArtboard({ name: '뒷면', x: 240, y: 0, width: 200, height: 150 });
+    illy.addEllipse({ x: 270, y: 40, width: 120, height: 70, fill: '#7bd142' });
+    return illy.toAI({});
+  });
+
+  const r = await page.evaluate(str => {
+    const bytes = new Uint8Array(str.length);
+    for (let i = 0; i < str.length; i++) bytes[i] = str.charCodeAt(i) & 255;
+    /* 내용을 보고 무엇인지 알아내야 한다 — 이름은 .ai 다 */
+    const kind = AI.io.sniff(bytes);
+    const before = AI.docs.count(AI.app);
+    const ok = AI.io.openBytes(AI.app, bytes, '내파일.ai');
+    const doc = AI.app.doc;
+    let n = 0; AI.model.walk(doc, () => n++);
+    return { kind, opened: AI.docs.count(AI.app) - before, name: doc.name, objs: n, ab: doc.artboards.length, ok: ok !== false };
+  }, AI_BYTES);
+
+  if (r.kind !== 'pdf') throw new Error("sniff='" + r.kind + "' — .ai 를 PDF 로 못 알아봄");
+  if (r.opened !== 1) throw new Error('새 탭으로 안 열림');
+  if (r.name !== '내파일') throw new Error('문서 이름=' + r.name);
+  if (r.objs < 2) throw new Error('오브젝트 ' + r.objs + '개만 들어옴');
+  if (r.ab !== 2) throw new Error('대지 ' + r.ab + '개 — 2개여야 함');
+  await ev(() => AI.docs.close(AI.app));
+  return `.ai → pdf 로 판별 · 오브젝트 ${r.objs} · 대지 ${r.ab}개 복원`;
+});
+
+await check('파일 열기 — 못 여는 파일은 이유를 말해 준다', async () => {
+  const r = await ev(() => {
+    const junk = new Uint8Array([0x50, 0x4b, 3, 4, 1, 2, 3, 4, 5, 6]);   /* zip */
+    const kind = AI.io.sniff(junk);
+    const before = AI.docs.count(AI.app);
+    const ok = AI.io.openBytes(AI.app, junk, '알수없음.zip');
+    const t = document.getElementById('toast');
+    return { kind, ok, opened: AI.docs.count(AI.app) - before, toast: t ? t.textContent : '' };
+  });
+  if (r.kind !== null) throw new Error('zip 을 ' + r.kind + ' 로 봄');
+  if (r.ok !== false) throw new Error('못 여는데 열렸다고 함');
+  if (r.opened) throw new Error('빈 탭이 열림');
+  if (!/열 수 없는 파일/.test(r.toast)) throw new Error('안내 문구=' + r.toast);
+  return '판별 실패 → 새 탭 안 열고 "' + r.toast.slice(0, 40) + '…"';
+});
+
 /* ---------------- 결과 ---------------- */
 console.log('\n=== Illymolly E2E ===');
 for (const [n, s, d] of results) console.log(`${s === 'OK' ? '✔' : '✘'} ${n}${d ? ' — ' + d : ''}`);

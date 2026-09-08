@@ -356,6 +356,19 @@
   };
 
   /* 파일 여러 개 — 이미지·SVG·문서 파일을 섞어 놓아도 된다 */
+  /* 파일 내용을 보고 알아서 연다 (AI.io.openBytes 가 판단한다) */
+  function openBytesFrom(app, f) {
+    return new Promise(function (res) {
+      var r = new FileReader();
+      r.onload = function () {
+        var ok = AI.io.openBytes(app, new Uint8Array(r.result), f.name);
+        res(ok !== false && ok !== null);
+      };
+      r.onerror = function () { U.toast('파일을 읽지 못했습니다: ' + f.name); res(false); };
+      r.readAsArrayBuffer(f);
+    });
+  }
+
   CB.fromFiles = function (app, files, mode, at) {
     var jobs = files.map(function (f) {
       return function () {
@@ -377,18 +390,11 @@
           return readAsText(f).then(function (t) {
             var mine = CB.parse(t);
             if (mine) return place(app, fresh(mine), mode, at, '붙이기');
-            try {
-              var o = JSON.parse(t), doc = o.doc || o;
-              if (!doc.layers) throw new Error('문서가 아닙니다');
-              AI.io.normalizeDoc(doc);
-              AI.docs.add(app, doc, { label: '열기' });
-              U.toast(f.name + ' 열기 완료');
-              return true;
-            } catch (e) { U.toast('파일을 읽을 수 없습니다: ' + f.name); return false; }
+            return openBytesFrom(app, f);
           });
         }
-        U.toast('지원하지 않는 파일입니다: ' + f.name);
-        return Promise.resolve(false);
+        /* 그 밖에는 내용을 보고 정한다 — .ai · .pdf · 확장자가 없는 파일까지 */
+        return openBytesFrom(app, f);
       };
     });
     /* 하나씩 차례대로 — 여러 개를 붙여도 실행 취소가 한 단계씩 남는다 */
